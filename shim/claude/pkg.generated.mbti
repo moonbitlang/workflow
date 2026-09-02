@@ -15,10 +15,12 @@ pub struct Claude {
   mut cost_usd : Double?
   mut failure : String?
   mut exhausted : Bool
+  // private fields
 }
 pub fn Claude::new() -> Self
 pub fn Claude::observe(Self, String) -> Array[Json]
 pub fn Claude::report(Self) -> Json?
+pub fn Claude::settle(Self) -> Json?
 
 // Type aliases
 

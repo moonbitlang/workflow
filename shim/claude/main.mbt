@@ -68,6 +68,12 @@ async fn run() -> Unit {
       @shim.Continue
     },
   )
+  // A run that ended without its result never charged the true totals:
+  // settle the per-message snapshots first, so the cost of the work done
+  // still reaches the parent before the terminal event.
+  if !(exit is Failed(_)) && state.settle() is Some(usage) {
+    @shim.emit(usage)
+  }
   match exit {
     Cancelled => ()
     Stopped => @shim.emit(@shim.max_steps_exhausted())

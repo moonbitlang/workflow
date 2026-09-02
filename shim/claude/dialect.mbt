@@ -4,13 +4,16 @@
 /// every other line or field is ignored, so an added field upstream
 /// changes nothing here.
 ///
-/// Steps are `assistant` messages (one model call each); cost is charged
-/// from each message's `usage` as it streams, falling back to the final
-/// `result` object's totals only when no message carried usage. The
-/// answer is the `result` text, or `structured_output` when a schema was
-/// requested.
+/// The stream emits one `assistant` line PER CONTENT BLOCK (thinking,
+/// text, tool_use) of the same message, each carrying that message's
+/// running usage snapshot; the final `result` carries the run's true
+/// totals (its `output_tokens` include thinking). So a step is a DISTINCT
+/// message id, cost is charged once from the result, and the per-message
+/// snapshots serve only as the fallback for a run cut short before its
+/// result (`settle`).
 pub struct Claude {
   mut steps : Int
+  priv snapshots : Map[String, Cost]
   mut charged : Bool
   mut answer : Json?
   mut session_id : String?
@@ -21,10 +24,30 @@ pub struct Claude {
 }
 
 ///|
+/// One usage reading, in the contract's counters.
+priv struct Cost {
+  prompt : Int
+  completion : Int
+  hit : Int
+  miss : Int
+}
+
+///|
+fn Cost::event(self : Cost) -> Json {
+  @shim.usage(
+    prompt_tokens=self.prompt,
+    completion_tokens=self.completion,
+    cache_hit=self.hit,
+    cache_miss=self.miss,
+  )
+}
+
+///|
 /// A fresh observer.
 pub fn Claude::new() -> Claude {
   {
     steps: 0,
+    snapshots: {},
     charged: false,
     answer: None,
     session_id: None,
@@ -49,16 +72,29 @@ pub fn Claude::observe(self : Claude, line : String) -> Array[Json] {
   }
   match json {
     { "type": "assistant", "message": message, .. } => {
-      self.steps += 1
-      events.push(@shim.agent_step(self.steps))
-      if usage_of(message) is Some(usage) {
-        self.charged = true
-        events.push(usage)
+      // An id-less message (never seen from the CLI, but not a reason to
+      // miscount) is its own step.
+      let id = if message is { "id": String(id), .. } {
+        id
+      } else {
+        "anonymous-\{self.steps + 1}"
+      }
+      if !self.snapshots.contains(id) {
+        self.steps += 1
+        events.push(@shim.agent_step(self.steps))
+      }
+      match cost_of(message) {
+        Some(cost) => self.snapshots[id] = cost
+        None =>
+          if !self.snapshots.contains(id) {
+            self.snapshots[id] = { prompt: 0, completion: 0, hit: 0, miss: 0, }
+          }
       }
     }
     { "type": "result", .. } => {
-      if !self.charged && usage_of(json) is Some(usage) {
-        events.push(usage)
+      if cost_of(json) is Some(cost) {
+        self.charged = true
+        events.push(cost.event())
       }
       if json is { "session_id": String(id), .. } {
         self.session_id = Some(id)
@@ -102,7 +138,7 @@ pub fn Claude::observe(self : Claude, line : String) -> Array[Json] {
 /// The `usage` object Claude attaches to a message or to the result,
 /// mapped onto the contract's counters: cache reads are hits; fresh input
 /// and cache creation are misses; prompt tokens are all three together.
-fn usage_of(container : Json) -> Json? {
+fn cost_of(container : Json) -> Cost? {
   guard container
     is {
       "usage": {
@@ -130,14 +166,33 @@ fn usage_of(container : Json) -> Json? {
   } else {
     0
   }
-  Some(
-    @shim.usage(
-      prompt_tokens=input + cache_read + cache_creation,
-      completion_tokens=output,
-      cache_hit=cache_read,
-      cache_miss=input + cache_creation,
-    ),
-  )
+  Some({
+    prompt: input + cache_read + cache_creation,
+    completion: output,
+    hit: cache_read,
+    miss: input + cache_creation,
+  })
+}
+
+///|
+/// The cost to charge when the run ended WITHOUT a result (a step ceiling,
+/// a cancel, a crash): the sum of the last snapshot of every message
+/// seen. `None` once the result has charged the true totals, or when
+/// nothing was observed.
+pub fn Claude::settle(self : Claude) -> Json? {
+  if self.charged || self.snapshots.is_empty() {
+    return None
+  }
+  let mut total : Cost = { prompt: 0, completion: 0, hit: 0, miss: 0, }
+  for _, cost in self.snapshots {
+    total = {
+      prompt: total.prompt + cost.prompt,
+      completion: total.completion + cost.completion,
+      hit: total.hit + cost.hit,
+      miss: total.miss + cost.miss,
+    }
+  }
+  Some(total.event())
 }
 
 ///|
@@ -160,26 +215,30 @@ pub fn Claude::report(self : Claude) -> Json? {
 }
 
 ///|
-test "steps and per-message usage stream; the result closes the run" {
+/// Lines recorded from claude 2.1.258 (`--output-format stream-json
+/// --verbose`, Haiku 4.5, prompt "Reply with exactly the single word:
+/// ok"), trimmed to the fields that matter. Both `assistant` lines are
+/// the SAME message (thinking block, then text block).
+test "one message across two content blocks is one step; the result charges" {
   let state = Claude::new()
   let lines = [
     (
-      #|{"type":"system","subtype":"init","session_id":"s1"}
+      #|{"type":"system","subtype":"init","session_id":"s1","uuid":"u0"}
     ),
     (
-      #|{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":90,"cache_creation_input_tokens":0}}}
+      #|{"type":"rate_limit_event","uuid":"u1"}
     ),
     (
-      #|not json
+      #|{"type":"system","subtype":"thinking_tokens","uuid":"u2"}
     ),
     (
-      #|{"type":"user","message":{"role":"user"}}
+      #|{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":7669,"cache_read_input_tokens":13615,"output_tokens":4}},"uuid":"u3"}
     ),
     (
-      #|{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":7}}}
+      #|{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":7669,"cache_read_input_tokens":13615,"output_tokens":4}},"uuid":"u4"}
     ),
     (
-      #|{"type":"result","subtype":"success","is_error":false,"result":"forty-two","session_id":"s1","num_turns":2,"total_cost_usd":0.01,"usage":{"input_tokens":13,"output_tokens":12}}
+      #|{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s1","num_turns":1,"total_cost_usd":0.0173444,"usage":{"input_tokens":10,"cache_creation_input_tokens":7669,"cache_read_input_tokens":13615,"output_tokens":43,"output_tokens_details":{"thinking_tokens":37}}}
     ),
   ]
   let events : Array[Json] = []
@@ -189,44 +248,58 @@ test "steps and per-message usage stream; the result closes the run" {
   assert_eq(events, [
     @shim.agent_step(1),
     @shim.usage(
-      prompt_tokens=100,
-      completion_tokens=5,
-      cache_hit=90,
-      cache_miss=10,
+      prompt_tokens=21294,
+      completion_tokens=43,
+      cache_hit=13615,
+      cache_miss=7679,
     ),
-    @shim.agent_step(2),
-    @shim.usage(prompt_tokens=3, completion_tokens=7, cache_hit=0, cache_miss=3),
   ])
-  assert_eq(state.failure, None)
+  assert_eq(state.steps, 1)
+  assert_eq(state.settle(), None)
   assert_eq(
     state.report(),
     Some({
-      "answer": "forty-two",
+      "answer": "ok",
       "engine": "claude",
       "session_id": "s1",
-      "num_turns": 2,
-      "cost_usd": 0.01,
+      "num_turns": 1,
+      "cost_usd": 0.0173444,
     }),
   )
 }
 
 ///|
-test "result usage is charged only when no message carried any" {
+test "a run cut short settles the last snapshot of every message seen" {
   let state = Claude::new()
-  let events = state.observe(
+  let lines = [
     (
-      #|{"type":"result","subtype":"success","result":"ok","usage":{"input_tokens":13,"cache_read_input_tokens":2,"output_tokens":12}}
+      #|{"type":"assistant","message":{"id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":2}}}
+    ),
+    (
+      #|{"type":"assistant","message":{"id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":5}}}
+    ),
+    (
+      #|{"type":"assistant","message":{"id":"msg_2","usage":{"input_tokens":3,"output_tokens":7}}}
+    ),
+  ]
+  let events : Array[Json] = []
+  for line in lines {
+    events.push_iter(state.observe(line).iter())
+  }
+  assert_eq(events, [@shim.agent_step(1), @shim.agent_step(2)])
+  // msg_1's LAST snapshot (5 output tokens) plus msg_2's.
+  assert_eq(
+    state.settle(),
+    Some(
+      @shim.usage(
+        prompt_tokens=103,
+        completion_tokens=12,
+        cache_hit=90,
+        cache_miss=13,
+      ),
     ),
   )
-  assert_eq(events, [
-    @shim.usage(
-      prompt_tokens=15,
-      completion_tokens=12,
-      cache_hit=2,
-      cache_miss=13,
-    ),
-  ])
-  assert_eq(state.report(), Some({ "answer": "ok", "engine": "claude" }))
+  assert_eq(state.report(), None)
 }
 
 ///|
