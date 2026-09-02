@@ -154,3 +154,27 @@ test "a fractional step ceiling is a malformed request, never no ceiling" {
     is Err("shim input max_steps must be an integer"),
   )
 }
+
+///|
+test "a v1 envelope without input, or with a mistyped ceiling, is refused as such" {
+  // Cross-engine review findings: these used to read as "unsupported
+  // version 1" and "no ceiling" respectively.
+  assert_true(
+    @shim.Request::parse(
+      "{\"workflow_contract\":1,\"id\":\"cr-1\",\"kind\":\"explore\"}",
+    )
+    is Err("shim input envelope has no `input`"),
+  )
+  assert_true(
+    @shim.Request::parse(
+      "{\"workflow_contract\":1,\"max_steps\":\"5\",\"input\":{\"query\":\"q\"}}",
+    )
+    is Err("shim input max_steps must be an integer"),
+  )
+  assert_true(
+    @shim.Request::parse(
+      "{\"workflow_contract\":1,\"max_steps\":null,\"input\":{\"query\":\"q\"}}",
+    )
+    is Err("shim input max_steps must be an integer"),
+  )
+}

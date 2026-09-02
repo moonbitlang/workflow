@@ -1,47 +1,44 @@
-# Cross-engine review of 0451d97 against HEAD~4
+# Cross-engine review of e2bdb1a against HEAD~6
 
-Court: claude, codex, explore. 3 finding(s) raised · 1 confirmed · 2 uncertain · 0 refuted
-
-## Confirmed
-
-### shim/codex/main.mbt:54 — Max-steps stop can drop Codex token usage from terminal attempts (medium, raised by codex)
-
-The observer can stop the CLI immediately on step overflow and the `Stopped` terminal path emits only `max_steps_exhausted`, so any usage that would arrive after the last completed item is lost; this under-reports spend for capped runs.
-
-```
-`if request.max_steps is Some(limit) && state.steps > limit {\n        return @shim.Stop\n      }` then later `Stopped => @shim.emit(@shim.max_steps_exhausted())`, with no usage fallback/settlement when stopping.
-```
-
-Verifier (explore): Confirmed: on step overflow the observer returns Stop on the overflowing item.completed line (shim/codex/main.mbt:54-56), run_cli then cancels the process and stops reading stdout (shim/shim.mbt:257-261), and the Stopped terminal path emits only max_steps_exhausted (shim/codex/main.mbt:63) — yet Codex usage arrives only on the later turn.completed line (shim/codex/dialect.mbt:56-82, fixture ordering at 137-141), which is never read for the interrupted turn, and the Codex dialect keeps no usage snapshot to settle, unlike the Claude shim's explicit settle fallback for runs ended without their result (shim/claude/main.mbt:73-78).
+Court: claude, codex, explore. 2 finding(s) raised · 0 confirmed · 2 uncertain · 0 refuted
 
 ## Uncertain
 
-### shim/shim.mbt:257 — Observer exception can bypass child teardown (medium, raised by codex)
+### shim/shim.mbt:52 — Missing `input` field on a valid v1 envelope is misreported as an unsupported version (medium, raised by claude)
 
-If the caller-provided `observe` function throws while processing a stdout line, `run_cli` falls into the outer `catch`, sets `failure`, and returns `Failed` without cancelling the spawned process or closing `stdout_reader`, so the child can continue running after shim failure.
-
-```
-`while stdout_reader.read_until("\n") is Some(line) {` ... `if observe(line) is Stop {` ... `}` at lines 253-261 plus `catch { ... error => { if failure.val is None { failure.val = Some("shim run failed: \{error}") } } }` at lines 273-278.
-```
-
-Verifier (explore): verifier failed: agent 'verify:shim/shim.mbt:257' exhausted its step ceiling
-
-### shim/shim.mbt:273 — Cancellation path re-raises without cleanup (high, raised by codex)
-
-Cancellation errors are immediately rethrown with no process cleanup, which can leave the child process alive after caller cancellation instead of being torn down and can keep resources/pipes open.
+When `workflow_contract` is exactly 1 but the `input` key is absent (e.g. `{"workflow_contract": 1, "kind": "explore"}`), the first match arm fails to match only because `input` is missing, and control falls through to the second arm, which reports the version as unsupported even though version 1 is exactly what was supplied and is supported. This contradicts the function's own doc comment ("Accepts the v1 envelope ... or a bare input ... anything else is a typed refusal") which treats version-rejection and input-validation as separate failure modes, and sends a caller debugging a malformed request down the wrong path (they'd conclude the contract version needs bumping, when the real problem is a missing `input` field).
 
 ```
-`catch {` `error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>` `  raise error` `  error => { ... } }` (lines 272-279) contains no `process.cancel()`/reader close in the cancellation branch.
+{ "workflow_contract": Number(1, ..), "input": input, .. } => { ... }
+    { "workflow_contract": Number(version, ..), .. } =>
+      return Err("unsupported workflow_contract version \{version}")
 ```
 
-Verifier (explore): verifier failed: agent 'verify:shim/shim.mbt:273' exhausted its step ceiling
+Verifier (codex): verifier failed: agent 'verify:shim/shim.mbt:52' failed: codex: You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 11:36 PM.
+
+### shim/shim.mbt:48 — Wrong-typed max_steps silently treated as "no ceiling" instead of erroring (medium, raised by claude)
+
+The adjacent comment states the explicit design intent that a malformed `max_steps` must never fall through to "no ceiling", citing a prior cross-engine review finding that fixed exactly this bug for fractional numbers. But the fix only covers the case where `max_steps` is a JSON Number; if `max_steps` is present with any other JSON type (string, bool, array, object), the outer match's `_ => None` arm silently treats it as absent, reintroducing the same failure mode (a request meant to cap steps runs uncapped) for a different malformed-value shape.
+
+```
+let max_steps = match json {
+        { "max_steps": Number(steps, ..), .. } =>
+          match integral(steps) {
+            Some(steps) => Some(steps)
+            None => return Err("shim input max_steps must be an integer")
+          }
+        _ => None
+      }
+```
+
+Verifier (codex): verifier failed: agent 'verify:shim/shim.mbt:48' failed: codex: You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 11:36 PM.
 
 ## Cost
 
 | engine | calls | steps | prompt tokens | completion tokens |
 | --- | ---: | ---: | ---: | ---: |
-| claude | 1 | 17 | 763154 | 78 |
-| codex | 2 | 37 | 1357106 | 43260 |
-| explore | 5 | 61 | 1477462 | 82038 |
+| claude | 2 | 11 | 450003 | 41810 |
+| codex | 4 | 2 | 0 | 0 |
+| explore | 2 | 10 | 210149 | 68373 |
 
-8 live call(s), 1 replayed, 3723098 fresh tokens.
+8 live call(s), 0 replayed, 770335 fresh tokens.

@@ -2,8 +2,8 @@ import {
   "moonbitlang/async@0.21.1",
   "moonbitlang/async@0.21.1/fs",
   "moonbitlang/async@0.21.1/process",
-  "moonbitlang/workflow@0.3.3",
-  "moonbitlang/workflow@0.3.3/spawn",
+  "moonbitlang/workflow@0.3.4",
+  "moonbitlang/workflow@0.3.4/spawn",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
@@ -161,7 +161,7 @@ async fn review() -> Unit {
             args: argv,
             cwd: None,
             extra_env: None,
-            deadline_ms: Some(300_000),
+            deadline_ms: Some(600_000),
           }
         }
       }

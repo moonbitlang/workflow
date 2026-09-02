@@ -39,16 +39,24 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
       }
       // A fractional ceiling is a malformed request, never "no ceiling"
       // (cross-engine review finding: it used to fall through to None).
+      // A present-but-wrong ceiling (a string, null, 5.5) is a malformed
+      // request, never "no ceiling" (cross-engine review findings).
       let max_steps = match json {
         { "max_steps": Number(steps, ..), .. } =>
           match integral(steps) {
             Some(steps) => Some(steps)
             None => return Err("shim input max_steps must be an integer")
           }
+        { "max_steps": _, .. } =>
+          return Err("shim input max_steps must be an integer")
         _ => None
       }
       (id, kind, max_steps, input)
     }
+    // A v1 envelope without its payload is malformed, not an unsupported
+    // version (cross-engine review finding).
+    { "workflow_contract": Number(1, ..), .. } =>
+      return Err("shim input envelope has no `input`")
     { "workflow_contract": Number(version, ..), .. } =>
       return Err("unsupported workflow_contract version \{version}")
     other => (None, "explore", None, other)
