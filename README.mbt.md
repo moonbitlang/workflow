@@ -234,6 +234,13 @@ contract prescribes. The dialects are recorded-line tests
 what each CLI emits today, so an upstream format change fails a test
 rather than a workflow.
 
+Composing engines is routing by kind: `contract_runner`'s `launch` sees
+every call's `kind`, so one `match` sends `claude` calls to one shim,
+`codex` calls to the other, and everything else to `openseek subrun
+<kind>`. `examples/compose.mbtx` does exactly that — a keyless openseek
+probe, Claude and Codex answering the same question in parallel, and
+Claude judging both — in one workflow with one journal, so a second run
+replays all four calls.
 For in-process engines (and tests), implement one async function and
 wrap it:
 

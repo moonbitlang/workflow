@@ -1,0 +1,136 @@
+import {
+  "moonbitlang/async@0.21.1",
+  "moonbitlang/workflow@0.3.2",
+  "moonbitlang/workflow@0.3.2/spawn",
+  "moonbitlang/core/env",
+}
+
+///|
+/// Composing ENGINES: one workflow, three agents. The runner routes by
+/// KIND — `claude` launches the Claude Code shim, `codex` the Codex shim,
+/// anything else is an `openseek subrun <kind>` — so the script mixes them
+/// freely: a keyless openseek `echo` probe, Claude and Codex answering the
+/// same question in parallel, and Claude judging both answers (its prompt
+/// EMBEDS them, so the journal's dataflow graph shows the two edges).
+///
+///   just shims
+///   moon run examples/compose.mbtx [claude-model] [codex-model]   (twice: the second run replays)
+///
+/// Needs `openseek`, `claude`, and `codex` on PATH, logged in.
+async fn main {
+  compose() catch {
+    error => println("workflow failed: \{error}")
+  }
+}
+
+///|
+async fn compose() -> Unit {
+  let args = @env.args()
+  let claude_model = args.get(1).unwrap_or("claude-haiku-4-5-20251001")
+  let codex_model = args.get(2).unwrap_or("gpt-5.3-codex-spark")
+  let shims = "_build/native/debug/build/shim"
+  let wf = @workflow.Workflow(
+    runner=@spawn.contract_runner(launch=call => match call.kind {
+      "claude" =>
+        {
+          command: "\{shims}/claude/claude.exe",
+          args: ["--model", claude_model],
+          cwd: None,
+          extra_env: None,
+          deadline_ms: Some(180_000),
+        }
+      "codex" =>
+        {
+          command: "\{shims}/codex/codex.exe",
+          args: ["--model", codex_model],
+          cwd: None,
+          extra_env: None,
+          deadline_ms: Some(180_000),
+        }
+      kind =>
+        {
+          command: "openseek",
+          args: ["subrun", kind],
+          cwd: None,
+          extra_env: None,
+          deadline_ms: None,
+        }
+    }),
+    journal=@workflow.Journal::load("compose.jsonl"),
+    max_concurrent=2,
+    on_event=event => match event {
+      @workflow.PhaseStarted(title) => println("━━ \{title}")
+      @workflow.AgentStarted(label~, kind~, ..) => println("  ▶ \{label} (\{kind})")
+      @workflow.AgentReplayed(label~, ..) => println("  ↺ \{label} (replayed)")
+      _ => ()
+    },
+  )
+
+  // ---- Probe: the reference engine, keyless ----
+  wf.phase("Probe")
+  let ping = wf.agent("ping", kind="echo", label="probe:openseek")
+  println("  echo returned \{ping.stringify()}")
+
+  // ---- Answer: two engines, in parallel, same question ----
+  wf.phase("Answer")
+  let question = "In ONE sentence: what does the file spawn/contract.mbt in this repository do? Read it before answering."
+  let answers = @workflow.fan_out(["claude", "codex"], engine => wf.try_agent(
+    question,
+    kind=engine,
+    label="answer:\{engine}",
+    max_steps=8,
+  ))
+  let texts : Array[String] = []
+  for index, engine in ["claude", "codex"] {
+    match answers[index] {
+      Ok(report) => {
+        let text = answer_of(report)
+        texts.push(text)
+        println("  \{engine}: \{clip(text, 240)}")
+      }
+      Err(error) => println("  \{engine} FAILED: \{error}")
+    }
+  }
+  guard texts.length() == 2 else {
+    println("not enough answers to judge")
+    return
+  }
+
+  // ---- Judge: one engine reads both ----
+  wf.phase("Judge")
+  match
+    wf.try_agent(
+      "Two engines answered the question \"\{question}\" ||| A: \{clip(texts[0], 600)} ||| B: \{clip(texts[1], 600)} ||| Read spawn/contract.mbt yourself, then say in one sentence which answer is more accurate and why, ending with VERDICT: A or VERDICT: B.",
+      kind="claude",
+      label="judge:claude",
+      max_steps=6,
+    ) {
+    Ok(report) => println("  \{answer_of(report)}")
+    Err(error) => println("  judge FAILED: \{error}")
+  }
+  println(
+    "\n\{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
+  )
+}
+
+///|
+fn answer_of(report : Json) -> String {
+  match report {
+    { "answer": String(text), .. } => text
+    other => other.stringify()
+  }
+}
+
+///|
+fn clip(text : String, limit : Int) -> String {
+  let out = StringBuilder()
+  let mut count = 0
+  for ch in text {
+    if count >= limit {
+      break
+    }
+    out.write_char(ch)
+    count += 1
+  }
+  out.to_string()
+}
