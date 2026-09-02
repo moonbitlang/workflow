@@ -1,4 +1,4 @@
-# bobzhang/workflow
+# moonbitlang/workflow
 
 Engine-agnostic multi-agent workflow orchestration with journaled
 replay/resume — a MoonBit take on the workflow-as-code model: a workflow
@@ -190,6 +190,10 @@ a shim around a Rust CLI needs only to translate framing, and gets
 journal replay, budgets, and cancellation for free. An engine whose
 reports name stateful resources should also pass `validate_replay`.
 
+The wire contract in full — framing, cost accounting, terminal precedence,
+and what the reference engine reads from the envelope versus argv — is
+[docs/child-contract.md](docs/child-contract.md).
+
 For in-process engines (and tests), implement one async function and
 wrap it:
 
@@ -206,7 +210,7 @@ let runner = @workflow.Runner(call => {
 })
 ```
 
-openseek's production adapter (`agent_workflow` in the openseek module)
+[openseek](https://github.com/moonbitlang/openseek)'s production adapter (its `agent_workflow` package)
 maps `explore`/`review`/`echo` kinds onto `openseek subrun` child
 processes and adds write-capable `worker` slices — confined git
 worktrees whose outcomes are captured from git evidence, replayed by

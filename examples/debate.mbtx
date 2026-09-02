@@ -1,7 +1,7 @@
 import {
   "moonbitlang/async@0.21.1",
-  "bobzhang/workflow@0.1.1",
-  "bobzhang/workflow@0.1.1/spawn",
+  "moonbitlang/workflow@0.2.0",
+  "moonbitlang/workflow@0.2.0/spawn",
 }
 
 ///|
@@ -12,7 +12,7 @@ import {
 /// advocate's brief and a re-run replays the untouched advocate, re-runs
 /// the edited one, and re-runs the judge — nothing else.
 ///
-///   moon run workflow/examples/debate.mbtx     (from the repo root)
+///   moon run examples/debate.mbtx     (from the repo root)
 ///
 /// Needs `openseek` on PATH and a provider key in the environment.
 async fn main {
@@ -22,7 +22,7 @@ async fn main {
 }
 
 ///|
-let question : String = "Should agent_subrun remain a separate package wrapping workflow/spawn, or should its remaining duties (ids, lifecycle brackets, child sessions, report re-typing) fold into workflow/spawn?"
+let question : String = "Should the `spawn` sub-package stay a separate package whose only dependency edge points spawn -> workflow, or should its child-contract runner fold into the core `workflow` package?"
 
 ///|
 async fn debate() -> Unit {
@@ -43,11 +43,11 @@ async fn debate() -> Unit {
   let briefs = [
     (
       "keep",
-      "Argue FOR keeping agent_subrun as a separate package over workflow/spawn. Ground every point in concrete code. \{question}",
+      "Argue FOR keeping spawn as a separate package over the core. Ground every point in concrete code. \{question}",
     ),
     (
       "fold",
-      "Argue FOR folding agent_subrun's remaining duties into workflow/spawn. Ground every point in concrete code. \{question}",
+      "Argue FOR folding the contract runner into the core package. Ground every point in concrete code. \{question}",
     ),
   ]
   let positions = @workflow.all_ok(
@@ -56,7 +56,7 @@ async fn debate() -> Unit {
       wf.try_agent(
         prompt,
         kind="explore",
-        hints="agent_subrun/runner.mbt workflow/spawn/contract.mbt",
+        hints="spawn/contract.mbt runner.mbt moon.pkg spawn/moon.pkg",
         label="advocate:\{side}",
         max_steps=16,
       )

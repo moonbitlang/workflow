@@ -1,7 +1,7 @@
 import {
   "moonbitlang/async@0.21.1",
-  "bobzhang/workflow@0.1.1",
-  "bobzhang/workflow@0.1.1/spawn",
+  "moonbitlang/workflow@0.2.0",
+  "moonbitlang/workflow@0.2.0/spawn",
 }
 
 ///|
@@ -9,7 +9,7 @@ import {
 /// repository IN PARALLEL, each a real model-driven child process,
 /// journaled so a re-run replays every answer for free.
 ///
-///   moon run workflow/examples/research.mbtx     (from the repo root)
+///   moon run examples/research.mbtx     (from the repo root)
 ///
 /// Needs `openseek` on PATH and a provider key in the environment
 /// (DEEPSEEK / KIMI / GLM). Run it twice: generation 2 spawns nothing.
@@ -40,15 +40,15 @@ async fn research() -> Unit {
   let questions = [
     (
       "How does the workflow journal repair a torn tail on load? One short paragraph.",
-      "workflow/journal.mbt",
+      "journal.mbt",
     ),
     (
-      "What fields does the workflow child contract's v1 request envelope carry, and who unwraps it? One short paragraph.",
-      "workflow/spawn/contract.mbt cmd/openseek/subrun.mbt",
+      "What fields does the child contract's v1 request envelope carry, and which of them does a reference engine actually honour? One short paragraph.",
+      "spawn/contract.mbt docs/child-contract.md",
     ),
     (
-      "When does a worker slice count as SUCCESS in agent_workflow? One short paragraph.",
-      "agent_workflow/worker_runner.mbt",
+      "When does `contract_run` classify a run as TimedOut rather than NoReport? One short paragraph.",
+      "spawn/contract.mbt",
     ),
   ]
   let results = @workflow.fan_out(questions, question => {

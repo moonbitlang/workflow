@@ -1,7 +1,7 @@
 import {
-  "bobzhang/workflow",
+  "moonbitlang/workflow",
   "moonbitlang/async",
-  "bobzhang/workflow/spawn",
+  "moonbitlang/workflow/spawn",
   "moonbitlang/core/env",
 }
 

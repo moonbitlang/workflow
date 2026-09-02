@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  moon-gates:
+    runs-on: ${{ matrix.os }}
+    # Nightly toolchain breakage is advance warning, not a gate: it must not
+    # block a PR that is green on stable.
+    continue-on-error: ${{ matrix.channel == 'nightly' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        channel: [stable, nightly]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: install moon (${{ matrix.channel }})
+        run: |
+          if [ "${{ matrix.channel }}" = "nightly" ]; then
+            curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s nightly
+          else
+            curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          fi
+          echo "$HOME/.moon/bin" >> $GITHUB_PATH
+
+      - name: post install
+        run: |
+          moon version --all
+          moon update
+
+      - name: check
+        run: |
+          moon check --target native --deny-warn
+          moon check --target wasm --deny-warn
+          moon fmt --check
+
+      # The spawn tests drive scripted `sh` children; the wasm run covers
+      # the pure core (journal, combinators, replay) on the second target.
+      - name: test
+        run: |
+          moon test --target native
+          moon test --target wasm

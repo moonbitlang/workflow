@@ -1,6 +1,6 @@
 ///|
 /// A WORKFLOW SCRIPT: the shape a generated or hand-written orchestration
-/// takes. Its whole dependency closure is `bobzhang/workflow` (plus its
+/// takes. Its whole dependency closure is `moonbitlang/workflow` (plus its
 /// `spawn` sub-package) — the engine is just a binary path in argv[1]
 /// that speaks the child contract.
 ///

@@ -1,7 +1,7 @@
 import {
   "moonbitlang/async@0.21.1",
-  "bobzhang/workflow@0.1.1",
-  "bobzhang/workflow@0.1.1/spawn",
+  "moonbitlang/workflow@0.2.0",
+  "moonbitlang/workflow@0.2.0/spawn",
 }
 
 ///|
@@ -12,7 +12,7 @@ import {
 /// express. The journal makes the whole hunt resumable mid-loop: a
 /// killed round re-attempts, finished rounds replay.
 ///
-///   moon run workflow/examples/todo-hunt.mbtx     (from the repo root)
+///   moon run examples/todo-hunt.mbtx     (from the repo root)
 ///
 /// Needs `openseek` on PATH and a provider key in the environment.
 async fn main {
@@ -48,7 +48,7 @@ async fn hunt() -> Unit {
       clip(found.join(" ||| "), 1400)
     }
     let answer = wf.try_agent(
-      "Hunt the packages workflow/, agent_workflow/, agent_subtask/ for ONE piece of explicitly deferred work (a TODO/FIXME, a documented known limit, or a 'future work'/'post-v1'/'deferred' note) NOT already in this list: \{seen}. Reply STRICTLY one line: 'ITEM: file:line — what is deferred — why it matters' or exactly 'DRY' if you can find nothing new.",
+      "Hunt this repository (the core package, spawn/, viz/, docs/) for ONE piece of explicitly deferred work (a TODO/FIXME, a documented known limit, or a 'future work'/'post-v1'/'deferred' note) NOT already in this list: \{seen}. Reply STRICTLY one line: 'ITEM: file:line — what is deferred — why it matters' or exactly 'DRY' if you can find nothing new.",
       kind="explore",
       max_steps=14,
       label="hunter round \{rounds}",

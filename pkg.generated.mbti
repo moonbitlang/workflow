@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "bobzhang/workflow"
+package "moonbitlang/workflow"
 
 import {
   "moonbitlang/async/semaphore",

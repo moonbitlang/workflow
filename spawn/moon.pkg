@@ -1,5 +1,5 @@
 import {
-  "bobzhang/workflow",
+  "moonbitlang/workflow",
   "moonbitlang/async",
   "moonbitlang/async/io",
   "moonbitlang/async/process",
@@ -7,7 +7,7 @@ import {
 }
 
 import {
-  "bobzhang/workflow",
+  "moonbitlang/workflow",
   "moonbitlang/async",
   "moonbitlang/async/fs",
   "moonbitlang/async/process",

@@ -1,7 +1,7 @@
 import {
   "moonbitlang/async@0.21.1",
-  "bobzhang/workflow@0.1.1",
-  "bobzhang/workflow@0.1.1/spawn",
+  "moonbitlang/workflow@0.2.0",
+  "moonbitlang/workflow@0.2.0/spawn",
 }
 
 ///|
@@ -10,7 +10,7 @@ import {
 /// an actionable drift report. The practical pre-release sweep —
 /// journaled, so iterating on the report format below re-runs nothing.
 ///
-///   moon run workflow/examples/doc-audit.mbtx     (from the repo root)
+///   moon run examples/doc-audit.mbtx     (from the repo root)
 ///
 /// Needs `openseek` on PATH and a provider key in the environment.
 async fn main {
@@ -34,10 +34,10 @@ async fn audit() -> Unit {
   )
   wf.phase("Audit")
   let targets = [
-    ("workflow", "workflow/README.mbt.md"),
-    ("workflow/spawn", "workflow/spawn/contract.mbt"),
-    ("agent_workflow", "agent_workflow/README.mbt.md"),
-    ("agent_subrun", "agent_subrun/README.mbt.md"),
+    ("readme", "README.mbt.md"),
+    ("spawn", "spawn/contract.mbt"),
+    ("child-contract", "docs/child-contract.md"),
+    ("viz", "viz/main.mbt"),
   ]
   let results = @workflow.fan_out(targets, target => {
     let (name, doc) = target

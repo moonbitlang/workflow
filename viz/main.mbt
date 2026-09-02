@@ -6,7 +6,7 @@
 /// workflows declare no graph, so none is stored; content recovers it.
 ///
 ///   moon run workflow/viz -- <journal.jsonl> [out.html] [--watch]
-///   moonx bobzhang/workflow/viz <journal.jsonl> [out.html] [--watch]
+///   moonx moonbitlang/workflow/viz <journal.jsonl> [out.html] [--watch]
 ///
 /// `--watch` re-renders every 2 seconds and the page auto-refreshes —
 /// a live view of a RUNNING workflow's completions.
