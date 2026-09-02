@@ -72,7 +72,10 @@ async fn run() -> Unit {
 }
 
 ///|
-/// The CLI argv for one request: the prompt is the last positional.
+/// The CLI argv for one request: the prompt is the last positional. Codex
+/// reads stdin as ADDITIONAL input even with a prompt on argv ("Reading
+/// additional input from stdin…"), so the EOF `run_cli` puts on the CLI's
+/// stdin is what keeps it from blocking.
 fn codex_args(
   request : @shim.Request,
   options : @shim.Options,
