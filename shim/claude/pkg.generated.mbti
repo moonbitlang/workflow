@@ -1,0 +1,25 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/workflow/shim/claude"
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct Claude {
+  mut steps : Int
+  mut charged : Bool
+  mut answer : Json?
+  mut session_id : String?
+  mut num_turns : Int?
+  mut cost_usd : Double?
+  mut failure : String?
+  mut exhausted : Bool
+}
+pub fn Claude::new() -> Self
+pub fn Claude::observe(Self, String) -> Array[Json]
+pub fn Claude::report(Self) -> Json?
+
+// Type aliases
+
+// Traits

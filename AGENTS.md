@@ -13,6 +13,10 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
   Finish with `just tidy` (`moon info && moon fmt`) and review the
   `pkg.generated.mbti` diff — an unchanged interface means an internal
   refactor.
+- `shim/` is the shim side of the contract; `shim/claude` and `shim/codex`
+  are process shims around those CLIs. Their dialect tests are recorded
+  JSONL lines: when a CLI changes its output format, update the fixture
+  AND the classifier together, never one of them.
 - The `.mbtx` scripts under `examples/` are not part of `moon test`: they
   bind the PUBLISHED module by version in their import header, so bump
   those pins when releasing.

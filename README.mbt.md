@@ -194,6 +194,46 @@ The wire contract in full — framing, cost accounting, terminal precedence,
 and what the reference engine reads from the envelope versus argv — is
 [docs/child-contract.md](docs/child-contract.md).
 
+## Claude Code and Codex as engines
+
+Two PROCESS SHIMS ship with this module: executables that speak the child
+contract on their own stdin/stdout and drive `claude -p --output-format
+stream-json` or `codex exec --json` underneath, translating framing both
+ways. Build once, then point a `LaunchSpec` at the binary — nothing in the
+library knows they exist:
+
+```sh
+moon build shim/claude --target native   # _build/native/debug/build/shim/claude/claude.exe
+moon build shim/codex --target native    # _build/native/debug/build/shim/codex/codex.exe
+```
+
+```moonbit nocheck
+///|
+let runner = @spawn.contract_runner(launch=call => {
+  command: "_build/native/debug/build/shim/claude/claude.exe",
+  // read-only by default; `worker` calls (or --writable) may edit
+  args: ["--model", "claude-sonnet-5", "--", "--max-budget-usd", "2"],
+  cwd: None,
+  extra_env: None,
+  deadline_ms: None,
+})
+```
+
+Both shims take the same options — `--command <exe>`, `--model <name>`,
+`--cwd <dir>`, `--writable`, `--schema <file>`, and `-- <args…>` passed to
+the CLI verbatim (the escape hatch for a flag the shim does not know
+yet). The request's `max_steps` IS enforced by the shim, since neither CLI
+has a turn cap of its own: each model call (Claude) or completed
+non-reasoning item (Codex) is a step, and the CLI is torn down the moment
+the ceiling is exceeded, surfacing as `AgentFailure::MaxSteps` with the
+cost observed so far. Reports are `{"answer": …, "engine": …}` plus the
+session or thread id for resume; `--schema` makes `answer` structured.
+Provider credentials ride the inherited environment, exactly as the
+contract prescribes. The dialects are recorded-line tests
+(`shim/claude/dialect.mbt`, `shim/codex/dialect.mbt`); the fixtures pin
+what each CLI emits today, so an upstream format change fails a test
+rather than a workflow.
+
 For in-process engines (and tests), implement one async function and
 wrap it:
 

@@ -1,0 +1,21 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/workflow/shim/codex"
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct Codex {
+  mut steps : Int
+  mut thread_id : String?
+  mut last_message : String?
+  mut failure : String?
+}
+pub fn Codex::new() -> Self
+pub fn Codex::observe(Self, String) -> Array[Json]
+pub fn Codex::report(Self, structured~ : Bool) -> Json?
+
+// Type aliases
+
+// Traits

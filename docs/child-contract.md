@@ -311,6 +311,11 @@ An executable is a workflow engine when it:
 The scripted-`sh` children in `spawn/spawn_test.mbt` are executable
 examples of every terminal; openseek's `tests/cram/subrun.md` pins the
 reference engine's echo, error, and worker-validation lines byte for byte.
+The `shim/claude` and `shim/codex` executables in this module are two
+further conforming engines: each wraps a foreign CLI, reads the envelope
+through the shared `shim` package, and additionally enforces the request's
+`max_steps` itself (§7.1's argv caveat does not apply to them — they read
+`kind` and `max_steps` from the envelope).
 The smallest conforming engine is a shell script:
 
 ```sh

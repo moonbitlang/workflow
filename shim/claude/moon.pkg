@@ -1,0 +1,12 @@
+import {
+  "moonbitlang/workflow/shim",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+
+supported_targets = "native+wasm"
+
+pkgtype(kind: "executable")

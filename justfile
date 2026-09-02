@@ -20,3 +20,8 @@ tidy:
 # Render a journal to HTML (add --watch to follow a running workflow).
 viz *args:
     moon run viz -- {{ args }}
+
+# Build the Claude Code and Codex process shims (native).
+shims:
+    moon build shim/claude --target native
+    moon build shim/codex --target native

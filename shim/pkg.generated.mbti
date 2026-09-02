@@ -1,0 +1,65 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/workflow/shim"
+
+// Values
+pub fn agent_step(Int) -> Json
+
+pub fn command_error(String) -> Json
+
+pub async fn emit(Json) -> Unit
+
+pub async fn emit_report(Json) -> Unit
+
+pub fn integral(Double) -> Int?
+
+pub fn max_steps_exhausted() -> Json
+
+pub async fn read_request() -> Result[Request, String]?
+
+pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, watch_stdin? : Bool, observe~ : async (String) -> Verdict) -> CliExit
+
+pub fn turn_failed(String) -> Json
+
+pub fn usage(prompt_tokens~ : Int, completion_tokens~ : Int, cache_hit~ : Int, cache_miss~ : Int) -> Json
+
+// Errors
+
+// Types and methods
+pub enum CliExit {
+  Exited(Int)
+  Stopped
+  Cancelled
+  Failed(String)
+} derive(Eq)
+pub fn CliExit::equal(Self, Self) -> Bool
+pub fn CliExit::not_equal(Self, Self) -> Bool
+
+pub(all) struct Options {
+  command : String
+  model : String?
+  cwd : String?
+  writable : Bool
+  schema : String?
+  extra : Array[String]
+}
+pub fn Options::parse(ArrayView[String], default_command~ : String) -> Result[Self, String]
+
+pub(all) struct Request {
+  id : String?
+  kind : String
+  max_steps : Int?
+  input : Json
+  prompt : String
+}
+pub fn Request::parse(String) -> Result[Self, String]
+
+pub(all) enum Verdict {
+  Continue
+  Stop
+} derive(Eq)
+pub fn Verdict::equal(Self, Self) -> Bool
+pub fn Verdict::not_equal(Self, Self) -> Bool
+
+// Type aliases
+
+// Traits
