@@ -1,6 +1,7 @@
 import {
   "moonbitlang/async",
   "moonbitlang/async/process",
+  "moonbitlang/async/signal",
   "moonbitlang/async/stdio",
   "moonbitlang/core/json",
 }
@@ -8,6 +9,7 @@ import {
 import {
   "moonbitlang/async",
   "moonbitlang/async/process",
+  "moonbitlang/async/signal",
 } for "test"
 
 supported_targets = "native+wasm"

@@ -226,7 +226,10 @@ yet). The request's `max_steps` IS enforced by the shim, since neither CLI
 has a turn cap of its own: each model call (Claude) or completed
 non-reasoning item (Codex) is a step, and the CLI is torn down the moment
 the ceiling is exceeded, surfacing as `AgentFailure::MaxSteps` with the
-cost observed so far. Reports are `{"answer": …, "engine": …}` plus the
+cost observed so far. The stop is graceful (SIGINT, then a grace to
+flush): Claude's per-message snapshots are settled on that path; Codex
+reports usage only when a turn completes and does not flush on SIGINT,
+so a capped Codex run records zero cost rather than an estimate. Reports are `{"answer": …, "engine": …}` plus the
 session or thread id for resume; `--schema` makes `answer` structured.
 Provider credentials ride the inherited environment, exactly as the
 contract prescribes. The dialects are recorded-line tests

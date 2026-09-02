@@ -37,10 +37,15 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
       } else {
         "explore"
       }
-      let max_steps = if json is { "max_steps": Number(steps, ..), .. } {
-        integral(steps)
-      } else {
-        None
+      // A fractional ceiling is a malformed request, never "no ceiling"
+      // (cross-engine review finding: it used to fall through to None).
+      let max_steps = match json {
+        { "max_steps": Number(steps, ..), .. } =>
+          match integral(steps) {
+            Some(steps) => Some(steps)
+            None => return Err("shim input max_steps must be an integer")
+          }
+        _ => None
       }
       (id, kind, max_steps, input)
     }
@@ -179,13 +184,25 @@ pub extend CliExit with Eq::{equal, not_equal}
 /// CLI's), hand every stdout line to `observe`, and tear the CLI down when
 /// the observer says `Stop` or the parent closes our stdin. stderr is
 /// inherited, so the CLI's diagnostics reach the parent's stderr
-/// untouched. `watch_stdin=false` is for tests, whose stdin is not a
-/// parent's pipe.
+/// untouched.
+///
+/// A `Stop` is GRACEFUL: the CLI gets `stop_signal` (SIGINT, its own Ctrl-C
+/// path) and `stop_grace_ms` to flush,
+/// and every line it prints meanwhile still reaches `observe` — a CLI
+/// that reports usage only at the end of a turn (Codex) can still get its
+/// cost recorded on a capped run. Then it is killed. Every error path —
+/// an observer that raises, a broken pipe, the caller's cancellation —
+/// closes the pipes and terminates the CLI before returning or
+/// re-raising; the task group would reap it anyway, but not before the
+/// caller had already been told. `watch_stdin=false` is for tests, whose
+/// stdin is not a parent's pipe.
 pub async fn run_cli(
   command~ : String,
   args~ : Array[String],
   cwd? : String,
   watch_stdin? : Bool = true,
+  stop_grace_ms? : Int = 3_000,
+  stop_signal? : @signal.Signal = @signal.SIGINT,
   observe~ : async (String) -> Verdict,
 ) -> CliExit {
   let cancelled : Ref[Bool] = { val: false, }
@@ -220,6 +237,12 @@ pub async fn run_cli(
         stdin=child_stdin,
         stdout=child_stdout,
         cwd?=cwd.map(dir => dir.view()),
+        // `cancel()` sends SIGINT first — the CLI's own Ctrl-C path, the
+        // one it flushes on — and kills only after the grace.
+        cancel_handler=@process.graceful_cancel(
+          timeout=stop_grace_ms,
+          signal=stop_signal,
+        ),
         no_wait=true,
       ) catch {
         error if @async.is_being_cancelled() => {
@@ -245,24 +268,47 @@ pub async fn run_cli(
           process.cancel()
         }
       }
-      while stdout_reader.read_until("\n") is Some(line) {
-        if cancelled.val {
-          break
+      fn teardown() -> Unit {
+        stdout_reader.close()
+        process.cancel()
+      }
+      try {
+        while stdout_reader.read_until("\n") is Some(line) {
+          if cancelled.val {
+            break
+          }
+          if observe(line) is Stop {
+            stopped.val = true
+            // Graceful: SIGINT now, keep listening through the grace so a
+            // final accounting line still counts, then the handler kills.
+            process.cancel()
+            let _ = @async.with_timeout_opt(stop_grace_ms, () => {
+              while stdout_reader.read_until("\n") is Some(late) {
+                let _ = observe(late)
+              }
+            })
+            break
+          }
         }
-        if observe(line) is Stop {
-          stopped.val = true
-          process.cancel()
-          break
+        if !cancelled.val && !stopped.val {
+          // Bounded: a CLI that closed stdout but lingers is torn down below.
+          code.val = @async.with_timeout_opt(2_000, () => process.wait()).unwrap_or(
+            -1,
+          )
+        }
+      } catch {
+        error => {
+          @async.protect_from_cancel(() => teardown())
+          if @async.is_being_cancelled() {
+            raise error
+          }
+          if failure.val is None {
+            failure.val = Some("shim run failed: \{error}")
+          }
+          return
         }
       }
-      if !cancelled.val && !stopped.val {
-        // Bounded: a CLI that closed stdout but lingers is torn down below.
-        code.val = @async.with_timeout_opt(2_000, () => process.wait()).unwrap_or(
-          -1,
-        )
-      }
-      stdout_reader.close()
-      process.cancel()
+      teardown()
     }
   catch {
     error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>

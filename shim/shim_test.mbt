@@ -105,14 +105,19 @@ async test "Stop tears the CLI down and wins over its exit status" {
   }
   let script =
     #|echo first
+    #|trap 'echo flushed; exit 0' TERM
     #|echo second
-    #|sleep 30
+    #|while :; do sleep 1; done
     #|echo never
   let seen : Array[String] = []
   let exit = @shim.run_cli(
     command="sh",
     args=["-c", script],
     watch_stdin=false,
+    // SIGTERM here: `moon test` runs with SIGINT ignored, and a
+    // non-interactive sh cannot trap a signal ignored on entry (POSIX),
+    // so the default SIGINT would be a silent no-op in this harness.
+    stop_signal=@signal.SIGTERM,
     observe=line => {
       seen.push(line.trim(chars="\r\n").to_owned())
       if seen.length() == 2 {
@@ -123,7 +128,8 @@ async test "Stop tears the CLI down and wins over its exit status" {
     },
   )
   assert_true(exit is @shim.Stopped)
-  assert_eq(seen, ["first", "second"])
+  // The trap ran inside the grace: its line was observed too.
+  assert_eq(seen, ["first", "second", "flushed"])
 }
 
 ///|
@@ -135,4 +141,16 @@ async test "an unspawnable command is a Failed exit, never a crash" {
     observe=_ => @shim.Continue,
   )
   assert_true(exit is @shim.Failed(_))
+}
+
+///|
+test "a fractional step ceiling is a malformed request, never no ceiling" {
+  // Cross-engine review finding: `integral` rejected 5.5 but the request
+  // then read as "no max_steps" — an unbounded run from a bad envelope.
+  assert_true(
+    @shim.Request::parse(
+      "{\"workflow_contract\":1,\"max_steps\":5.5,\"input\":{\"query\":\"q\"}}",
+    )
+    is Err("shim input max_steps must be an integer"),
+  )
 }

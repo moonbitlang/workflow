@@ -1,0 +1,1 @@
+{"type":"object","properties":{"verdict":{"type":"string","enum":["confirmed","refuted","uncertain"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}

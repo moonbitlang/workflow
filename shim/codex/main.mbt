@@ -11,7 +11,10 @@
 /// `worker`, or `--writable`, uses `workspace-write`. The request's
 /// `max_steps` IS enforced here — each completed non-reasoning item is a
 /// step, and the CLI is torn down the moment the ceiling is exceeded —
-/// because the CLI has no turn cap of its own.
+/// because the CLI has no turn cap of its own. Known limit (verified live
+/// on codex-cli 0.151): Codex reports usage only on `turn.completed` and
+/// does NOT flush it on SIGINT, so a capped run reports zero cost — the
+/// parent sees `MaxSteps` with an honest zero, never an estimate.
 async fn main {
   run() catch {
     error =>
@@ -45,12 +48,14 @@ async fn run() -> Unit {
     args=codex_args(request, options),
     cwd?=options.cwd,
     observe=line => {
-      let events = state.observe(line)
+      // Emit first, then judge the ceiling: the over-limit step DID happen
+      // (the CLI already made the call), so its step and cost are reported
+      // before the run is stopped — steps and charges stay consistent.
+      for event in state.observe(line) {
+        @shim.emit(event)
+      }
       if request.max_steps is Some(limit) && state.steps > limit {
         return @shim.Stop
-      }
-      for event in events {
-        @shim.emit(event)
       }
       @shim.Continue
     },

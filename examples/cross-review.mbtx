@@ -1,0 +1,484 @@
+import {
+  "moonbitlang/async@0.21.1",
+  "moonbitlang/async@0.21.1/fs",
+  "moonbitlang/async@0.21.1/process",
+  "moonbitlang/workflow@0.3.3",
+  "moonbitlang/workflow@0.3.3/spawn",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+
+///|
+/// CROSS-ENGINE REVIEW COURT: several engines review the same diff into
+/// a structured findings schema, then EVERY finding is adversarially
+/// verified by a DIFFERENT engine, and only what survives reaches the
+/// report. One model's hallucinated defect rarely survives a second model
+/// reading the code; a real one usually does.
+///
+///   just shims
+///   moon run examples/cross-review.mbtx [base=origin/main] [path...]
+///
+/// Reviews `git diff <base> -- <paths>` (working tree against base, so
+/// uncommitted work counts). The diff is split per file and packed into
+/// chunks of at most `chunk_limit` characters, so no call carries a giant
+/// context, and each (engine, chunk) review is journaled by its own hunk:
+/// after you fix one file only that file's reviews re-run. Journal:
+/// cross-review.jsonl (`moon run viz -- cross-review.jsonl` draws the
+/// finding → verdict edges). Output: cross-review.md.
+///
+/// Engines (CROSS_REVIEW_ENGINES, default `claude,codex`; `explore` adds
+/// openseek's read-only scout on DeepSeek): `claude` and `codex` run
+/// through this module's shims, `explore` through `openseek subrun`.
+/// Models: CROSS_REVIEW_CLAUDE (claude-sonnet-5), CROSS_REVIEW_CODEX
+/// (gpt-5.3-codex-spark), CROSS_REVIEW_DEEPSEEK (deepseek-v4-flash).
+async fn main {
+  review() catch {
+    error => println("workflow failed: \{error}")
+  }
+}
+
+///|
+let chunk_limit : Int = 20_000
+
+///|
+let findings_schema : String =
+  #|{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["high","medium","low"]},"title":{"type":"string"},"claim":{"type":"string"},"evidence":{"type":"string"}},"required":["file","line","severity","title","claim","evidence"],"additionalProperties":false}}},"required":["findings"],"additionalProperties":false}
+
+///|
+let verdict_schema : String =
+  #|{"type":"object","properties":{"verdict":{"type":"string","enum":["confirmed","refuted","uncertain"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}
+
+///|
+struct Finding {
+  engine : String
+  file : String
+  line : Int
+  severity : String
+  title : String
+  claim : String
+  evidence : String
+}
+
+///|
+fn Finding::to_json(self : Finding) -> Json {
+  {
+    "file": self.file,
+    "line": self.line,
+    "severity": self.severity,
+    "title": self.title,
+    "claim": self.claim,
+    "evidence": self.evidence,
+  }
+}
+
+///|
+async fn review() -> Unit {
+  let args = @env.args()
+  let base = args.get(1).unwrap_or("origin/main")
+  let paths = if args.length() > 2 { args[2:].to_owned() } else { [] }
+  let engines = @env.get_env_var("CROSS_REVIEW_ENGINES")
+    .unwrap_or("claude,codex")
+    .split(",")
+    .map(name => name.trim().to_owned())
+    .filter(name => !name.is_empty())
+    .collect()
+  guard engines.length() >= 2 else {
+    println("the court needs at least two engines (CROSS_REVIEW_ENGINES)")
+    return
+  }
+  let claude_model = @env.get_env_var("CROSS_REVIEW_CLAUDE").unwrap_or(
+    "claude-sonnet-5",
+  )
+  let codex_model = @env.get_env_var("CROSS_REVIEW_CODEX").unwrap_or(
+    "gpt-5.3-codex-spark",
+  )
+  let deepseek_model = @env.get_env_var("CROSS_REVIEW_DEEPSEEK").unwrap_or(
+    "deepseek-v4-flash",
+  )
+
+  // ---- The diff is the input: per-file hunks, packed into bounded chunks ----
+  let diff = git(["diff", "--no-color", "--no-ext-diff", base, "--", ..paths])
+  guard !diff.is_blank() else {
+    println("nothing to review: `git diff \{base}` is empty")
+    return
+  }
+  let stat = git(["diff", "--no-color", "--no-ext-diff", "--stat", base, "--", ..paths])
+  let head = git(["rev-parse", "--short", "HEAD"]).trim().to_owned()
+  let chunks = pack(split_per_file(diff))
+  println(
+    "reviewing \{head} against \{base} with \{engines.join("+")}: \{diff.length()} chars in \{chunks.length()} chunk(s)\n\{stat}",
+  )
+
+  // Schemas on disk: the Codex shim hands the path to `--output-schema`,
+  // the Claude shim reads it for `--json-schema`; explore gets it inline.
+  let dir = ".cross-review"
+  if !@fs.exists(dir) {
+    @fs.mkdir(dir)
+  }
+  @fs.write_file("\{dir}/findings.schema.json", findings_schema)
+  @fs.write_file("\{dir}/verdict.schema.json", verdict_schema)
+
+  // Routing: KIND picks the engine, the LABEL prefix picks the schema.
+  let shims = "_build/native/debug/build/shim"
+  let wf = @workflow.Workflow(
+    runner=@spawn.contract_runner(launch=call => {
+      let schema = if call.label.has_prefix("review:") {
+        "\{dir}/findings.schema.json"
+      } else {
+        "\{dir}/verdict.schema.json"
+      }
+      match call.kind {
+        "claude" =>
+          {
+            command: "\{shims}/claude/claude.exe",
+            args: [
+              "--schema", schema, "--model", claude_model, "--",
+              "--max-budget-usd", "0.60",
+            ],
+            cwd: None,
+            extra_env: None,
+            deadline_ms: Some(300_000),
+          }
+        "codex" =>
+          {
+            command: "\{shims}/codex/codex.exe",
+            args: ["--schema", schema, "--model", codex_model],
+            cwd: None,
+            extra_env: None,
+            deadline_ms: Some(300_000),
+          }
+        kind => {
+          // openseek reads kind and the step ceiling from ARGV
+          // (docs/child-contract.md §7.1): mirror them.
+          let argv = ["subrun", kind, "--model", deepseek_model]
+          if call.max_steps is Some(steps) {
+            argv.push("--max-steps")
+            argv.push("\{steps}")
+          }
+          {
+            command: "openseek",
+            args: argv,
+            cwd: None,
+            extra_env: None,
+            deadline_ms: Some(300_000),
+          }
+        }
+      }
+    }),
+    journal=@workflow.Journal::load("cross-review.jsonl"),
+    max_concurrent=4,
+    on_event=event => match event {
+      @workflow.PhaseStarted(title) => println("━━ \{title}")
+      @workflow.AgentStarted(label~, ..) => println("  ▶ \{label}")
+      @workflow.AgentReplayed(label~, ..) => println("  ↺ \{label} (replayed)")
+      _ => ()
+    },
+  )
+
+  // ---- Phase 1: every engine reviews every chunk, in parallel ----
+  wf.phase("Review")
+  let jobs : Array[(String, Int)] = []
+  for engine in engines {
+    for index, _ in chunks {
+      jobs.push((engine, index))
+    }
+  }
+  let reviews = @workflow.fan_out(jobs, job => {
+    let (engine, index) = job
+    wf.try_agent(
+      "You are reviewing part of a code change in the repository at the current directory. Find REAL defects only: correctness bugs, crashes, resource or process leaks, broken error handling with a concrete consequence, violations of a documented contract. No style, naming, or speculative concerns. The hunks below are complete for the files they touch. Work from them: you may read at most TWO other files, only when a claim depends on one, and you must not survey the repository. For each finding give the file path exactly as in the diff, the line number in the NEW version of the file, a severity, a one-line title, the claim, and evidence quoting the relevant code. At most 5 findings; return an empty list if this part is sound.\{format_hint(engine)}\n\nPart \{index + 1} of \{chunks.length()} of `git diff \{base}`:\n\n\{chunks[index]}",
+      kind=engine,
+      label="review:\{engine}:\{index + 1}",
+      max_steps=steps_for(engine, review=true),
+    )
+  })
+  let findings : Array[Finding] = []
+  let seen : Map[String, Bool] = Map([])
+  let raised : Map[String, Int] = Map([])
+  for index, job in jobs {
+    let (engine, chunk) = job
+    match reviews[index] {
+      Ok(report) =>
+        for finding in findings_of(engine, report) {
+          raised[engine] = raised.get(engine).unwrap_or(0) + 1
+          let key = "\{finding.file}:\{finding.line}"
+          if !seen.contains(key) {
+            seen[key] = true
+            findings.push(finding)
+          }
+        }
+      Err(error) => println("  \{engine} on part \{chunk + 1} FAILED: \{error}")
+    }
+  }
+  for engine in engines {
+    println("  \{engine} raised \{raised.get(engine).unwrap_or(0)} finding(s)")
+  }
+  guard !findings.is_empty() else {
+    println("\nno findings raised — nothing to verify")
+    write_report(head, base, engines, [], wf)
+    return
+  }
+
+  // ---- Phase 2: adversarial verification by the NEXT engine in the court ----
+  wf.phase("Verify")
+  let verdicts = @workflow.fan_out(findings, finding => {
+    let verifier = next_engine(engines, finding.engine)
+    wf.try_agent(
+      "An independent reviewer claims this defect exists in the repository at the current directory:\n\n\{finding.to_json().stringify()}\n\nRead \{finding.file} around line \{finding.line} and at most two files it depends on, then decide. `confirmed` means the defect is real as stated; `refuted` means the claim is wrong or the code already handles it — say what handles it; `uncertain` means you could not establish either. Give the reason in at most two sentences, citing code.\{format_hint(verifier)}",
+      kind=verifier,
+      label="verify:\{finding.file}:\{finding.line}",
+      max_steps=steps_for(verifier, review=false),
+    )
+  })
+  let rows : Array[(Finding, String, String, String)] = []
+  for index, finding in findings {
+    let verifier = next_engine(engines, finding.engine)
+    let (verdict, reason) = match verdicts[index] {
+      Ok(report) =>
+        match structured(report) {
+          Some({ "verdict": String(verdict), "reason": String(reason), .. }) =>
+            (verdict, reason)
+          _ => ("uncertain", "unparseable verdict: \{clip(report.stringify(), 200)}")
+        }
+      Err(error) => ("uncertain", "verifier failed: \{error}")
+    }
+    rows.push((finding, verdict, reason, verifier))
+    println("  \{verdict.to_upper()} \{finding.file}:\{finding.line} — \{finding.title}")
+  }
+  write_report(head, base, engines, rows, wf)
+}
+
+///|
+/// The verifier for a finding: the engine after its raiser in the court,
+/// cyclically — never the raiser itself.
+fn next_engine(engines : Array[String], raiser : String) -> String {
+  for index, engine in engines {
+    if engine == raiser {
+      return engines[(index + 1) % engines.length()]
+    }
+  }
+  engines[0]
+}
+
+///|
+/// The shims enforce the schema; openseek's scout answers in prose, so it
+/// is told to answer with the JSON object alone.
+fn format_hint(engine : String) -> String {
+  match engine {
+    "claude" | "codex" => ""
+    _ =>
+      " Answer with ONLY a JSON object, no prose and no code fences, of the shape {\"findings\": [{\"file\", \"line\", \"severity\": \"high|medium|low\", \"title\", \"claim\", \"evidence\"}]} for a review, or {\"verdict\": \"confirmed|refuted|uncertain\", \"reason\"} for a verification."
+  }
+}
+
+///|
+/// The structured answer of a report: the shims return it as a JSON
+/// value; a prose engine returns text that should parse as one.
+fn structured(report : Json) -> Json? {
+  match report {
+    { "answer": String(text), .. } => {
+      let body = strip_fences(text)
+      Some(@json.parse(body)) catch {
+        _ => None
+      }
+    }
+    { "answer": value, .. } => Some(value)
+    _ => None
+  }
+}
+
+///|
+fn strip_fences(text : String) -> String {
+  let trimmed = text.trim()
+  guard trimmed.has_prefix("```") else { return trimmed.to_owned() }
+  let inner = trimmed.trim_start(chars="`")
+  let after_lang = match inner.find("\n") {
+    Some(index) => inner[index + 1:]
+    None => inner
+  }
+  after_lang.trim_end(chars="`").trim().to_owned()
+}
+
+///|
+fn findings_of(engine : String, report : Json) -> Array[Finding] {
+  let out : Array[Finding] = []
+  guard structured(report) is Some({ "findings": Array(items), .. }) else {
+    return out
+  }
+  for item in items {
+    guard item
+      is {
+        "file": String(file),
+        "line": Number(line, ..),
+        "severity": String(severity),
+        "title": String(title),
+        "claim": String(claim),
+        "evidence": String(evidence),
+        ..
+      } else {
+      continue
+    }
+    out.push({
+      engine,
+      file,
+      line: line.to_int(),
+      severity,
+      title,
+      claim,
+      evidence,
+    })
+  }
+  out
+}
+
+///|
+/// One entry per changed file, in diff order.
+fn split_per_file(diff : String) -> Array[String] {
+  let files : Array[String] = []
+  let current = StringBuilder()
+  let mut open = false
+  for line in diff.split("\n") {
+    if line.has_prefix("diff --git ") {
+      if open {
+        files.push(current.to_string())
+        current.reset()
+      }
+      open = true
+    }
+    current.write_string(line.to_owned())
+    current.write_char('\n')
+  }
+  if open {
+    files.push(current.to_string())
+  }
+  files
+}
+
+///|
+/// Pack files greedily into chunks of at most `chunk_limit` characters; a
+/// single file over the limit is truncated with a marker.
+fn pack(files : Array[String]) -> Array[String] {
+  let chunks : Array[String] = []
+  let current = StringBuilder()
+  let mut used = 0
+  for file in files {
+    let piece = if file.length() > chunk_limit {
+      "\{clip(file, chunk_limit)}\n[hunk truncated at \{chunk_limit} characters]\n"
+    } else {
+      file
+    }
+    if used > 0 && used + piece.length() > chunk_limit {
+      chunks.push(current.to_string())
+      current.reset()
+      used = 0
+    }
+    current.write_string(piece)
+    used += piece.length()
+  }
+  if used > 0 {
+    chunks.push(current.to_string())
+  }
+  chunks
+}
+
+///|
+async fn write_report(
+  head : String,
+  base : String,
+  engines : Array[String],
+  rows : Array[(Finding, String, String, String)],
+  wf : @workflow.Workflow,
+) -> Unit {
+  let out = StringBuilder()
+  out <+ "# Cross-engine review of \{head} against \{base}\n\n"
+  let confirmed = rows.filter(row => row.1 == "confirmed")
+  let uncertain = rows.filter(row => row.1 == "uncertain")
+  let refuted = rows.filter(row => row.1 == "refuted")
+  out <+ "Court: \{engines.join(", ")}. \{rows.length()} finding(s) raised · \{confirmed.length()} confirmed · \{uncertain.length()} uncertain · \{refuted.length()} refuted\n\n"
+  for section in [
+      ("Confirmed", confirmed),
+      ("Uncertain", uncertain),
+      ("Refuted", refuted),
+    ] {
+    let (title, group) = section
+    if group.is_empty() {
+      continue
+    }
+    out <+ "## \{title}\n\n"
+    for row in group {
+      let (finding, _, reason, verifier) = row
+      out <+ "### \{finding.file}:\{finding.line} — \{finding.title} (\{finding.severity}, raised by \{finding.engine})\n\n"
+      out <+ "\{finding.claim}\n\n"
+      out <+ "```\n\{finding.evidence}\n```\n\n"
+      out <+ "Verifier (\{verifier}): \{reason}\n\n"
+    }
+  }
+  // Cost by engine, from the journal's attempts — replayed calls cost nothing.
+  out <+ "## Cost\n\n| engine | calls | steps | prompt tokens | completion tokens |\n| --- | ---: | ---: | ---: | ---: |\n"
+  if wf.journal is Some(journal) {
+    for engine in engines {
+      let mut calls = 0
+      let mut steps = 0
+      let mut prompt = 0
+      let mut completion = 0
+      for entry in journal.recorded() {
+        if entry.call.kind != engine {
+          continue
+        }
+        calls += 1
+        let attempt = match entry.outcome {
+          Finished(attempt~, ..) => Some(attempt)
+          DidNotFinish(attempt~, ..) => attempt
+        }
+        if attempt is Some(attempt) {
+          steps += attempt.steps_used
+          prompt += attempt.prompt_tokens
+          completion += attempt.completion_tokens
+        }
+      }
+      out <+ "| \{engine} | \{calls} | \{steps} | \{prompt} | \{completion} |\n"
+    }
+  }
+  out <+ "\n\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens.\n"
+  @fs.write_file("cross-review.md", out.to_string())
+  println(
+    "\n\{confirmed.length()} confirmed / \{uncertain.length()} uncertain / \{refuted.length()} refuted → cross-review.md · \{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
+  )
+}
+
+///|
+async fn git(args : Array[String]) -> String {
+  // Plain built-in output: a user's external diff driver or color config
+  // must not leak into what the reviewers (and the journal) see.
+  let (code, output) = @process.collect_stdout("git", ["-c", "color.ui=never", "--no-pager", ..args])
+  guard code == 0 else { fail("git \{args.join(" ")} exited \{code}") }
+  @utf8.decode_lossy(output.binary())
+}
+
+///|
+fn clip(text : String, limit : Int) -> String {
+  let out = StringBuilder()
+  let mut count = 0
+  for ch in text {
+    if count >= limit {
+      break
+    }
+    out.write_char(ch)
+    count += 1
+  }
+  out.to_string()
+}
+
+///|
+/// Step ceilings per engine: a Codex step is one shell command (cheap and
+/// numerous), a Claude or openseek step is one model call with batched
+/// tool use.
+fn steps_for(engine : String, review~ : Bool) -> Int {
+  match (engine, review) {
+    ("codex", true) => 20
+    ("codex", false) => 12
+    (_, true) => 10
+    (_, false) => 8
+  }
+}

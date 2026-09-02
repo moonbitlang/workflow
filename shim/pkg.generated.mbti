@@ -1,6 +1,10 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "moonbitlang/workflow/shim"
 
+import {
+  "moonbitlang/async/signal",
+}
+
 // Values
 pub fn agent_step(Int) -> Json
 
@@ -16,7 +20,7 @@ pub fn max_steps_exhausted() -> Json
 
 pub async fn read_request() -> Result[Request, String]?
 
-pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, watch_stdin? : Bool, observe~ : async (String) -> Verdict) -> CliExit
+pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, watch_stdin? : Bool, stop_grace_ms? : Int, stop_signal? : @signal.Signal, observe~ : async (String) -> Verdict) -> CliExit
 
 pub fn turn_failed(String) -> Json
 

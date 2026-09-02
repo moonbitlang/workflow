@@ -58,12 +58,14 @@ async fn run() -> Unit {
     args=claude_args(request, options, schema),
     cwd?=options.cwd,
     observe=line => {
-      let events = state.observe(line)
+      // Emit first, then judge the ceiling: the over-limit step DID happen
+      // (the CLI already made the call), so its step and cost are reported
+      // before the run is stopped — steps and charges stay consistent.
+      for event in state.observe(line) {
+        @shim.emit(event)
+      }
       if request.max_steps is Some(limit) && state.steps > limit {
         return @shim.Stop
-      }
-      for event in events {
-        @shim.emit(event)
       }
       @shim.Continue
     },

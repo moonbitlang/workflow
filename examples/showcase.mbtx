@@ -1,8 +1,8 @@
 import {
   "moonbitlang/async@0.21.1",
   "moonbitlang/async@0.21.1/fs",
-  "moonbitlang/workflow@0.3.2",
-  "moonbitlang/workflow@0.3.2/spawn",
+  "moonbitlang/workflow@0.3.3",
+  "moonbitlang/workflow@0.3.3/spawn",
 }
 
 ///|
