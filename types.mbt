@@ -16,6 +16,12 @@ pub(all) struct AgentCall {
   /// otherwise-identical calls non-interchangeable — model, prompt
   /// revision, tenant, workspace. Empty means "unscoped".
   scope : String
+  /// A JSON Schema the report must satisfy, when the caller asked for one.
+  /// It rides the request envelope so an engine that can constrain the
+  /// model does, and it is part of the work identity: the same question
+  /// under a different shape is different work. Absent from the journal
+  /// line when `None`, so pre-schema journals load unchanged.
+  schema : Json?
 } derive(Eq, ToJson, FromJson)
 
 ///|

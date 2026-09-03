@@ -96,6 +96,7 @@ pub async fn Workflow::agent(
   hints? : String,
   label? : String,
   max_steps? : Int,
+  schema? : Json,
 ) -> Json {
   // The explore/echo input contract: one self-contained question plus
   // optional pointers. Kinds with their own input shape (worker slices)
@@ -109,6 +110,7 @@ pub async fn Workflow::agent(
     input~,
     label=label.unwrap_or(brief(prompt)),
     max_steps?,
+    schema?,
   )
 }
 
@@ -122,6 +124,7 @@ pub async fn Workflow::agent_call(
   input~ : Json,
   label~ : String,
   max_steps? : Int,
+  schema? : Json,
 ) -> Json {
   // Phase attribution is invocation-time, not launch-time: a call issued
   // under phase A that waits out the queue into phase B still belongs to A.
@@ -132,6 +135,7 @@ pub async fn Workflow::agent_call(
     label,
     max_steps,
     scope: self.replay_scope,
+    schema,
   }
   // Replay is checked before the slot queue and the allowance: a replayed
   // result is not a launch — it holds no slot, debits no allowance, and
@@ -227,8 +231,55 @@ pub async fn Workflow::try_agent(
   hints? : String,
   label? : String,
   max_steps? : Int,
+  schema? : Json,
 ) -> Result[Json, WorkflowError] {
-  Ok(self.agent(prompt, kind~, hints?, label?, max_steps?)) catch {
+  Ok(self.agent(prompt, kind~, hints?, label?, max_steps?, schema?)) catch {
+    AgentFailed(..) as err => Err(err)
+    CallBudgetExhausted(..) as err => Err(err)
+    QuorumNotReached(..) as err => Err(err)
+    error => raise error
+  }
+}
+
+///|
+/// `agent`, decoded at the boundary: the report must satisfy `T`'s
+/// `FromJson`, or the call fails as `AgentFailed` with
+/// `Failed("report rejected: …")` carrying the decoder's message and path —
+/// the feedback a retry wants. `schema` (a JSON Schema) additionally rides
+/// the envelope so an engine that can constrain the model to the shape
+/// does; decoding still runs, because the engine is not trusted to
+/// validate. The raw report is journaled as returned, so a rejection
+/// replays as the same rejection.
+pub async fn[T : @json.FromJson] Workflow::agent_as(
+  self : Workflow,
+  prompt : String,
+  kind~ : String,
+  hints? : String,
+  label? : String,
+  max_steps? : Int,
+  schema? : Json,
+) -> T {
+  let label = label.unwrap_or(brief(prompt))
+  let value = self.agent(prompt, kind~, hints?, label~, max_steps?, schema?)
+  @json.from_json(value) catch {
+    error =>
+      raise AgentFailed(label~, failure=Failed("report rejected: \{error}"))
+  }
+}
+
+///|
+/// `agent_as` with the typed error channel folded into the return value,
+/// exactly as `try_agent` folds `agent`.
+pub async fn[T : @json.FromJson] Workflow::try_agent_as(
+  self : Workflow,
+  prompt : String,
+  kind~ : String,
+  hints? : String,
+  label? : String,
+  max_steps? : Int,
+  schema? : Json,
+) -> Result[T, WorkflowError] {
+  Ok(self.agent_as(prompt, kind~, hints?, label?, max_steps?, schema?)) catch {
     AgentFailed(..) as err => Err(err)
     CallBudgetExhausted(..) as err => Err(err)
     QuorumNotReached(..) as err => Err(err)

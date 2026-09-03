@@ -139,6 +139,7 @@ test "argv: read-only by default, writable for worker, extras before the tool li
     max_steps: None,
     input: Json::null(),
     prompt: "why?",
+    schema: None,
   }
   let options : @shim.Options = {
     command: "claude",

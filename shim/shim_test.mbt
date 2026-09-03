@@ -178,3 +178,15 @@ test "a v1 envelope without input, or with a mistyped ceiling, is refused as suc
     is Err("shim input max_steps must be an integer"),
   )
 }
+
+///|
+test "the envelope's schema reaches the request; a bare input has none" {
+  let line =
+    #|{"workflow_contract":1,"kind":"explore","schema":{"type":"object"},"input":{"query":"q"}}
+  guard @shim.Request::parse(line) is Ok(request) else { fail("parse") }
+  assert_eq(request.schema, Some({ "type": "object" }))
+  guard @shim.Request::parse("{\"query\":\"q\"}") is Ok(bare) else {
+    fail("bare")
+  }
+  assert_eq(bare.schema, None)
+}

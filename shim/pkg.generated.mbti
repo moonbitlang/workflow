@@ -54,6 +54,7 @@ pub(all) struct Request {
   max_steps : Int?
   input : Json
   prompt : String
+  schema : Json?
 }
 pub fn Request::parse(String) -> Result[Self, String]
 

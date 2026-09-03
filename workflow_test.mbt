@@ -319,3 +319,74 @@ fn disposition_word(disposition : @workflow.AgentDisposition) -> String {
     @workflow.Errored => "errored"
   }
 }
+
+///|
+/// Answers with a well-formed verdict, or a stray shape when asked to; and
+/// reports whether the call carried a schema, so the tests can see it.
+async fn shaped_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
+  @async.pause()
+  let value : Json = if call.input is { "query": String(query), .. } &&
+    query.contains("stray") {
+    { "verdict": 7 }
+  } else {
+    { "verdict": "real", "schema_seen": call.schema is Some(_) }
+  }
+  Finished(value~, attempt={
+    attempt_id: "sr-\{call.label}",
+    steps_used: 1,
+    prompt_tokens: 10,
+    completion_tokens: 5,
+  })
+}
+
+///|
+struct Verdict {
+  verdict : String
+} derive(FromJson)
+
+///|
+async test "agent_as decodes at the boundary; a stray shape is a typed rejection" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner))
+  let verdict : Verdict = wf.agent_as("is it real?", kind="judge", schema={
+    "type": "object",
+  })
+  assert_eq(verdict.verdict, "real")
+  let stray : Result[Verdict, @workflow.WorkflowError] = wf.try_agent_as(
+    "stray shape please",
+    kind="judge",
+    label="stray",
+  )
+  guard stray is Err(@workflow.AgentFailed(label~, failure~)) else {
+    fail("expected a typed rejection")
+  }
+  assert_eq(label, "stray")
+  guard failure is @workflow.Failed(reason) else { fail("expected Failed") }
+  assert_true(reason.has_prefix("report rejected: "))
+  // The rejected report was a real, accounted call like any other.
+  assert_eq(wf.calls_made(), 2)
+  assert_eq(wf.tokens_spent(), 30)
+}
+
+///|
+async test "the schema is part of the work identity and reaches the runner" {
+  let journal = @workflow.Journal::in_memory()
+  let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner), journal~)
+  let plain = wf.agent("shape me", kind="judge")
+  let shaped = wf.agent("shape me", kind="judge", schema={ "type": "object" })
+  // Same question, different shape: different work, so no replay between them.
+  assert_eq(wf.calls_made(), 2)
+  assert_eq(wf.calls_replayed(), 0)
+  assert_true(plain is { "schema_seen": False, .. })
+  assert_true(shaped is { "schema_seen": True, .. })
+  // The next generation replays the shaped call by its schema too.
+  let again = @workflow.Workflow(
+    runner=@workflow.Runner(shaped_runner),
+    journal=@workflow.Journal::in_memory(prior=journal.recorded()),
+  )
+  assert_eq(
+    again.agent("shape me", kind="judge", schema={ "type": "object" }),
+    shaped,
+  )
+  assert_eq(again.calls_replayed(), 1)
+  assert_eq(again.calls_made(), 0)
+}

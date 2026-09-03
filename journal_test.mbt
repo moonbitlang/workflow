@@ -25,6 +25,7 @@ fn call_for(prompt : String, label? : String) -> @workflow.AgentCall {
     label: label.unwrap_or(prompt),
     max_steps: None,
     scope: "",
+    schema: None,
   }
 }
 

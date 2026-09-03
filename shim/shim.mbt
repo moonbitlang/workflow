@@ -15,6 +15,10 @@ pub(all) struct Request {
   max_steps : Int?
   input : Json
   prompt : String
+  /// The JSON Schema the report must satisfy, when the call asked for one
+  /// (envelope `schema`); the shims hand it to the CLI's structured-output
+  /// flag, and it takes precedence over a `--schema` file on argv.
+  schema : Json?
 }
 
 ///|
@@ -29,7 +33,7 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
     is Some(json) else {
     return Err("shim input is not JSON")
   }
-  let (id, kind, max_steps, input) = match json {
+  let (id, kind, max_steps, input, schema) = match json {
     { "workflow_contract": Number(1, ..), "input": input, .. } => {
       let id = if json is { "id": String(id), .. } { Some(id) } else { None }
       let kind = if json is { "kind": String(kind), .. } {
@@ -51,7 +55,12 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
           return Err("shim input max_steps must be an integer")
         _ => None
       }
-      (id, kind, max_steps, input)
+      let schema = if json is { "schema": schema, .. } && !(schema is Null) {
+        Some(schema)
+      } else {
+        None
+      }
+      (id, kind, max_steps, input, schema)
     }
     // A v1 envelope without its payload is malformed, not an unsupported
     // version (cross-engine review finding).
@@ -59,12 +68,12 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
       return Err("shim input envelope has no `input`")
     { "workflow_contract": Number(version, ..), .. } =>
       return Err("unsupported workflow_contract version \{version}")
-    other => (None, "explore", None, other)
+    other => (None, "explore", None, other, None)
   }
   guard prompt_of(input) is Some(prompt) else {
     return Err("shim input needs a `query` (or `prompt`) string")
   }
-  Ok({ id, kind, max_steps, input, prompt, })
+  Ok({ id, kind, max_steps, input, prompt, schema, })
 }
 
 ///|

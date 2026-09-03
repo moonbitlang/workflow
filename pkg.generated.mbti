@@ -54,6 +54,7 @@ pub(all) struct AgentCall {
   label : String
   max_steps : Int?
   scope : String
+  schema : Json?
 } derive(Eq, ToJson, @json.FromJson)
 pub fn AgentCall::equal(Self, Self) -> Bool
 pub fn AgentCall::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
@@ -136,14 +137,16 @@ pub struct Workflow {
   mut current_phase : String?
 }
 pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int, max_calls? : Int, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
-pub async fn Workflow::agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int) -> Json
-pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : String, max_steps? : Int) -> Json
+pub async fn Workflow::agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Json
+pub async fn[T : @json.FromJson] Workflow::agent_as(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> T
+pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : String, max_steps? : Int, schema? : Json) -> Json
 pub fn Workflow::calls_made(Self) -> Int
 pub fn Workflow::calls_replayed(Self) -> Int
 pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int
-pub async fn Workflow::try_agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int) -> Result[Json, WorkflowError]
+pub async fn Workflow::try_agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[Json, WorkflowError]
+pub async fn[T : @json.FromJson] Workflow::try_agent_as(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[T, WorkflowError]
 
 pub(all) enum WorkflowEvent {
   PhaseStarted(String)

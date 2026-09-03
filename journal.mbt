@@ -50,8 +50,8 @@ pub impl Show for JournalCorrupted with fn output(self, logger) {
 ///   FOR, so the call runs live again (and consumes fresh launch
 ///   allowance — size `max_calls` with re-attempts in mind).
 ///
-/// Identity is the call's work content — kind, input, max_steps, and
-/// the workflow's replay scope — never the display label. Duplicate identical calls are intentional samples
+/// Identity is the call's work content — kind, input, max_steps, schema,
+/// and the workflow's replay scope — never the display label. Duplicate identical calls are intentional samples
 /// (three identical verifiers), so matching consumes entries as a
 /// multiset: each replay consumes one entry, in file order, and only LIVE
 /// outcomes are recorded — replays are never re-appended, so entry counts
@@ -183,7 +183,8 @@ fn same_work(a : AgentCall, b : AgentCall) -> Bool {
   a.kind == b.kind &&
   a.input == b.input &&
   a.max_steps == b.max_steps &&
-  a.scope == b.scope
+  a.scope == b.scope &&
+  a.schema == b.schema
 }
 
 ///|

@@ -54,13 +54,14 @@ One JSON object, UTF-8, terminated by `\n`:
 | `id` | string | The runner's attempt id for this launch (informational: the child may log it). |
 | `kind` | string | The agent kind the caller asked for — the `AgentCall.kind`. |
 | `max_steps` | integer, optional | The caller's step ceiling — the `AgentCall.max_steps`. Absent when the caller set none. |
+| `schema` | JSON object, optional | A JSON Schema the report must satisfy — the `AgentCall.schema` the caller passed. An engine that can constrain its model to a shape should apply it; the caller validates the report regardless, so an engine that cannot may ignore it. Absent when the caller passed none. |
 | `input` | any JSON | The call's input, opaque to the framework. For `Workflow::agent` it is `{"query": …}` plus an optional `"hints"` string; `Workflow::agent_call` passes exactly what the script gave it. |
 
 The runner sends nothing else on stdin. A child must tolerate the pipe
 staying open after the line and must not wait for a second line — the only
 further event on stdin is EOF.
 
-`kind`, `input`, and `max_steps` are also the journal's replay identity for
+`kind`, `input`, `max_steps`, and `schema` are also the journal's replay identity for
 the call (`replay_scope` completes it; the display label is excluded). An
 engine that ignores one of them on the wire and takes it from somewhere else
 makes the journal's identity diverge from what actually ran — see §7 for
@@ -178,6 +179,7 @@ that behaviour explicit so that a script driving `openseek` directly through
 | `kind` | IGNORED. The kind comes from argv: the positional after `subrun`. |
 | `max_steps` | IGNORED. The enforced step ceiling comes from `--max-steps` on argv (or the `OPENSEEK_MAX_STEPS` environment variable), else the kind's default. |
 | `id` | IGNORED. A child's durable session id, when it has one, comes from `--session`. |
+| `schema` | IGNORED. The engine's kinds have fixed report types (§7.3); a caller wanting a shape from openseek decodes the fixed report. The Claude and Codex shims in the library DO apply it. |
 
 A bare input line without the envelope (`{"query": …}` directly) is also
 accepted, for the engine's own pre-contract callers and for hand-driven

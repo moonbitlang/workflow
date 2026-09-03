@@ -7,7 +7,7 @@
 ///   pipe open — closing it is the graceful-cancel signal, not the end
 ///   of input. The line is the VERSIONED request envelope
 ///   `{"workflow_contract": 1, "id": ..., "kind": ..., "max_steps"?: ...,
-///   "input": ...}` — self-contained, so the request never depends on
+///   "schema"?: ..., "input": ...}` — self-contained, so the request never depends on
 ///   engine-specific argv (argv remains deployment configuration);
 /// - the child emits JSONL on stdout: event lines (an object with an
 ///   `event` tag — `usage` and `agent_step` are summed/maxed for exact
@@ -169,6 +169,7 @@ pub async fn contract_run(
   kind~ : String,
   id~ : String,
   max_steps? : Int,
+  schema? : Json,
   wall_deadline_ms~ : Int,
   cancel_grace_ms? : Int = default_cancel_grace_ms,
   cwd? : String,
@@ -254,17 +255,19 @@ pub async fn contract_run(
         // INSIDE the deadline scope: an input larger than the pipe
         // capacity against a child that never reads must hit the wall
         // deadline, not block forever.
-        let request : Json = match max_steps {
-          Some(steps) =>
-            {
-              "workflow_contract": 1,
-              "id": id,
-              "kind": kind,
-              "max_steps": steps,
-              "input": input,
-            }
-          None =>
-            { "workflow_contract": 1, "id": id, "kind": kind, "input": input }
+        let request : Json = {
+          "workflow_contract": 1,
+          "id": id,
+          "kind": kind,
+          "input": input,
+        }
+        if request is Object(fields) {
+          if max_steps is Some(steps) {
+            fields["max_steps"] = steps.to_json()
+          }
+          if schema is Some(schema) {
+            fields["schema"] = schema
+          }
         }
         stdin_writer.write("\{request.stringify()}\n")
         drain()
@@ -388,6 +391,7 @@ pub fn contract_runner(
       kind=call.kind,
       id~,
       max_steps?=call.max_steps,
+      schema?=call.schema,
       wall_deadline_ms=spec.deadline_ms.unwrap_or(deadline_ms),
       cwd?,
       extra_env?,

@@ -1,6 +1,7 @@
 import {
   "moonbitlang/workflow/shim",
   "moonbitlang/async",
+  "moonbitlang/async/fs",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
 }

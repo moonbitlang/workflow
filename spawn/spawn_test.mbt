@@ -184,3 +184,40 @@ async test "malformed numeric events are ignored whole, never truncated" {
   assert_eq(result.prompt_tokens, 7)
   assert_eq(result.completion_tokens, 3)
 }
+
+///|
+async test "the request envelope carries the call's ceiling and schema" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  // A child that reports the request line it received.
+  let script =
+    #|read line
+    #|printf '{"subrun_report": %s}\n' "$line"
+  let result = @spawn.contract_run(
+    command="sh",
+    args=["-c", script],
+    input={ "query": "q" },
+    kind="probe",
+    id="test-2",
+    max_steps=3,
+    schema={ "type": "object" },
+    wall_deadline_ms=10_000,
+  )
+  guard result.terminal is Captured else { fail("expected Captured") }
+  assert_true(
+    result.report
+    is Some(
+      {
+        "workflow_contract": Number(1, ..),
+        "id": "test-2",
+        "kind": "probe",
+        "max_steps": Number(3, ..),
+        "schema": { "type": "object", .. },
+        "input": { "query": "q", .. },
+        ..
+      }
+    ),
+  )
+}

@@ -85,6 +85,36 @@ instead: the first failure cancels every sibling still in flight. The
 policies are one identifier each: `all_ok`, `collect_ok(min_ok~)`,
 `quorum(need~)`.
 
+When the script wants a TYPE rather than JSON, decode at the boundary:
+`agent_as` runs the same call and turns a report that does not satisfy
+the type into a typed `AgentFailed(Failed("report rejected: …"))` carrying
+the decoder's path. A `schema` rides the request envelope so an engine
+that can constrain its model to the shape does (the Claude and Codex
+shims do); decoding still runs, because the engine is not trusted to
+validate, and the schema is part of the call's replay identity:
+
+```mbt check
+///|
+struct Confirmation {
+  confirmed : Bool
+} derive(FromJson)
+
+///|
+async test "decode the report at the boundary" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
+  let verdict : Confirmation = wf.agent_as(
+    "Judge the finding through lens=security: real?",
+    kind="judge",
+    schema={
+      "type": "object",
+      "properties": { "confirmed": { "type": "boolean" } },
+      "required": ["confirmed"],
+    },
+  )
+  assert_true(verdict.confirmed)
+}
+```
+
 Multi-stage pipelines are just function composition inside the fan-out —
 stages need no barrier between them, so composing them per-item IS the
 pipeline:

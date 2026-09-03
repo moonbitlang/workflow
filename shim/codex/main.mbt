@@ -42,10 +42,22 @@ async fn run() -> Unit {
       return
     }
   }
+  // Codex takes its schema from a FILE: the call's own schema (envelope)
+  // is written to a scratch directory for the run; `--schema <file>` is
+  // the deployment default for scripts that pass none.
+  let (schema_path, scratch) = match request.schema {
+    Some(schema) => {
+      let dir = @fs.tmpdir(prefix="workflow-codex-schema-")
+      let path = "\{dir}/schema.json"
+      @fs.write_file(path, schema.stringify())
+      (Some(path), Some(dir))
+    }
+    None => (options.schema, None)
+  }
   let state = Codex::new()
   let exit = @shim.run_cli(
     command=options.command,
-    args=codex_args(request, options),
+    args=codex_args(request, options, schema_path),
     cwd?=options.cwd,
     observe=line => {
       // Emit first, then judge the ceiling: the over-limit step DID happen
@@ -60,7 +72,12 @@ async fn run() -> Unit {
       @shim.Continue
     },
   )
-  let structured = options.schema is Some(_)
+  if scratch is Some(dir) {
+    @fs.rmdir(dir, recursive=true) catch {
+      _ => ()
+    }
+  }
+  let structured = schema_path is Some(_)
   match exit {
     Cancelled => ()
     Stopped => @shim.emit(@shim.max_steps_exhausted())
@@ -84,6 +101,7 @@ async fn run() -> Unit {
 fn codex_args(
   request : @shim.Request,
   options : @shim.Options,
+  schema_path : String?,
 ) -> Array[String] {
   let sandbox = if options.writable || request.kind == "worker" {
     "workspace-write"
@@ -95,7 +113,7 @@ fn codex_args(
     args.push("-m")
     args.push(model)
   }
-  if options.schema is Some(path) {
+  if schema_path is Some(path) {
     args.push("--output-schema")
     args.push(path)
   }
@@ -112,6 +130,7 @@ test "argv: read-only sandbox by default, workspace-write for worker" {
     max_steps: None,
     input: Json::null(),
     prompt: "why?",
+    schema: None,
   }
   let options : @shim.Options = {
     command: "codex",
@@ -121,13 +140,13 @@ test "argv: read-only sandbox by default, workspace-write for worker" {
     schema: Some("out.json"),
     extra: ["--ephemeral"],
   }
-  assert_eq(codex_args(request, options), [
+  assert_eq(codex_args(request, options, options.schema), [
     "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-m", "gpt-5",
     "--output-schema", "out.json", "--ephemeral", "why?",
   ])
   let worker = { ..request, kind: "worker", }
   let plain = { ..options, model: None, schema: None, extra: [], }
-  assert_eq(codex_args(worker, plain), [
+  assert_eq(codex_args(worker, plain, None), [
     "exec", "--json", "--skip-git-repo-check", "-s", "workspace-write", "why?",
   ])
 }

@@ -6,7 +6,7 @@ import {
 }
 
 // Values
-pub async fn contract_run(command~ : String, args~ : Array[String], input~ : Json, kind~ : String, id~ : String, max_steps? : Int, wall_deadline_ms~ : Int, cancel_grace_ms? : Int, cwd? : String, extra_env? : Map[String, String], progress? : ContractProgress, observe_line? : (Json) -> Unit) -> ContractResult
+pub async fn contract_run(command~ : String, args~ : Array[String], input~ : Json, kind~ : String, id~ : String, max_steps? : Int, schema? : Json, wall_deadline_ms~ : Int, cancel_grace_ms? : Int, cwd? : String, extra_env? : Map[String, String], progress? : ContractProgress, observe_line? : (Json) -> Unit) -> ContractResult
 
 pub fn contract_runner(launch~ : (@workflow.AgentCall) -> LaunchSpec, deadline_ms? : Int, validate_replay? : async (@workflow.AgentCall, @workflow.AgentOutcome) -> @workflow.ReplayDecision) -> @workflow.Runner
 
