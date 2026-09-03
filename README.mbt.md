@@ -24,6 +24,8 @@ Everything else follows from three decisions:
 - **Cost is never lost.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
+  Engines that price their work report it too: `cost_usd()` sums their
+  figures, and stays a floor when an engine in the mix prices nothing.
 - **Cancellation is not failure.** Engine bugs and cancellation `raise`
   through and cancel the task group; the launch allowance only counts
   agents that actually launched — a call cancelled while queued costs
@@ -51,6 +53,7 @@ async fn verdict_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
     steps_used: 3,
     prompt_tokens: 70,
     completion_tokens: 30,
+    cost_usd: None,
   })
 }
 

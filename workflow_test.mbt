@@ -18,6 +18,7 @@ fn attempt_for(call : @workflow.AgentCall) -> @workflow.AgentAttempt {
     steps_used: 1,
     prompt_tokens: 7,
     completion_tokens: 3,
+    cost_usd: None,
   }
 }
 
@@ -260,6 +261,7 @@ async test "outcomes and failures survive the JSON round trip" {
     steps_used: 4,
     prompt_tokens: 11,
     completion_tokens: 5,
+    cost_usd: None,
   }
   let outcomes : Array[@workflow.AgentOutcome] = [
     Finished(value={ "answer": 42 }, attempt~),
@@ -336,6 +338,7 @@ async fn shaped_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
     steps_used: 1,
     prompt_tokens: 10,
     completion_tokens: 5,
+    cost_usd: None,
   })
 }
 
@@ -389,4 +392,41 @@ async test "the schema is part of the work identity and reaches the runner" {
   )
   assert_eq(again.calls_replayed(), 1)
   assert_eq(again.calls_made(), 0)
+}
+
+///|
+/// Prices every other call, so the workflow's money total is a floor.
+async fn priced_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
+  @async.pause()
+  let priced = call.label.has_prefix("priced")
+  Finished(value="ok", attempt={
+    attempt_id: "sr-\{call.label}",
+    steps_used: 1,
+    prompt_tokens: 1,
+    completion_tokens: 1,
+    cost_usd: if priced {
+      Some(0.25)
+    } else {
+      None
+    },
+  })
+}
+
+///|
+async test "cost_usd sums the engines' own figures and ignores unknowns" {
+  let journal = @workflow.Journal::in_memory()
+  let wf = @workflow.Workflow(runner=@workflow.Runner(priced_runner), journal~)
+  let _ = wf.agent("a", kind="k", label="priced-1")
+  let _ = wf.agent("b", kind="k", label="priced-2")
+  let _ = wf.agent("c", kind="k", label="free")
+  assert_eq(wf.cost_usd(), 0.5)
+  assert_eq(wf.tokens_spent(), 6)
+  // A replayed call costs nothing again — historical spend lives in the journal.
+  let again = @workflow.Workflow(
+    runner=@workflow.Runner(priced_runner),
+    journal=@workflow.Journal::in_memory(prior=journal.recorded()),
+  )
+  let _ = again.agent("a", kind="k", label="priced-1")
+  assert_eq(again.cost_usd(), 0.0)
+  assert_eq(again.calls_replayed(), 1)
 }

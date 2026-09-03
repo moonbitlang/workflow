@@ -24,7 +24,7 @@ pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, wa
 
 pub fn turn_failed(String) -> Json
 
-pub fn usage(prompt_tokens~ : Int, completion_tokens~ : Int, cache_hit~ : Int, cache_miss~ : Int) -> Json
+pub fn usage(prompt_tokens~ : Int, completion_tokens~ : Int, cache_hit~ : Int, cache_miss~ : Int, cost_usd? : Double) -> Json
 
 // Errors
 

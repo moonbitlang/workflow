@@ -221,3 +221,24 @@ async test "the request envelope carries the call's ceiling and schema" {
     ),
   )
 }
+
+///|
+async test "usage.cost_usd is summed into the attempt; absent means unknown" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let priced =
+    #|read line
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":0.25}}\n'
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":0.5}}\n'
+    #|printf '{"subrun_report": "ok"}\n'
+  let result = run_script(priced)
+  assert_eq(result.cost_usd, Some(0.75))
+  assert_eq(result.prompt_tokens, 20)
+  let unpriced =
+    #|read line
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10}}\n'
+    #|printf '{"subrun_report": "ok"}\n'
+  assert_eq(run_script(unpriced).cost_usd, None)
+}

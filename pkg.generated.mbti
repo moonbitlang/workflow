@@ -42,6 +42,7 @@ pub(all) struct AgentAttempt {
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
+  cost_usd : Double?
 } derive(Eq, ToJson, @json.FromJson)
 pub fn AgentAttempt::equal(Self, Self) -> Bool
 pub fn AgentAttempt::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
@@ -134,6 +135,7 @@ pub struct Workflow {
   mut replays : Int
   mut prompt_tokens : Int
   mut completion_tokens : Int
+  mut cost_usd : Double
   mut current_phase : String?
 }
 pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int, max_calls? : Int, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
@@ -142,6 +144,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(Self, String, kind~ : String
 pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : String, max_steps? : Int, schema? : Json) -> Json
 pub fn Workflow::calls_made(Self) -> Int
 pub fn Workflow::calls_replayed(Self) -> Int
+pub fn Workflow::cost_usd(Self) -> Double
 pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int

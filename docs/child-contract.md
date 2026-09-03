@@ -79,7 +79,7 @@ below. Unknown events, and extra fields on known ones (`timestamp`,
 | `event` | Fields read | Effect on the runner |
 | --- | --- | --- |
 | `agent_step` | `step`: integral number | `steps_used = max(steps_used, step)` |
-| `usage` | `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`, `usage.prompt_cache_hit_tokens`, `usage.prompt_cache_miss_tokens`: ALL present and integral | `prompt_tokens += …`, `completion_tokens += …`. A usage object missing any of the five fields, or carrying a fractional value, is ignored WHOLE — never partially charged. |
+| `usage` | `usage.prompt_tokens`, `usage.completion_tokens`, `usage.total_tokens`, `usage.prompt_cache_hit_tokens`, `usage.prompt_cache_miss_tokens`: ALL present and integral | `prompt_tokens += …`, `completion_tokens += …`. A usage object missing any of the five fields, or carrying a fractional value, is ignored WHOLE — never partially charged. An optional `usage.cost_usd` (number, fractional) is summed into the attempt's `cost_usd`; absent means unknown, never free. |
 | `max_steps_exhausted` | — | Terminal candidate `MaxSteps` |
 | `context_yield` | `to_sequence`: integral number, `answer`: string | Terminal candidate `ContextYield` |
 | `turn_failed` | `error`: string | Terminal candidate `Failed(error)` |

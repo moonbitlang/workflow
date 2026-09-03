@@ -52,6 +52,8 @@ pub struct ContractResult {
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
+  /// Summed `usage.cost_usd`, or `None` when no usage line carried one.
+  cost_usd : Double?
 }
 
 ///|
@@ -62,12 +64,14 @@ pub struct ContractProgress {
   mut steps : Int
   mut prompt_tokens : Int
   mut completion_tokens : Int
+  /// Summed `usage.cost_usd`; `None` until a usage line carries one.
+  mut cost_usd : Double?
 }
 
 ///|
 /// Fresh zeroed counters.
 pub fn ContractProgress::ContractProgress() -> ContractProgress {
-  { steps: 0, prompt_tokens: 0, completion_tokens: 0, }
+  { steps: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: None, }
 }
 
 ///|
@@ -126,6 +130,13 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
         integral(cache_miss) is Some(_) {
         self.progress.prompt_tokens += prompt
         self.progress.completion_tokens += completion
+        // Money is optional and fractional by nature — the integral rule
+        // covers token counts, not prices.
+        if json is { "usage": { "cost_usd": Number(cost, ..), .. }, .. } {
+          self.progress.cost_usd = Some(
+            self.progress.cost_usd.unwrap_or(0.0) + cost,
+          )
+        }
       }
     { "event": "max_steps_exhausted", .. } => self.max_steps_exhausted = true
     {
@@ -344,6 +355,7 @@ pub async fn contract_run(
     steps_used: progress.steps,
     prompt_tokens: progress.prompt_tokens,
     completion_tokens: progress.completion_tokens,
+    cost_usd: progress.cost_usd,
   }
 }
 
@@ -401,6 +413,7 @@ pub fn contract_runner(
       steps_used: result.steps_used,
       prompt_tokens: result.prompt_tokens,
       completion_tokens: result.completion_tokens,
+      cost_usd: result.cost_usd,
     }
     match result.terminal {
       Captured =>

@@ -33,6 +33,11 @@ pub(all) struct AgentAttempt {
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
+  /// The engine's own money figure for the attempt, when it reports one
+  /// (`usage.cost_usd` on the wire, summed). `None` means unknown, never
+  /// free: an engine that prices nothing leaves it absent. Absent from the
+  /// journal line when `None`, so earlier journals load unchanged.
+  cost_usd : Double?
 } derive(Eq, ToJson, FromJson)
 
 ///|

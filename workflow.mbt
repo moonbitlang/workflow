@@ -47,6 +47,10 @@ pub struct Workflow {
   mut replays : Int
   mut prompt_tokens : Int
   mut completion_tokens : Int
+  /// Sum of the attempts' `cost_usd` where reported; attempts without a
+  /// figure contribute nothing, so this is a floor, not a total, unless
+  /// every engine in the workflow prices its work.
+  mut cost_usd : Double
   mut current_phase : String?
 }
 
@@ -79,6 +83,7 @@ pub fn Workflow::Workflow(
     replays: 0,
     prompt_tokens: 0,
     completion_tokens: 0,
+    cost_usd: 0.0,
     current_phase: None,
   }
 }
@@ -299,6 +304,9 @@ fn Workflow::account(self : Workflow, outcome : AgentOutcome) -> Unit {
   if attempt is Some(attempt) {
     self.prompt_tokens += attempt.prompt_tokens
     self.completion_tokens += attempt.completion_tokens
+    if attempt.cost_usd is Some(cost) {
+      self.cost_usd += cost
+    }
   }
 }
 
@@ -335,6 +343,15 @@ pub fn Workflow::calls_replayed(self : Workflow) -> Int {
 /// historical spend lives in the journal, this counts fresh execution.
 pub fn Workflow::tokens_spent(self : Workflow) -> Int {
   self.prompt_tokens + self.completion_tokens
+}
+
+///|
+/// Money spent by THIS run, from the engines' own figures: the sum of every
+/// live attempt's `cost_usd`, on both outcome arms. Replayed calls cost
+/// nothing, and attempts without a figure add nothing — so a workflow that
+/// mixes a pricing engine with a non-pricing one sees a floor.
+pub fn Workflow::cost_usd(self : Workflow) -> Double {
+  self.cost_usd
 }
 
 ///|

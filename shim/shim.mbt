@@ -127,8 +127,9 @@ pub fn usage(
   completion_tokens~ : Int,
   cache_hit~ : Int,
   cache_miss~ : Int,
+  cost_usd? : Double,
 ) -> Json {
-  {
+  let event : Json = {
     "event": "usage",
     "usage": {
       "prompt_tokens": prompt_tokens,
@@ -138,6 +139,12 @@ pub fn usage(
       "prompt_cache_miss_tokens": cache_miss,
     },
   }
+  // The engine's own price, when it states one (`usage.cost_usd` on the
+  // wire): the runner sums it into the attempt.
+  if cost_usd is Some(cost) && event is { "usage": Object(fields), .. } {
+    fields["cost_usd"] = cost.to_json()
+  }
+  event
 }
 
 ///|

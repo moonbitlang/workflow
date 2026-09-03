@@ -33,12 +33,13 @@ priv struct Cost {
 }
 
 ///|
-fn Cost::event(self : Cost) -> Json {
+fn Cost::event(self : Cost, price? : Double) -> Json {
   @shim.usage(
     prompt_tokens=self.prompt,
     completion_tokens=self.completion,
     cache_hit=self.hit,
     cache_miss=self.miss,
+    cost_usd?=price,
   )
 }
 
@@ -92,10 +93,6 @@ pub fn Claude::observe(self : Claude, line : String) -> Array[Json] {
       }
     }
     { "type": "result", .. } => {
-      if cost_of(json) is Some(cost) {
-        self.charged = true
-        events.push(cost.event())
-      }
       if json is { "session_id": String(id), .. } {
         self.session_id = Some(id)
       }
@@ -104,6 +101,10 @@ pub fn Claude::observe(self : Claude, line : String) -> Array[Json] {
       }
       if json is { "total_cost_usd": Number(cost, ..), .. } {
         self.cost_usd = Some(cost)
+      }
+      if cost_of(json) is Some(cost) {
+        self.charged = true
+        events.push(cost.event(price?=self.cost_usd))
       }
       let is_error = json is { "is_error": True, .. }
       let subtype = if json is { "subtype": String(subtype), .. } {
@@ -252,6 +253,7 @@ test "one message across two content blocks is one step; the result charges" {
       completion_tokens=43,
       cache_hit=13615,
       cache_miss=7679,
+      cost_usd=0.0173444,
     ),
   ])
   assert_eq(state.steps, 1)

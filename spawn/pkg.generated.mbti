@@ -17,6 +17,7 @@ pub struct ContractProgress {
   mut steps : Int
   mut prompt_tokens : Int
   mut completion_tokens : Int
+  mut cost_usd : Double?
 }
 pub fn ContractProgress::ContractProgress() -> Self
 
@@ -26,6 +27,7 @@ pub struct ContractResult {
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
+  cost_usd : Double?
 }
 
 pub enum ContractTerminal {
