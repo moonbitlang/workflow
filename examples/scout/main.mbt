@@ -4,28 +4,51 @@
 /// `spawn` sub-package) — the engine is just a binary path in argv[1]
 /// that speaks the child contract.
 ///
-///   moon run workflow/examples/scout -- <engine> [journal.jsonl] [kind] [model]
+///   moon run workflow/examples/scout -- <engine> [--journal j.jsonl] [--kind k] [--model m]
 ///
 /// With no kind, three `subrun echo` probes run keylessly. With
-/// `explore` (and optionally a model name), one real read-only scout
-/// answers a question about the repository — the provider key rides the
-/// inherited environment, exactly as the contract prescribes. Run twice
-/// with a journal path to watch the second generation replay from the
-/// journal instead of spawning any children.
+/// `--kind explore` (and optionally a model name), one real read-only
+/// scout answers a question about the repository — the provider key rides
+/// the inherited environment, exactly as the contract prescribes. Run
+/// twice with a journal path to watch the second generation replay from
+/// the journal instead of spawning any children.
 async fn main {
-  let args = @env.args()
-  guard args.length() >= 2 else {
-    println("usage: scout <engine-binary> [journal.jsonl] [kind] [model]")
-    return
+  let spec = @argparse.Command(
+    "scout",
+    about="Run a few probes through an engine that speaks the child contract.",
+    arg_required_else_help=true,
+    options=[
+      @argparse.OptionArg(
+        "journal",
+        about="journal to record into and replay from (default: in memory)",
+      ),
+      @argparse.OptionArg("kind", about="the call kind the engine dispatches", default_values=[
+        "echo",
+      ]),
+      @argparse.OptionArg("model", about="engine setting, forwarded in argv"),
+    ],
+    positionals=[
+      @argparse.PositionArg(
+        "engine",
+        about="the engine binary to spawn",
+        num_args=@argparse.ValueRange(lower=1, upper=1),
+      ),
+    ],
+  )
+  // Parse failures and `--help` carry their own contextual help text.
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
+    }
   }
-  let exe = args[1]
-  let journal = if args.length() >= 3 && args[2] != "-" {
-    @workflow.Journal::load(args[2])
-  } else {
-    @workflow.Journal::in_memory()
+  guard first(args, "engine") is Some(exe) else { return }
+  let journal = match first(args, "journal") {
+    Some(path) => @workflow.Journal::load(path)
+    None => @workflow.Journal::in_memory()
   }
-  let kind = if args.length() >= 4 { args[3] } else { "echo" }
-  let model : String? = if args.length() >= 5 { Some(args[4]) } else { None }
+  let kind = first(args, "kind").unwrap_or("echo")
+  let model = first(args, "model")
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
       // The script owns its launch: the request ENVELOPE already carries
@@ -90,4 +113,13 @@ async fn main {
   println(
     "launched \{wf.calls_made()} children, replayed \{wf.calls_replayed()}, spent \{wf.tokens_spent()} tokens",
   )
+}
+
+///|
+/// The first value parsed for an argument, if it was given at all.
+fn first(args : @argparse.Matches, name : String) -> String? {
+  match args.values.get(name) {
+    Some([value, ..]) => Some(value)
+    _ => None
+  }
 }

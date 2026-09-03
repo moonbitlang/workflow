@@ -2,7 +2,7 @@ import {
   "moonbitlang/workflow",
   "moonbitlang/async",
   "moonbitlang/workflow/spawn",
-  "moonbitlang/core/env",
+  "moonbitlang/core/argparse",
 }
 
 supported_targets = "native+wasm"

@@ -5,6 +5,7 @@ import {
   "moonbitlang/workflow@0.4.1",
   "moonbitlang/workflow@0.4.1/spawn",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/argparse",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
 }
@@ -74,9 +75,34 @@ fn Finding::to_json(self : Finding) -> Json {
 
 ///|
 async fn review() -> Unit {
-  let args = @env.args()
-  let base = args.get(1).unwrap_or("origin/main")
-  let paths = if args.length() > 2 { args[2:].to_owned() } else { [] }
+  let spec = @argparse.Command(
+    "cross-review",
+    about="Review `git diff <base>` with several engines and cross-verify every finding.",
+    positionals=[
+      @argparse.PositionArg(
+        "base",
+        about="the revision to diff the working tree against",
+        default_values=["origin/main"],
+      ),
+      @argparse.PositionArg(
+        "paths",
+        about="limit the diff to these paths",
+        num_args=@argparse.ValueRange(lower=0),
+      ),
+    ],
+  )
+  // Parse failures and `--help` carry their own contextual help text.
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
+    }
+  }
+  let base = match args.values.get("base") {
+    Some([value, ..]) => value
+    _ => "origin/main"
+  }
+  let paths = args.values.get("paths").unwrap_or([])
   let engines = @env.get_env_var("CROSS_REVIEW_ENGINES")
     .unwrap_or("claude,codex")
     .split(",")
@@ -175,7 +201,24 @@ async fn review() -> Unit {
   let reviews = @workflow.fan_out(jobs, job => {
     let (engine, index) = job
     wf.try_agent(
-      "You are reviewing part of a code change in the repository at the current directory. Find REAL defects only: correctness bugs, crashes, resource or process leaks, broken error handling with a concrete consequence, violations of a documented contract. No style, naming, or speculative concerns. The hunks below are complete for the files they touch. Work from them: you may read at most TWO other files, only when a claim depends on one, and you must not survey the repository. For each finding give the file path exactly as in the diff, the line number in the NEW version of the file, a severity, a one-line title, the claim, and evidence quoting the relevant code. At most 5 findings; return an empty list if this part is sound.\{format_hint(engine)}\n\nPart \{index + 1} of \{chunks.length()} of `git diff \{base}`:\n\n\{chunks[index]}",
+      (
+        $|You are reviewing part of a code change in the repository at the
+        $|current directory. Find REAL defects only: correctness bugs, crashes,
+        $|resource or process leaks, broken error handling with a concrete
+        $|consequence, violations of a documented contract. No style, naming,
+        $|or speculative concerns. The hunks below are complete for the files
+        $|they touch. Work from them: you may read at most TWO other files,
+        $|only when a claim depends on one, and you must not survey the
+        $|repository. For each finding give the file path exactly as in the
+        $|diff, the line number in the NEW version of the file, a severity, a
+        $|one-line title, the claim, and evidence quoting the relevant code.
+        $|At most 5 findings; return an empty list if this part is sound.
+        $|\{format_hint(engine)}
+        $|
+        $|Part \{index + 1} of \{chunks.length()} of `git diff \{base}`:
+        $|
+        $|\{chunks[index]}
+      ),
       kind=engine,
       label="review:\{engine}:\{index + 1}",
       max_steps=steps_for(engine, review=true),
@@ -214,7 +257,20 @@ async fn review() -> Unit {
   let verdicts = @workflow.fan_out(findings, finding => {
     let verifier = next_engine(engines, finding.engine)
     wf.try_agent(
-      "An independent reviewer claims this defect exists in the repository at the current directory:\n\n\{finding.to_json().stringify()}\n\nRead \{finding.file} around line \{finding.line} and at most two files it depends on, then decide. `confirmed` means the defect is real as stated; `refuted` means the claim is wrong or the code already handles it — say what handles it; `uncertain` means you could not establish either. Give the reason in at most two sentences, citing code.\{format_hint(verifier)}",
+      (
+        $|An independent reviewer claims this defect exists in the repository
+        $|at the current directory:
+        $|
+        $|\{finding.to_json().stringify()}
+        $|
+        $|Read \{finding.file} around line \{finding.line} and at most two
+        $|files it depends on, then decide. `confirmed` means the defect is
+        $|real as stated; `refuted` means the claim is wrong or the code
+        $|already handles it — say what handles it; `uncertain` means you
+        $|could not establish either. Give the reason in at most two
+        $|sentences, citing code.
+        $|\{format_hint(verifier)}
+      ),
       kind=verifier,
       label="verify:\{finding.file}:\{finding.line}",
       max_steps=steps_for(verifier, review=false),
@@ -253,12 +309,18 @@ fn next_engine(engines : Array[String], raiser : String) -> String {
 
 ///|
 /// The shims enforce the schema; openseek's scout answers in prose, so it
-/// is told to answer with the JSON object alone.
+/// is told to answer with the JSON object alone. Its own line in the
+/// prompt, so an empty hint costs nothing but a blank one.
 fn format_hint(engine : String) -> String {
   match engine {
     "claude" | "codex" => ""
     _ =>
-      " Answer with ONLY a JSON object, no prose and no code fences, of the shape {\"findings\": [{\"file\", \"line\", \"severity\": \"high|medium|low\", \"title\", \"claim\", \"evidence\"}]} for a review, or {\"verdict\": \"confirmed|refuted|uncertain\", \"reason\"} for a verification."
+      (
+        #|Answer with ONLY a JSON object, no prose and no code fences, of the
+        #|shape {"findings": [{"file", "line", "severity": "high|medium|low",
+        #|"title", "claim", "evidence"}]} for a review, or {"verdict":
+        #|"confirmed|refuted|uncertain", "reason"} for a verification.
+      )
   }
 }
 
@@ -405,7 +467,15 @@ async fn write_report(
     }
   }
   // Cost by engine, from the journal's attempts — replayed calls cost nothing.
-  out <+ "## Cost\n\n| engine | calls | steps | prompt tokens | completion tokens |\n| --- | ---: | ---: | ---: | ---: |\n"
+  out.write_string(
+    (
+      #|## Cost
+      #|
+      #|| engine | calls | steps | prompt tokens | completion tokens |
+      #|| --- | ---: | ---: | ---: | ---: |
+      #|
+    ),
+  )
   if wf.journal is Some(journal) {
     for engine in engines {
       let mut calls = 0
