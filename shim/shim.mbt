@@ -41,8 +41,6 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
       } else {
         "explore"
       }
-      // A fractional ceiling is a malformed request, never "no ceiling"
-      // (cross-engine review finding: it used to fall through to None).
       // A present-but-wrong ceiling (a string, null, 5.5) is a malformed
       // request, never "no ceiling" (cross-engine review findings).
       let max_steps = match json {

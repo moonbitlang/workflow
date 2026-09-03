@@ -40,8 +40,11 @@ async fn run() -> Unit {
       return
     }
   }
-  let schema = match options.schema {
-    Some(path) =>
+  // The call's own schema (envelope) wins; `--schema <file>` is the
+  // deployment default for scripts that pass none.
+  let schema = match (envelope_schema(request), options.schema) {
+    (Some(schema), _) => Some(schema)
+    (None, Some(path)) =>
       Some(@utf8.decode_lossy(@fs.read_file(path).binary())) catch {
         error => {
           @shim.emit(
@@ -50,7 +53,7 @@ async fn run() -> Unit {
           return
         }
       }
-    None => None
+    (None, None) => None
   }
   let state = Claude::new()
   let exit = @shim.run_cli(
@@ -161,4 +164,24 @@ test "argv: read-only by default, writable for worker, extras before the tool li
     "{}", "--permission-mode", "acceptEdits", "--allowedTools", "Edit", "Write",
     "MultiEdit", "NotebookEdit", "Bash",
   ])
+}
+
+///|
+/// The envelope's schema as the inline JSON text `--json-schema` takes.
+fn envelope_schema(request : @shim.Request) -> String? {
+  request.schema.map(schema => schema.stringify())
+}
+
+///|
+test "the envelope's schema becomes the inline --json-schema text" {
+  let request : @shim.Request = {
+    id: None,
+    kind: "explore",
+    max_steps: None,
+    input: Json::null(),
+    prompt: "why?",
+    schema: Some({ "type": "object" }),
+  }
+  assert_eq(envelope_schema(request), Some("{\"type\":\"object\"}"))
+  assert_eq(envelope_schema({ ..request, schema: None, }), None)
 }
