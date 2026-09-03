@@ -110,32 +110,20 @@ async fn review() -> Unit {
     "reviewing \{head} against \{base} with \{engines.join("+")}: \{diff.length()} chars in \{chunks.length()} chunk(s)\n\{stat}",
   )
 
-  // Schemas on disk: the Codex shim hands the path to `--output-schema`,
-  // the Claude shim reads it for `--json-schema`; explore gets it inline.
-  let dir = ".cross-review"
-  if !@fs.exists(dir) {
-    @fs.mkdir(dir)
-  }
-  @fs.write_file("\{dir}/findings.schema.json", findings_schema)
-  @fs.write_file("\{dir}/verdict.schema.json", verdict_schema)
+  // The schemas ride each call's envelope (`schema=`): the shims hand them
+  // to their CLI's structured-output flag; explore is told the shape inline.
+  let findings_shape : Json = @json.parse(findings_schema)
+  let verdict_shape : Json = @json.parse(verdict_schema)
 
-  // Routing: KIND picks the engine, the LABEL prefix picks the schema.
+  // Routing: KIND picks the engine.
   let shims = "_build/native/debug/build/shim"
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
-      let schema = if call.label.has_prefix("review:") {
-        "\{dir}/findings.schema.json"
-      } else {
-        "\{dir}/verdict.schema.json"
-      }
       match call.kind {
         "claude" =>
           {
             command: "\{shims}/claude/claude.exe",
-            args: [
-              "--schema", schema, "--model", claude_model, "--",
-              "--max-budget-usd", "0.60",
-            ],
+            args: ["--model", claude_model, "--", "--max-budget-usd", "0.60"],
             cwd: None,
             extra_env: None,
             deadline_ms: Some(600_000),
@@ -143,7 +131,7 @@ async fn review() -> Unit {
         "codex" =>
           {
             command: "\{shims}/codex/codex.exe",
-            args: ["--schema", schema, "--model", codex_model],
+            args: ["--model", codex_model],
             cwd: None,
             extra_env: None,
             deadline_ms: Some(600_000),
@@ -191,6 +179,7 @@ async fn review() -> Unit {
       kind=engine,
       label="review:\{engine}:\{index + 1}",
       max_steps=steps_for(engine, review=true),
+      schema=findings_shape,
     )
   })
   let findings : Array[Finding] = []
@@ -229,6 +218,7 @@ async fn review() -> Unit {
       kind=verifier,
       label="verify:\{finding.file}:\{finding.line}",
       max_steps=steps_for(verifier, review=false),
+      schema=verdict_shape,
     )
   })
   let rows : Array[(Finding, String, String, String)] = []
