@@ -448,6 +448,6 @@ test "a priced attempt survives the JSON round trip on both arms" {
     let json = outcome.to_json()
     assert_true(json.stringify().contains("\"cost_usd\":0.25"))
     let back : @workflow.AgentOutcome = @json.from_json(json)
-    assert_eq(back, outcome)
+    assert_true(back == outcome)
   }
 }

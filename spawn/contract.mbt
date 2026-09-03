@@ -119,7 +119,7 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
         ..
       },
       ..
-    } =>
+    } => {
       // Integral-only and whole-object, exactly as the engine's typed
       // decoder: a counter of 1.5 is not a token count, and a malformed
       // usage line is ignored WHOLE — never partially charged.
@@ -146,6 +146,7 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
           )
         }
       }
+    }
     { "event": "max_steps_exhausted", .. } => self.max_steps_exhausted = true
     {
       "event": "context_yield",
