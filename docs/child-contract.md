@@ -135,8 +135,8 @@ what keeps the runner from misreading a crash as `NoReport`.
 `contract_runner` maps each terminal into the workflow's lossless
 `AgentOutcome`: `Captured` becomes `Finished(value, attempt)`; every other
 terminal becomes `DidNotFinish(failure, attempt)` with the matching
-`AgentFailure`. The attempt — id, steps, tokens observed — is attached on
-EVERY terminal, so a timed-out child's spend still reaches the budget and
+`AgentFailure`. The attempt — id, steps, tokens, and cost observed — is
+attached on EVERY terminal, so a timed-out child's spend still reaches the budget and
 the journal. `attempt = None` is reserved for calls that never launched (a
 human `Skipped` refusal); a failed spawn observed zero cost but WAS an
 attempt.

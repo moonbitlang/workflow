@@ -123,6 +123,16 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
       // Integral-only and whole-object, exactly as the engine's typed
       // decoder: a counter of 1.5 is not a token count, and a malformed
       // usage line is ignored WHOLE — never partially charged.
+      // Money is optional and fractional by nature — the integral rule
+      // covers token counts, not prices — but a PRESENT price that is not a
+      // non-negative number is as malformed as a bad token field, and the
+      // whole line is ignored rather than charged in part.
+      let price : Double? = match json {
+        { "usage": { "cost_usd": Number(cost, ..), .. }, .. } if cost >= 0.0 =>
+          Some(cost)
+        { "usage": { "cost_usd": _, .. }, .. } => return
+        _ => None
+      }
       if integral(prompt) is Some(prompt) &&
         integral(completion) is Some(completion) &&
         integral(total) is Some(_) &&
@@ -130,9 +140,7 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
         integral(cache_miss) is Some(_) {
         self.progress.prompt_tokens += prompt
         self.progress.completion_tokens += completion
-        // Money is optional and fractional by nature — the integral rule
-        // covers token counts, not prices.
-        if json is { "usage": { "cost_usd": Number(cost, ..), .. }, .. } {
+        if price is Some(cost) {
           self.progress.cost_usd = Some(
             self.progress.cost_usd.unwrap_or(0.0) + cost,
           )

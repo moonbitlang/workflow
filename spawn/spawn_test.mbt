@@ -242,3 +242,22 @@ async test "usage.cost_usd is summed into the attempt; absent means unknown" {
     #|printf '{"subrun_report": "ok"}\n'
   assert_eq(run_script(unpriced).cost_usd, None)
 }
+
+///|
+async test "a malformed or negative cost_usd invalidates the whole usage line" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":"0.25"}}\n'
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":-1}}\n'
+    #|printf '{"event":"usage","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":1,"cost_usd":0.5}}\n'
+    #|printf '{"subrun_report": "ok"}\n'
+  let result = run_script(script)
+  // Only the well-formed line counts — tokens and money together.
+  assert_eq(result.prompt_tokens, 1)
+  assert_eq(result.completion_tokens, 1)
+  assert_eq(result.cost_usd, Some(0.5))
+}

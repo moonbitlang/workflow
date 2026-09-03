@@ -430,3 +430,24 @@ async test "cost_usd sums the engines' own figures and ignores unknowns" {
   assert_eq(again.cost_usd(), 0.0)
   assert_eq(again.calls_replayed(), 1)
 }
+
+///|
+test "a priced attempt survives the JSON round trip on both arms" {
+  let priced : @workflow.AgentAttempt = {
+    attempt_id: "sr-9",
+    steps_used: 2,
+    prompt_tokens: 7,
+    completion_tokens: 3,
+    cost_usd: Some(0.25),
+  }
+  for
+    outcome in [
+      @workflow.Finished(value="ok", attempt=priced),
+      @workflow.DidNotFinish(failure=TimedOut, attempt=Some(priced)),
+    ] {
+    let json = outcome.to_json()
+    assert_true(json.stringify().contains("\"cost_usd\":0.25"))
+    let back : @workflow.AgentOutcome = @json.from_json(json)
+    assert_eq(back, outcome)
+  }
+}
