@@ -5,3 +5,6 @@ target/
 # Journals and HTML the example workflows write next to where they run.
 *.jsonl
 *.jsonl.html
+# Review-court outputs written next to where it runs.
+cross-review.md
+.cross-review/
