@@ -244,7 +244,7 @@ async test "usage.cost_usd is summed into the attempt; absent means unknown" {
 }
 
 ///|
-async test "a malformed or negative cost_usd invalidates the whole usage line" {
+async test "a malformed, negative, or infinite cost_usd invalidates the whole usage line" {
   guard can_spawn_sh() else {
     println("skipped: cannot spawn sh")
     return
@@ -253,6 +253,7 @@ async test "a malformed or negative cost_usd invalidates the whole usage line" {
     #|read line
     #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":"0.25"}}\n'
     #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":-1}}\n'
+    #|printf '{"event":"usage","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":10,"cost_usd":1e999}}\n'
     #|printf '{"event":"usage","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":1,"cost_usd":0.5}}\n'
     #|printf '{"subrun_report": "ok"}\n'
   let result = run_script(script)

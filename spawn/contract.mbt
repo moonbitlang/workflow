@@ -128,8 +128,9 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
       // non-negative number is as malformed as a bad token field, and the
       // whole line is ignored rather than charged in part.
       let price : Double? = match json {
-        { "usage": { "cost_usd": Number(cost, ..), .. }, .. } if cost >= 0.0 =>
-          Some(cost)
+        { "usage": { "cost_usd": Number(cost, ..), .. }, .. } if cost >= 0.0 &&
+          !cost.is_inf() &&
+          !cost.is_nan() => Some(cost)
         { "usage": { "cost_usd": _, .. }, .. } => return
         _ => None
       }
