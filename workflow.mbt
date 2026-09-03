@@ -134,6 +134,12 @@ pub async fn Workflow::agent_call(
   // Phase attribution is invocation-time, not launch-time: a call issued
   // under phase A that waits out the queue into phase B still belongs to A.
   let phase = self.current_phase
+  // `Some(null)` is no schema: the envelope would carry `"schema": null`,
+  // which every engine reads as none, so the identity says none too.
+  let schema = match schema {
+    Some(Null) => None
+    other => other
+  }
   let call : AgentCall = {
     kind,
     input,

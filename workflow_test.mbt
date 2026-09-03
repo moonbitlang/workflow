@@ -451,3 +451,19 @@ test "a priced attempt survives the JSON round trip on both arms" {
     assert_true(back == outcome)
   }
 }
+
+///|
+async test "a null schema is the same work as no schema" {
+  let journal = @workflow.Journal::in_memory()
+  let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner), journal~)
+  let _ = wf.agent("shape me", kind="judge", schema=Json::null())
+  assert_eq(journal.recorded()[0].call.schema, None)
+  // The next generation, asking with no schema at all, replays it.
+  let again = @workflow.Workflow(
+    runner=@workflow.Runner(shaped_runner),
+    journal=@workflow.Journal::in_memory(prior=journal.recorded()),
+  )
+  let _ = again.agent("shape me", kind="judge")
+  assert_eq(again.calls_replayed(), 1)
+  assert_eq(again.calls_made(), 0)
+}

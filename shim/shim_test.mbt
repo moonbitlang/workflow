@@ -190,3 +190,20 @@ test "the envelope's schema reaches the request; a bare input has none" {
   }
   assert_eq(bare.schema, None)
 }
+
+///|
+test "a schema that is not an object is refused; null means none" {
+  assert_true(
+    @shim.Request::parse(
+      "{\"workflow_contract\":1,\"schema\":\"object\",\"input\":{\"query\":\"q\"}}",
+    )
+    is Err("shim input schema must be a JSON object"),
+  )
+  guard @shim.Request::parse(
+      "{\"workflow_contract\":1,\"schema\":null,\"input\":{\"query\":\"q\"}}",
+    )
+    is Ok(request) else {
+    fail("null schema")
+  }
+  assert_eq(request.schema, None)
+}

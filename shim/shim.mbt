@@ -53,10 +53,14 @@ pub fn Request::parse(line : String) -> Result[Request, String] {
           return Err("shim input max_steps must be an integer")
         _ => None
       }
-      let schema = if json is { "schema": schema, .. } && !(schema is Null) {
-        Some(schema)
-      } else {
-        None
+      // A schema is a JSON object (contract §2); null means none; anything
+      // else is a malformed request, refused here rather than by the CLI.
+      let schema = match json {
+        { "schema": Object(_) as schema, .. } => Some(schema)
+        { "schema": Null, .. } => None
+        { "schema": _, .. } =>
+          return Err("shim input schema must be a JSON object")
+        _ => None
       }
       (id, kind, max_steps, input, schema)
     }
