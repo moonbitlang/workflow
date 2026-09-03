@@ -18,29 +18,38 @@ async fn main {
 
 ///|
 async fn run() -> Unit {
-  let args = @env.args()
-  let positional : Array[String] = []
-  let mut watch = false
-  for index, arg in args {
-    if index == 0 {
-      continue
+  let spec = @argparse.Command(
+    "viz",
+    about="Render a workflow journal as a self-contained HTML report.",
+    arg_required_else_help=true,
+    flags=[
+      @argparse.FlagArg(
+        "watch",
+        about="re-render every 2 seconds; the page auto-refreshes",
+      ),
+    ],
+    positionals=[
+      @argparse.PositionArg(
+        "journal",
+        about="the journal to read (JSONL)",
+        num_args=@argparse.ValueRange(lower=1, upper=1),
+      ),
+      @argparse.PositionArg(
+        "out",
+        about="page to write (default: <journal>.html)",
+      ),
+    ],
+  )
+  // Parse failures and `--help` carry their own contextual help text.
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
     }
-    if arg == "--watch" {
-      watch = true
-    } else {
-      positional.push(arg)
-    }
   }
-  guard positional.length() >= 1 else {
-    println("usage: viz <journal.jsonl> [out.html] [--watch]")
-    return
-  }
-  let path = positional[0]
-  let out = if positional.length() >= 2 {
-    positional[1]
-  } else {
-    "\{path}.html"
-  }
+  guard first(args, "journal") is Some(path) else { return }
+  let out = first(args, "out").unwrap_or("\{path}.html")
+  let watch = args.flags.get("watch").unwrap_or(false)
   for ;; {
     render(path, out, watch) catch {
       error =>
@@ -52,6 +61,15 @@ async fn run() -> Unit {
     }
     guard watch else { break }
     @async.sleep(2_000)
+  }
+}
+
+///|
+/// The first value parsed for an argument, if it was given at all.
+fn first(args : @argparse.Matches, name : String) -> String? {
+  match args.values.get(name) {
+    Some([value, ..]) => Some(value)
+    _ => None
   }
 }
 
@@ -120,9 +138,13 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
   for index, entry in entries {
     let finished = entry.outcome is Finished(..)
     let pill = if finished {
-      "<span class=\"pill ok\">Finished</span>"
+      (
+        #|<span class="pill ok">Finished</span>
+      )
     } else {
-      "<span class=\"pill bad\">DidNotFinish</span>"
+      (
+        #|<span class="pill bad">DidNotFinish</span>
+      )
     }
     let tokens = tokens_of(entry.outcome)
     let width = 100 * tokens / max_tokens
@@ -137,15 +159,34 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
       (Some(from), Some(to)) => "\{to - from}"
       _ => ""
     }
+    let fill = width.max(if tokens > 0 { 2 } else { 0 })
     rows.write_string(
-      "<tr title=\"\{detail}\"><td class=\"num\">\{index + 1}</td><td class=\"lbl\">\{escape(entry.call.label)}</td><td class=\"lbl\">\{phase}</td><td>\{pill}</td><td class=\"num\">\{steps_of(entry.outcome)}</td><td class=\"num\">\{elapsed}</td><td class=\"barcell\"><div class=\"bar\"><div class=\"track\"><div class=\"fill\" style=\"width:\{width.max(if tokens > 0 { 2 } else { 0 })}%\"></div></div><span class=\"val\">\{tokens}</span></div></td></tr>",
+      (
+        $|<tr title="\{detail}">
+        $|<td class="num">\{index + 1}</td>
+        $|<td class="lbl">\{escape(entry.call.label)}</td>
+        $|<td class="lbl">\{phase}</td>
+        $|<td>\{pill}</td>
+        $|<td class="num">\{steps_of(entry.outcome)}</td>
+        $|<td class="num">\{elapsed}</td>
+        $|<td class="barcell"><div class="bar">
+        $|<div class="track"><div class="fill" style="width:\{fill}%"></div></div>
+        $|<span class="val">\{tokens}</span>
+        $|</div></td></tr>
+      ),
     )
   }
   let graph = StringBuilder()
   let row_h = 40
   let height = entries.length() * row_h + 16
   graph.write_string(
-    "<svg viewBox=\"0 0 460 \{height}\" role=\"img\" aria-label=\"Derived dataflow: an edge means a later agent's input embeds an earlier agent's output\"><defs><marker id=\"af\" viewBox=\"0 0 8 8\" refX=\"7\" refY=\"4\" markerWidth=\"6.5\" markerHeight=\"6.5\" orient=\"auto\"><path d=\"M0,0 L8,4 L0,8 z\" fill=\"var(--accent)\"/></marker></defs>",
+    (
+      $|<svg viewBox="0 0 460 \{height}" role="img"
+      $| aria-label="Derived dataflow: an edge means a later agent's input embeds an earlier agent's output">
+      $|<defs><marker id="af" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto">
+      $|<path d="M0,0 L8,4 L0,8 z" fill="var(--accent)"/>
+      $|</marker></defs>
+    ),
   )
   for edge in edges {
     let (a, b) = edge
@@ -153,7 +194,10 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
     let y2 = 22 + b * row_h
     let spread = 40 + (b - a) * 26
     graph.write_string(
-      "<path d=\"M 212 \{y1} C \{212 + spread} \{y1}, \{212 + spread} \{y2}, 218 \{y2}\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"1.4\" opacity=\"0.75\" marker-end=\"url(#af)\"/>",
+      (
+        $|<path d="M 212 \{y1} C \{212 + spread} \{y1}, \{212 + spread} \{y2}, 218 \{y2}"
+        $| fill="none" stroke="var(--accent)" stroke-width="1.4" opacity="0.75" marker-end="url(#af)"/>
+      ),
     )
   }
   for index, entry in entries {
@@ -164,12 +208,19 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
       "var(--fail)"
     }
     graph.write_string(
-      "<circle cx=\"200\" cy=\"\{y}\" r=\"7\" fill=\"\{color}\" fill-opacity=\"0.18\" stroke=\"\{color}\" stroke-width=\"1.6\"/><text x=\"188\" y=\"\{y + 4}\" text-anchor=\"end\" font-size=\"12\" font-family=\"ui-monospace,Menlo,monospace\" fill=\"var(--ink)\">\{escape(entry.call.label)}</text>",
+      (
+        $|<circle cx="200" cy="\{y}" r="7"
+        $| fill="\{color}" fill-opacity="0.18" stroke="\{color}" stroke-width="1.6"/>
+        $|<text x="188" y="\{y + 4}" text-anchor="end"
+        $| font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--ink)">\{escape(entry.call.label)}</text>
+      ),
     )
   }
   graph.write_string("</svg>")
   let refresh = if watch {
-    "<meta http-equiv=\"refresh\" content=\"2\">"
+    (
+      #|<meta http-equiv="refresh" content="2">
+    )
   } else {
     ""
   }
@@ -183,22 +234,58 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
       },
     )
     let mark = if finished { "ok" } else { "bad" }
+    let status = if finished { "Finished" } else { "DidNotFinish" }
+    // The last entry is the one a watcher is waiting on: open it.
+    let open = if index == entries.length() - 1 { " open" } else { "" }
     outputs.write_string(
-      "<details\{if index == entries.length() - 1 { " open" } else { "" }}><summary><span class=\"num\">\{index + 1}</span> <span class=\"lbl\">\{escape(entry.call.label)}</span> <span class=\"pill \{mark}\">\{if finished { "Finished" } else { "DidNotFinish" }}</span></summary><div class=\"out\">\{body}</div></details>",
+      // `.out` is pre-wrap: its content must not gain stray newlines.
+      (
+        $|<details\{open}><summary>
+        $|<span class="num">\{index + 1}</span>
+        $|<span class="lbl">\{escape(entry.call.label)}</span>
+        $|<span class="pill \{mark}">\{status}</span>
+        $|</summary><div class="out">\{body}</div></details>
+      ),
     )
   }
-  let page = "<!doctype html><meta charset=\"utf-8\">" +
-    refresh +
-    "<title>journal: \{escape(path)}</title>" +
-    style +
-    "<div class=\"wrap\"><h1>\{escape(path)}</h1><p class=\"dek\">\{entries.length()} recorded attempt(s) · \{edges.length()} dataflow edge(s) derived from content. A journal records LIVE outcomes only — repeated labels are re-attempts or cascade generations; replays are served, never re-appended.</p><div class=\"grid\"><div class=\"panel\"><h2>Ledger</h2><div style=\"overflow-x:auto\"><table><tr><th>#</th><th>agent</th><th>phase</th><th>outcome</th><th style=\"text-align:right\">steps</th><th style=\"text-align:right\">ms</th><th>tokens</th></tr>" +
-    rows.to_string() +
-    "</table></div></div><div class=\"panel\"><h2>Derived dataflow</h2><div style=\"overflow-x:auto\">" +
-    graph.to_string() +
-    "</div></div></div><div class=\"panel\" style=\"margin-top:1.3rem\"><h2>Outputs</h2>" +
-    outputs.to_string() +
-    "</div></div>"
-  @fs.write_file(out, page)
+  let page = StringBuilder()
+  page.write_string(
+    (
+      $|<!doctype html><meta charset="utf-8">\{refresh}
+      $|<title>journal: \{escape(path)}</title>
+      $|\{style}
+      $|<div class="wrap">
+      $|<h1>\{escape(path)}</h1>
+      $|<p class="dek">\{entries.length()} recorded attempt(s) · \{edges.length()} dataflow edge(s)
+      $|derived from content. A journal records LIVE outcomes only — repeated labels are
+      $|re-attempts or cascade generations; replays are served, never re-appended.</p>
+      $|<div class="grid">
+      $|<div class="panel"><h2>Ledger</h2><div style="overflow-x:auto"><table>
+      $|<tr><th>#</th><th>agent</th><th>phase</th><th>outcome</th>
+      $|<th style="text-align:right">steps</th><th style="text-align:right">ms</th><th>tokens</th></tr>
+    ),
+  )
+  page.write_string(rows.to_string())
+  page.write_string(
+    (
+      $|</table></div></div>
+      $|<div class="panel"><h2>Derived dataflow</h2><div style="overflow-x:auto">
+    ),
+  )
+  page.write_string(graph.to_string())
+  page.write_string(
+    (
+      $|</div></div></div>
+      $|<div class="panel" style="margin-top:1.3rem"><h2>Outputs</h2>
+    ),
+  )
+  page.write_string(outputs.to_string())
+  page.write_string(
+    (
+      #|</div></div>
+    ),
+  )
+  @fs.write_file(out, page.to_string())
   println(
     "wrote \{out}: \{entries.length()} entries, \{edges.length()} derived edge(s)",
   )

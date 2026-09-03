@@ -265,7 +265,8 @@ let runner = @spawn.contract_runner(launch=call => {
 Both shims take the same options — `--command <exe>`, `--model <name>`,
 `--cwd <dir>`, `--writable`, `--schema <file>`, and `-- <args…>` passed to
 the CLI verbatim (the escape hatch for a flag the shim does not know
-yet). The request's `max_steps` IS enforced by the shim, since neither CLI
+yet); `--help` renders them, and an unknown option is refused rather than
+guessed at. The request's `max_steps` IS enforced by the shim, since neither CLI
 has a turn cap of its own: each model call (Claude) or completed
 non-reasoning item (Codex) is a step, and the CLI is torn down the moment
 the ceiling is exceeded, surfacing as `AgentFailure::MaxSteps` with the

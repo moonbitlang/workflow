@@ -20,58 +20,71 @@ pub(all) struct Options {
 }
 
 ///|
+/// The shim's own flags, as argparse sees them. `--` and everything after
+/// it is cut away before parsing, so a passthrough flag can never be read
+/// as one of ours (nor ours be swallowed as passthrough).
+fn spec(default_command : String) -> @argparse.Command {
+  @argparse.Command(
+    default_command,
+    about=(
+      $|Drive the \{default_command} CLI as a workflow child speaking the
+      $|contract on stdin/stdout. Everything after `--` reaches the CLI
+      $|unchanged.
+    ),
+    options=[
+      @argparse.OptionArg("command", about="the CLI binary", default_values=[
+        default_command,
+      ]),
+      @argparse.OptionArg("model", about="forwarded as the CLI's model flag"),
+      @argparse.OptionArg("cwd", about="the CLI's working directory"),
+      @argparse.OptionArg(
+        "schema",
+        about="file holding the JSON Schema the final answer must match",
+      ),
+    ],
+    flags=[
+      @argparse.FlagArg(
+        "writable",
+        about="write-capable run (default: read-only unless kind = worker)",
+      ),
+    ],
+  )
+}
+
+///|
 /// Parse the shim's argv (without argv[0]). Unknown options are refused —
 /// a typo must not silently become a prompt or a CLI flag.
 pub fn Options::parse(
   args : ArrayView[String],
   default_command~ : String,
 ) -> Result[Options, String] {
-  let mut command = default_command
-  let mut model : String? = None
-  let mut cwd : String? = None
-  let mut writable = false
-  let mut schema : String? = None
-  let extra : Array[String] = []
-  let mut index = 0
-  while index < args.length() {
-    let arg = args[index]
-    fn value(name : String) -> Result[String, String] {
-      if index + 1 < args.length() {
-        index += 1
-        Ok(args[index])
-      } else {
-        Err("\{name} needs a value")
-      }
+  let mut cut = args.length()
+  for index, arg in args {
+    if arg == "--" {
+      cut = index
+      break
     }
-    match arg {
-      "--command" =>
-        match value(arg) {
-          Ok(v) => command = v
-          Err(e) => return Err(e)
-        }
-      "--model" =>
-        match value(arg) {
-          Ok(v) => model = Some(v)
-          Err(e) => return Err(e)
-        }
-      "--cwd" =>
-        match value(arg) {
-          Ok(v) => cwd = Some(v)
-          Err(e) => return Err(e)
-        }
-      "--schema" =>
-        match value(arg) {
-          Ok(v) => schema = Some(v)
-          Err(e) => return Err(e)
-        }
-      "--writable" => writable = true
-      "--" => {
-        extra.push_iter(args[index + 1:].iter())
-        break
-      }
-      other => return Err("unknown shim option \{other}")
-    }
-    index += 1
   }
-  Ok({ command, model, cwd, writable, schema, extra, })
+  let extra = if cut < args.length() { args[cut + 1:].to_owned() } else { [] }
+  let matches = spec(default_command).parse(argv=args[:cut], env=Map([])) catch {
+    // Display-ready text: the error and this command's full help.
+    error => return Err("\{error}")
+  }
+  Ok({
+    command: first(matches, "command").unwrap_or(default_command),
+    model: first(matches, "model"),
+    cwd: first(matches, "cwd"),
+    writable: matches.flags.get("writable").unwrap_or(false),
+    schema: first(matches, "schema"),
+    extra,
+  })
+}
+
+///|
+/// The first value parsed for an argument, if it was given at all.
+fn first(matches : @argparse.Matches, name : String) -> String? {
+  match matches.values.get(name) {
+    Some([value, ..]) => Some(value)
+    _ => None
+  }
 }

@@ -48,6 +48,40 @@ test "unknown majors, non-JSON, and promptless inputs are typed refusals" {
 }
 
 ///|
+test "argv: defaults, settings, and verbatim passthrough after `--`" {
+  guard @shim.Options::parse([], default_command="codex") is Ok(bare) else {
+    fail("bare")
+  }
+  assert_eq(bare.command, "codex")
+  assert_eq(bare.model, None)
+  assert_eq(bare.writable, false)
+  assert_eq(bare.extra, [])
+  guard @shim.Options::parse(
+      ["--model", "m", "--cwd", "/w", "--writable", "--", "--model", "theirs"],
+      default_command="claude",
+    )
+    is Ok(full) else {
+    fail("full")
+  }
+  assert_eq(full.command, "claude")
+  assert_eq(full.model, Some("m"))
+  assert_eq(full.cwd, Some("/w"))
+  assert_eq(full.writable, true)
+  // The CLI's own `--model` rode through untouched, ours stayed ours.
+  assert_eq(full.extra, ["--model", "theirs"])
+}
+
+///|
+test "argv: an unknown option is refused, never taken for a CLI flag" {
+  guard @shim.Options::parse(["--writeable"], default_command="claude")
+    is Err(problem) else {
+    fail("a typo must not parse")
+  }
+  assert_true(problem.contains("unexpected argument '--writeable'"))
+  assert_true(problem.contains("--writable"))
+}
+
+///|
 test "usage carries all five counters with a derived total" {
   assert_eq(
     @shim.usage(
