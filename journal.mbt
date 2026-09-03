@@ -1,13 +1,25 @@
 ///|
-/// One journal record: an agent call's work identity and what it resolved
-/// to. The journal is the workflow's durability seam — everything a resumed
-/// run needs to skip re-paying for work already done rides these entries,
-/// so the entry must lose nothing the live run knew (hence `AgentOutcome`,
-/// the lossless envelope, and not just the value).
+/// One journal record: an agent call's work identity, what it resolved
+/// to, and the attribution a reader wants — the phase the call was issued
+/// under and the wall-clock window it ran in. The journal is the
+/// workflow's durability seam: everything a resumed run needs to skip
+/// re-paying for work already done rides these entries, so the entry must
+/// lose nothing the live run knew (hence `AgentOutcome`, the lossless
+/// envelope, and not just the value). Attribution is metadata: replay
+/// matches on the call's work identity alone, never on phase or time.
 pub(all) struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
-} derive(Eq, ToJson, FromJson)
+  /// The workflow phase the call was ISSUED under (`Workflow::phase`), when
+  /// there was one. Absent from the line when `None`.
+  phase : String?
+  /// Milliseconds since the Unix epoch when the runner was invoked, and
+  /// when its outcome resolved. Absent when the entry was built without
+  /// them (an older journal, a hand-seeded entry). A replayed call writes
+  /// no entry, so no entry ever describes a replay.
+  started_at : Int64?
+  finished_at : Int64?
+} derive(Eq)
 
 ///|
 pub extend JournalEntry with Eq::{equal, not_equal}
@@ -17,6 +29,97 @@ pub extend JournalEntry with ToJson::{to_json}
 
 ///|
 pub extend JournalEntry with FromJson::{from_json}
+
+///|
+/// An entry from its parts. Attribution is optional, so a caller seeding a
+/// journal by hand (tests, migrations) names only what it knows.
+pub fn JournalEntry::JournalEntry(
+  call~ : AgentCall,
+  outcome~ : AgentOutcome,
+  phase? : String,
+  started_at? : Int64,
+  finished_at? : Int64,
+) -> JournalEntry {
+  { call, outcome, phase, started_at, finished_at, }
+}
+
+///|
+/// The entry's storage shape: `call` and `outcome` as their own codecs
+/// render them, attribution fields present only when known, and
+/// timestamps as plain JSON numbers of milliseconds — the shape every
+/// JSON reader expects, rather than the string the default `Int64` codec
+/// writes.
+pub impl ToJson for JournalEntry with fn to_json(self) {
+  let json : Json = {
+    "call": self.call.to_json(),
+    "outcome": self.outcome.to_json(),
+  }
+  guard json is Object(fields) else { return json }
+  if self.phase is Some(phase) {
+    fields["phase"] = phase.to_json()
+  }
+  if self.started_at is Some(at) {
+    fields["started_at"] = Json::number(at.to_double())
+  }
+  if self.finished_at is Some(at) {
+    fields["finished_at"] = Json::number(at.to_double())
+  }
+  json
+}
+
+///|
+/// Decodes the shape `to_json` writes and the pre-attribution shape
+/// (`call` and `outcome` alone) that earlier journals hold. A present
+/// attribution field of the wrong type is a malformed entry, never a
+/// missing one; `null` reads as absent.
+pub impl @json.FromJson for JournalEntry with fn from_json(json, path) {
+  guard json is { "call": call, "outcome": outcome, .. } else {
+    raise JsonDecodeError(
+      (path, "JournalEntry: expected an object with `call` and `outcome`"),
+    )
+  }
+  let call = AgentCall::from_json(call, path.add_key("call"))
+  let outcome = AgentOutcome::from_json(outcome, path.add_key("outcome"))
+  let phase = match json {
+    { "phase": String(phase), .. } => Some(phase)
+    { "phase": Null, .. } => None
+    { "phase": _, .. } =>
+      raise JsonDecodeError(
+        (path.add_key("phase"), "JournalEntry: phase must be a string"),
+      )
+    _ => None
+  }
+  {
+    call,
+    outcome,
+    phase,
+    started_at: millis(json, "started_at", path),
+    finished_at: millis(json, "finished_at", path),
+  }
+}
+
+///|
+/// An optional millisecond field: absent or `null` is `None`, a whole
+/// number is the value, anything else is malformed.
+fn millis(
+  json : Json,
+  key : String,
+  path : @json.JsonPath,
+) -> Int64? raise @json.JsonDecodeError {
+  guard json is Object(fields) else { return None }
+  match fields.get(key) {
+    None | Some(Null) => None
+    Some(Number(value, ..)) if !value.is_inf() && value == value.floor() =>
+      Some(value.to_int64())
+    Some(_) =>
+      raise JsonDecodeError(
+        (
+          path.add_key(key),
+          "JournalEntry: \{key} must be a whole number of milliseconds",
+        ),
+      )
+  }
+}
 
 ///|
 /// The journal file is damaged somewhere other than its final line. A torn
@@ -51,11 +154,12 @@ pub impl Show for JournalCorrupted with fn output(self, logger) {
 ///   allowance — size `max_calls` with re-attempts in mind).
 ///
 /// Identity is the call's work content — kind, input, max_steps, schema,
-/// and the workflow's replay scope — never the display label. Duplicate identical calls are intentional samples
-/// (three identical verifiers), so matching consumes entries as a
-/// multiset: each replay consumes one entry, in file order, and only LIVE
-/// outcomes are recorded — replays are never re-appended, so entry counts
-/// stay honest across any number of resume generations.
+/// and the workflow's replay scope — never the display label, and never
+/// the phase or time an entry records. Duplicate identical calls are
+/// intentional samples (three identical verifiers), so matching consumes
+/// entries as a multiset: each replay consumes one entry, in file order,
+/// and only LIVE outcomes are recorded — replays are never re-appended, so
+/// entry counts stay honest across any number of resume generations.
 ///
 /// A file-backed journal assumes ONE writing workflow process per path:
 /// appends are serialized within the process, not across processes.
@@ -112,9 +216,14 @@ pub async fn Journal::load(path : String) -> Journal {
     if !terminated {
       segments.push((start, bytes.length()))
     }
-    // An unterminated final line needs the on-disk repair even when its
-    // content parses: the next append would otherwise fuse two entries.
+    // Repair is a TRUNCATION to the last healthy line, never a
+    // re-encoding: every byte before the damage is kept as written, so
+    // metadata lines and fields this version does not read survive into
+    // the next generation. An unterminated final line needs the repair
+    // even when its content parses: the next append would otherwise fuse
+    // two entries.
     let mut needs_repair = !terminated
+    let mut keep = bytes.length()
     for index, segment in segments {
       let (from, to) = segment
       let parsed : Result[JournalEntry?, Error] = Ok(parse_line(bytes[from:to])) catch {
@@ -123,18 +232,19 @@ pub async fn Journal::load(path : String) -> Journal {
       match parsed {
         Ok(Some(entry)) => prior.push(entry)
         Ok(None) => ()
-        Err(_) if index == segments.length() - 1 => needs_repair = true
+        Err(_) if index == segments.length() - 1 => {
+          needs_repair = true
+          keep = from
+        }
         Err(_) => raise JournalCorrupted(path~, line=index + 1)
       }
     }
     if needs_repair {
-      let out = StringBuilder()
-      for entry in prior {
-        out.write_string(({ "v": 1, "e": entry.to_json() } : Json).stringify())
-        out.write_char('\n')
-      }
       let tmp = path + ".repair"
-      @fs.write_file(tmp, out.to_string())
+      @fs.write_file(tmp, bytes[0:keep])
+      if keep > 0 && bytes[keep - 1] != b'\n' {
+        @fs.write_file(tmp, b"\n", append=true, create_mode=OpenOrCreate)
+      }
       @fs.rename(tmp, path, replace=true)
     }
   }
@@ -148,9 +258,10 @@ pub async fn Journal::load(path : String) -> Journal {
 }
 
 ///|
-/// One line's entry, `None` for a blank line (also covers the `\r` a CRLF
-/// writer leaves behind). Raises on undecodable bytes or unparsable JSON —
-/// the caller decides whether that is a torn tail or corruption.
+/// One line's entry; `None` for a blank line (also covers the `\r` a CRLF
+/// writer leaves behind) and for a v1 line that carries no entry. Raises
+/// on undecodable bytes, unparsable JSON, or an unknown line shape — the
+/// caller decides whether that is a torn tail or corruption.
 fn parse_line(segment : BytesView) -> JournalEntry? raise {
   let text = @utf8.decode(segment).trim()
   if text.is_empty() {
@@ -158,10 +269,13 @@ fn parse_line(segment : BytesView) -> JournalEntry? raise {
   }
   // Schema-versioned envelope: the storage format is an evolvable
   // contract of its own, never derived codec output blessed by accident.
-  guard @json.parse(text.to_owned()) is { "v": Number(1, ..), "e": entry, .. } else {
-    fail("journal line is not a v1 entry")
+  // A v1 line WITHOUT an entry is metadata for other readers (a tool's
+  // annotation, a future plan header): replay skips it, repair keeps it.
+  match @json.parse(text.to_owned()) {
+    { "v": Number(1, ..), "e": entry, .. } => Some(@json.from_json(entry))
+    { "v": Number(1, ..), .. } => None
+    _ => fail("journal line is not a v1 line")
   }
-  Some(@json.from_json(entry))
 }
 
 ///|

@@ -6,7 +6,10 @@
 /// as its input line — the persisted replay identity IS the child input,
 /// so an encoder change is an identity change and can never replay stale
 /// work. `label` is display metadata: journal replay matches on (kind,
-/// input, max_steps, schema, scope), never on the label.
+/// input, max_steps, schema, scope), never on the label. By convention a
+/// label reads `stage:instance` (`verify:claude:3`, `survey:journal`), so
+/// a reader can group the instances of one stage by the prefix before the
+/// first colon.
 pub(all) struct AgentCall {
   kind : String
   input : Json

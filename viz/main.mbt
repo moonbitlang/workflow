@@ -132,8 +132,13 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
         DidNotFinish(failure~, ..) => "\{failure}"
       },
     )
+    let phase = escape(entry.phase.unwrap_or(""))
+    let elapsed = match (entry.started_at, entry.finished_at) {
+      (Some(from), Some(to)) => "\{to - from}"
+      _ => ""
+    }
     rows.write_string(
-      "<tr title=\"\{detail}\"><td class=\"num\">\{index + 1}</td><td class=\"lbl\">\{escape(entry.call.label)}</td><td>\{pill}</td><td class=\"num\">\{steps_of(entry.outcome)}</td><td class=\"barcell\"><div class=\"bar\"><div class=\"track\"><div class=\"fill\" style=\"width:\{width.max(if tokens > 0 { 2 } else { 0 })}%\"></div></div><span class=\"val\">\{tokens}</span></div></td></tr>",
+      "<tr title=\"\{detail}\"><td class=\"num\">\{index + 1}</td><td class=\"lbl\">\{escape(entry.call.label)}</td><td class=\"lbl\">\{phase}</td><td>\{pill}</td><td class=\"num\">\{steps_of(entry.outcome)}</td><td class=\"num\">\{elapsed}</td><td class=\"barcell\"><div class=\"bar\"><div class=\"track\"><div class=\"fill\" style=\"width:\{width.max(if tokens > 0 { 2 } else { 0 })}%\"></div></div><span class=\"val\">\{tokens}</span></div></td></tr>",
     )
   }
   let graph = StringBuilder()
@@ -186,7 +191,7 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
     refresh +
     "<title>journal: \{escape(path)}</title>" +
     style +
-    "<div class=\"wrap\"><h1>\{escape(path)}</h1><p class=\"dek\">\{entries.length()} recorded attempt(s) · \{edges.length()} dataflow edge(s) derived from content. A journal records LIVE outcomes only — repeated labels are re-attempts or cascade generations; replays are served, never re-appended.</p><div class=\"grid\"><div class=\"panel\"><h2>Ledger</h2><div style=\"overflow-x:auto\"><table><tr><th>#</th><th>agent</th><th>outcome</th><th style=\"text-align:right\">steps</th><th>tokens</th></tr>" +
+    "<div class=\"wrap\"><h1>\{escape(path)}</h1><p class=\"dek\">\{entries.length()} recorded attempt(s) · \{edges.length()} dataflow edge(s) derived from content. A journal records LIVE outcomes only — repeated labels are re-attempts or cascade generations; replays are served, never re-appended.</p><div class=\"grid\"><div class=\"panel\"><h2>Ledger</h2><div style=\"overflow-x:auto\"><table><tr><th>#</th><th>agent</th><th>phase</th><th>outcome</th><th style=\"text-align:right\">steps</th><th style=\"text-align:right\">ms</th><th>tokens</th></tr>" +
     rows.to_string() +
     "</table></div></div><div class=\"panel\"><h2>Derived dataflow</h2><div style=\"overflow-x:auto\">" +
     graph.to_string() +

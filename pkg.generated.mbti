@@ -107,11 +107,17 @@ pub fn Journal::recorded(Self) -> Array[JournalEntry]
 pub(all) struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
-} derive(Eq, ToJson, @json.FromJson)
+  phase : String?
+  started_at : Int64?
+  finished_at : Int64?
+} derive(Eq)
+pub fn JournalEntry::JournalEntry(call~ : AgentCall, outcome~ : AgentOutcome, phase? : String, started_at? : Int64, finished_at? : Int64) -> Self
 pub fn JournalEntry::equal(Self, Self) -> Bool
 pub fn JournalEntry::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
 pub fn JournalEntry::not_equal(Self, Self) -> Bool
 pub fn JournalEntry::to_json(Self) -> Json
+pub impl ToJson for JournalEntry
+pub impl @json.FromJson for JournalEntry
 
 pub(all) enum ReplayDecision {
   Serve(AgentOutcome)

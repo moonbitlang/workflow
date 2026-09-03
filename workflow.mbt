@@ -213,10 +213,14 @@ pub async fn Workflow::agent_call(
       ),
     ),
   )
+  let started_at = wall_clock_ms()
   let outcome = (self.runner.run)(call)
+  let finished_at = wall_clock_ms()
   self.account(outcome)
   if self.journal is Some(journal) {
-    journal.record({ call, outcome, })
+    journal.record(
+      JournalEntry(call~, outcome~, phase?, started_at~, finished_at~),
+    )
   }
   match outcome {
     Finished(value~, ..) => {
@@ -358,6 +362,12 @@ pub fn Workflow::tokens_spent(self : Workflow) -> Int {
 /// mixes a pricing engine with a non-pricing one sees a floor.
 pub fn Workflow::cost_usd(self : Workflow) -> Double {
   self.cost_usd
+}
+
+///|
+/// The journal's clock: milliseconds since the Unix epoch.
+fn wall_clock_ms() -> Int64 {
+  @env.now().reinterpret_as_int64()
 }
 
 ///|

@@ -35,10 +35,10 @@ fn success_entry(
   value : Json,
   label? : String,
 ) -> @workflow.JournalEntry {
-  {
-    call: call_for(prompt, label?),
-    outcome: Finished(value~, attempt=attempt_for(call_for(prompt))),
-  }
+  @workflow.JournalEntry(
+    call=call_for(prompt, label?),
+    outcome=Finished(value~, attempt=attempt_for(call_for(prompt))),
+  )
 }
 
 ///|
@@ -46,7 +46,10 @@ fn failure_entry(
   prompt : String,
   failure : @workflow.AgentFailure,
 ) -> @workflow.JournalEntry {
-  { call: call_for(prompt), outcome: DidNotFinish(failure~, attempt=None), }
+  @workflow.JournalEntry(
+    call=call_for(prompt),
+    outcome=DidNotFinish(failure~, attempt=None),
+  )
 }
 
 ///|
@@ -464,4 +467,131 @@ async test "a validator unwind rolls the claim back" {
   // still there to serve.
   assert_eq(wf.agent("x", kind="scout"), { "answer": 42 })
   assert_eq(wf.calls_replayed(), 1)
+}
+
+///|
+async test "an entry records its phase and wall-clock window; replay ignores both" {
+  let journal = @workflow.Journal::in_memory()
+  let wf1 = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
+  wf1.phase("Scan")
+  let _ = wf1.agent("q", kind="scout")
+  guard journal.recorded() is [entry] else { fail("expected one entry") }
+  assert_eq(entry.phase, Some("Scan"))
+  guard entry.started_at is Some(started) && entry.finished_at is Some(finished) else {
+    fail("expected the wall-clock window on a live entry")
+  }
+  // Milliseconds, not seconds: later than 2023, and the window is ordered.
+  assert_true(started > 1_700_000_000_000)
+  assert_true(finished >= started)
+  // Attribution is not identity: the next generation replays the call
+  // under a different phase.
+  let wf2 = @workflow.Workflow(
+    runner=@workflow.Runner(must_not_run),
+    journal=@workflow.Journal::in_memory(prior=journal.recorded()),
+  )
+  wf2.phase("Verify")
+  let _ = wf2.agent("q", kind="scout")
+  assert_eq(wf2.calls_replayed(), 1)
+}
+
+///|
+test "the entry's JSON shape: attribution only when known, timestamps as numbers" {
+  let bare = success_entry("q", { "a": 1 })
+  let text = bare.to_json().stringify()
+  assert_false(text.contains("\"phase\""))
+  assert_false(text.contains("started_at"))
+  assert_false(text.contains("finished_at"))
+  let full = @workflow.JournalEntry(
+    call=bare.call,
+    outcome=bare.outcome,
+    phase="Scan",
+    started_at=1_700_000_000_000,
+    finished_at=1_700_000_000_250,
+  )
+  let text = full.to_json().stringify()
+  assert_true(text.contains("\"phase\":\"Scan\""))
+  assert_true(text.contains("\"started_at\":1700000000000"))
+  assert_true(text.contains("\"finished_at\":1700000000250"))
+  for entry in [bare, full] {
+    let back : @workflow.JournalEntry = @json.from_json(entry.to_json())
+    assert_true(back == entry)
+  }
+}
+
+///|
+test "a mistyped attribution field is a malformed entry, not a missing one" {
+  let entry = success_entry("q", { "a": 1 })
+  for
+    bad in [
+      ({ "phase": 7 } : Json),
+      { "started_at": "soon" },
+      { "finished_at": 1.5 },
+    ] {
+    let json = entry.to_json()
+    guard json is Object(fields) && bad is Object(extra) else {
+      fail("objects expected")
+    }
+    for key, value in extra {
+      fields[key] = value
+    }
+    let decoded : Result[@workflow.JournalEntry, Error] = Ok(
+      @json.from_json(json),
+    ) catch {
+      error => Err(error)
+    }
+    assert_true(decoded is Err(_))
+  }
+  // `null` reads as absent.
+  let json = entry.to_json()
+  guard json is Object(fields) else { fail("object expected") }
+  fields["phase"] = Json::null()
+  fields["started_at"] = Json::null()
+  let back : @workflow.JournalEntry = @json.from_json(json)
+  assert_true(back == entry)
+}
+
+///|
+async test "a pre-attribution journal line loads unchanged and still replays" {
+  let dir = @fs.tmpdir(prefix="workflow-journal-legacy-")
+  let path = "\{dir}/journal.jsonl"
+  // The 0.4 line shape: the call and the outcome alone.
+  let legacy =
+    #|{"v":1,"e":{"call":{"kind":"scout","input":{"query":"hello"},"label":"hello","scope":""},"outcome":["Finished",{"value":{"a":1},"attempt":{"attempt_id":"sr-hello","steps_used":1,"prompt_tokens":7,"completion_tokens":3}}]}}
+  @fs.write_file(path, legacy + "\n")
+  let journal = @workflow.Journal::load(path)
+  guard journal.prior() is [entry] else { fail("expected the legacy entry") }
+  assert_eq(entry.phase, None)
+  assert_eq(entry.started_at, None)
+  assert_eq(entry.finished_at, None)
+  assert_true(entry == success_entry("hello", { "a": 1 }))
+  let wf = @workflow.Workflow(runner=@workflow.Runner(must_not_run), journal~)
+  assert_eq(wf.agent("hello", kind="scout"), { "a": 1 })
+  @fs.rmdir(dir, recursive=true) catch {
+    _ => ()
+  }
+}
+
+///|
+async test "a metadata line is skipped by replay and preserved by repair" {
+  let dir = @fs.tmpdir(prefix="workflow-journal-meta-")
+  let path = "\{dir}/journal.jsonl"
+  let meta = "{\"v\":1,\"plan\":{\"stages\":[\"scan\"]}}\n"
+  let entry_line = (
+      { "v": 1, "e": Json(success_entry("hello", { "a": 1 })) } : Json).stringify() +
+    "\n"
+  // Metadata, an entry, a blank line, then a torn tail.
+  @fs.write_file(path, meta + entry_line + "\n{\"v\":1,\"e\":{\"call")
+  let journal = @workflow.Journal::load(path)
+  assert_eq(journal.prior().length(), 1)
+  // Repair truncated the tail and kept every healthy byte, metadata
+  // and blank line included, rather than re-encoding what it understood.
+  assert_eq(@fs.read_file(path).text(), meta + entry_line + "\n")
+  // The next generation appends after it and reads both entries.
+  let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
+  let _ = wf.agent("world", kind="scout")
+  assert_eq(@workflow.Journal::load(path).prior().length(), 2)
+  assert_true(@fs.read_file(path).text().has_prefix(meta + entry_line))
+  @fs.rmdir(dir, recursive=true) catch {
+    _ => ()
+  }
 }

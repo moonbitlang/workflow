@@ -146,8 +146,11 @@ async test "find then verify, with no barrier between the stages" {
 ## Replay: crash, resume, and pay only for new work
 
 Every live outcome is appended to the `Journal` — the call's WORK
-identity (kind, input, max_steps — never the display label) plus the
-lossless outcome. Re-running the same program against the same journal
+identity (kind, input, max_steps, schema — never the display label) plus
+the lossless outcome, plus attribution for readers: the phase the call
+was issued under and the wall-clock window it ran in, as milliseconds
+since the epoch. Attribution never takes part in replay matching.
+Re-running the same program against the same journal
 replays successes for free, keeps a human's `Skipped` refusal standing,
 and re-attempts other failures — getting past those is what resume is
 for:
@@ -185,9 +188,16 @@ async test "the second generation replays instead of re-paying" {
 File-backed journals (`@workflow.Journal::load(path)`) are append-only JSONL,
 accumulated across generations. A torn final line — the signature of
 crashing mid-append — is dropped AND repaired on disk; corruption
-anywhere else raises `JournalCorrupted`. Identical concurrent calls are
-intentional samples (three identical verifiers) and consume entries as a
-multiset.
+anywhere else raises `JournalCorrupted`; the repair truncates to the last
+healthy line and never re-encodes what it read. Identical concurrent
+calls are intentional samples (three identical verifiers) and consume
+entries as a multiset.
+
+A v1 line that carries no entry is metadata: replay skips it and repair
+preserves it, so a tool can annotate a journal, and a declared plan has a
+place to live when one arrives. Labels follow the convention
+`stage:instance` (`verify:claude:3`, `survey:journal`): readers group the
+instances of one stage by the prefix before the first colon.
 
 ## Observability
 
