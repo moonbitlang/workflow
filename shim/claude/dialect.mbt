@@ -11,9 +11,9 @@
 /// message id, cost is charged once from the result, and the per-message
 /// snapshots serve only as the fallback for a run cut short before its
 /// result (`settle`).
-pub struct Claude {
+struct Claude {
   mut steps : Int
-  priv snapshots : Map[String, Cost]
+  snapshots : Map[String, Cost]
   mut charged : Bool
   mut answer : Json?
   mut session_id : String?
@@ -45,7 +45,7 @@ fn Cost::event(self : Cost, price? : Double) -> Json {
 
 ///|
 /// A fresh observer.
-pub fn Claude::new() -> Claude {
+pub fn Claude::Claude() -> Claude {
   {
     steps: 0,
     snapshots: {},
@@ -221,7 +221,7 @@ pub fn Claude::report(self : Claude) -> Json? {
 /// ok"), trimmed to the fields that matter. Both `assistant` lines are
 /// the SAME message (thinking block, then text block).
 test "one message across two content blocks is one step; the result charges" {
-  let state = Claude::new()
+  let state = Claude()
   let lines = [
     (
       #|{"type":"system","subtype":"init","session_id":"s1","uuid":"u0"}
@@ -272,7 +272,7 @@ test "one message across two content blocks is one step; the result charges" {
 
 ///|
 test "a run cut short settles the last snapshot of every message seen" {
-  let state = Claude::new()
+  let state = Claude()
   let lines = [
     (
       #|{"type":"assistant","message":{"id":"msg_1","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":2}}}
@@ -306,7 +306,7 @@ test "a run cut short settles the last snapshot of every message seen" {
 
 ///|
 test "error results and the turn ceiling produce no report" {
-  let failed = Claude::new()
+  let failed = Claude()
   let _ = failed.observe(
     (
       #|{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}
@@ -314,7 +314,7 @@ test "error results and the turn ceiling produce no report" {
   )
   assert_eq(failed.failure, Some("claude: error_during_execution: boom"))
   assert_eq(failed.report(), None)
-  let capped = Claude::new()
+  let capped = Claude()
   let _ = capped.observe(
     (
       #|{"type":"result","subtype":"error_max_turns","is_error":true}
@@ -327,7 +327,7 @@ test "error results and the turn ceiling produce no report" {
 
 ///|
 test "a structured answer replaces the text" {
-  let state = Claude::new()
+  let state = Claude()
   let _ = state.observe(
     (
       #|{"type":"result","subtype":"success","result":"","structured_output":{"verdict":"real"}}

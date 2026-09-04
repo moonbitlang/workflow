@@ -6,18 +6,8 @@ package "moonbitlang/workflow/shim/claude"
 // Errors
 
 // Types and methods
-pub struct Claude {
-  mut steps : Int
-  mut charged : Bool
-  mut answer : Json?
-  mut session_id : String?
-  mut num_turns : Int?
-  mut cost_usd : Double?
-  mut failure : String?
-  mut exhausted : Bool
-  // private fields
-}
-pub fn Claude::new() -> Self
+type Claude
+pub fn Claude::Claude() -> Self
 pub fn Claude::observe(Self, String) -> Array[Json]
 pub fn Claude::report(Self) -> Json?
 pub fn Claude::settle(Self) -> Json?
