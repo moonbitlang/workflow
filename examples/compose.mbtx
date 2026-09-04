@@ -77,12 +77,12 @@ async fn compose() -> Unit {
   // ---- Answer: two engines, in parallel, same question ----
   wf.phase("Answer")
   let question = "In ONE sentence: what does the file spawn/contract.mbt in this repository do? Read it before answering."
-  let answers = @workflow.fan_out(["claude", "codex"], engine => wf.try_agent(
+  let answers = @workflow.fan_out(["claude", "codex"], engine => @workflow.attempt(() => wf.agent(
     prompt=question,
     kind=engine,
     label="answer:\{engine}",
     max_steps=8,
-  ))
+  )))
   let texts : Array[String] = []
   for index, engine in ["claude", "codex"] {
     match answers[index] {
@@ -102,12 +102,12 @@ async fn compose() -> Unit {
   // ---- Judge: one engine reads both ----
   wf.phase("Judge")
   match
-    wf.try_agent(
+    @workflow.attempt(() => wf.agent(
       prompt="Two engines answered the question \"\{question}\" ||| A: \{clip(texts[0], 600)} ||| B: \{clip(texts[1], 600)} ||| Read spawn/contract.mbt yourself, then say in one sentence which answer is more accurate and why, ending with VERDICT: A or VERDICT: B.",
       kind="claude",
       label="judge:claude",
       max_steps=6,
-    ) {
+    )) {
     Ok(report) => println("  \{answer_of(report)}")
     Err(error) => println("  judge FAILED: \{error}")
   }

@@ -18,9 +18,9 @@ Everything else follows from three decisions:
 
 - **Failure is data, in a typed channel.** An agent that produced no
   usable report raises `WorkflowError::AgentFailed` with a typed
-  `AgentFailure` cause; `try_agent` folds it into a `Result` for fan-out
+  `AgentFailure` cause; `attempt` folds it into a `Result` for fan-out
   sites. A failure is never a silent `null`: it either raises
-  `AgentFailed` or lands in `try_agent`'s `Result`.
+  `AgentFailed` or lands in `attempt`'s `Result`.
 - **Cost is never lost.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
@@ -66,11 +66,13 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
   )
   wf.phase("Verify")
   let results = @workflow.fan_out(["correctness", "security", "repro"], lens => {
-    wf.try_agent(
-      kind="judge",
-      prompt="Judge the finding through lens=\{lens}: real?",
-      label="verify:\{lens}",
-    )
+    @workflow.attempt(() => {
+      wf.agent(
+        kind="judge",
+        prompt="Judge the finding through lens=\{lens}: real?",
+        label="verify:\{lens}",
+      )
+    })
   })
   let confirmed = @workflow.quorum(results, need=2)
     .filter(v => v is { "confirmed": True, .. })
@@ -207,18 +209,19 @@ pipeline:
 async test "find then verify, with no barrier between the stages" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
   let verified = @workflow.fan_out(["pkg/a", "pkg/b"], target => {
-    let finding = wf.try_agent(
-      prompt="Find the worst bug in \{target}",
-      kind="judge",
-    )
+    let finding = @workflow.attempt(() => {
+      wf.agent(prompt="Find the worst bug in \{target}", kind="judge")
+    })
     match finding {
       // Each finding proceeds to verification the moment ITS finder
       // returns — b's finder may still be running while a verifies.
       Ok(_) =>
-        wf.try_agent(
-          prompt="Adversarially verify the finding in \{target}",
-          kind="judge",
-        )
+        @workflow.attempt(() => {
+          wf.agent(
+            prompt="Adversarially verify the finding in \{target}",
+            kind="judge",
+          )
+        })
       Err(error) => Err(error)
     }
   })

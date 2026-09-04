@@ -143,8 +143,6 @@ pub fn Workflow::cost_usd(Self) -> Double
 pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int
-pub async fn Workflow::try_agent(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[Json, WorkflowError]
-pub async fn[T : @json.FromJson] Workflow::try_agent_as(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[T, WorkflowError]
 
 pub(all) enum WorkflowEvent {
   PhaseStarted(String)

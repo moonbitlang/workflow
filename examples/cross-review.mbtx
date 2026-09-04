@@ -243,7 +243,7 @@ async fn review() -> Unit {
   }
   let reviews = @workflow.fan_out(jobs, job => {
     let (engine, index) = job
-    wf.try_agent(
+    @workflow.attempt(() => wf.agent(
       prompt=(
         $|You are reviewing part of a code change in the repository at the
         $|current directory. Find REAL defects only: correctness bugs, crashes,
@@ -266,7 +266,7 @@ async fn review() -> Unit {
       label="review:\{engine}:\{index + 1}",
       max_steps=steps_for(engine, review=true),
       schema=findings_schema,
-    )
+    ))
   })
   let findings : Array[Finding] = []
   let seen : Map[String, Bool] = Map([])
@@ -299,7 +299,7 @@ async fn review() -> Unit {
   wf.phase("Verify")
   let verdicts = @workflow.fan_out(findings, finding => {
     let verifier = next_engine(engines, finding.engine)
-    wf.try_agent(
+    @workflow.attempt(() => wf.agent(
       prompt=(
         $|An independent reviewer claims this defect exists in the repository
         $|at the current directory:
@@ -318,7 +318,7 @@ async fn review() -> Unit {
       label="verify:\{finding.file}:\{finding.line}",
       max_steps=steps_for(verifier, review=false),
       schema=verdict_schema,
-    )
+    ))
   })
   let rows : Array[(Finding, String, String, String)] = []
   for index, finding in findings {

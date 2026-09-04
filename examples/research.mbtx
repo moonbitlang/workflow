@@ -53,7 +53,7 @@ async fn research() -> Unit {
   ]
   let results = @workflow.fan_out(questions, question => {
     let (query, hints) = question
-    wf.try_agent(prompt=query, kind="explore", hints~, max_steps=16)
+    @workflow.attempt(() => wf.agent(prompt=query, kind="explore", hints~, max_steps=16))
   })
   for result in results {
     match result {

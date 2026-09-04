@@ -47,12 +47,12 @@ async fn hunt() -> Unit {
     } else {
       clip(found.join(" ||| "), 1400)
     }
-    let answer = wf.try_agent(
+    let answer = @workflow.attempt(() => wf.agent(
       prompt="Hunt this repository (the core package, spawn/, viz/, docs/) for ONE piece of explicitly deferred work (a TODO/FIXME, a documented known limit, or a 'future work'/'post-v1'/'deferred' note) NOT already in this list: \{seen}. Reply STRICTLY one line: 'ITEM: file:line — what is deferred — why it matters' or exactly 'DRY' if you can find nothing new.",
       kind="explore",
       max_steps=14,
       label="hunter round \{rounds}",
-    )
+    ))
     match answer {
       Ok(report) => {
         let text = match report {

@@ -1,7 +1,7 @@
 ///|
 /// Run thunks concurrently, each already carrying its failure policy in
-/// its type: a thunk resolves to `Result[T, WorkflowError]` (build them
-/// from `try_agent`), so one agent's failure lands in its own slot without
+/// its type: a thunk resolves to `Result[T, WorkflowError]` (wrap a call
+/// in `attempt`), so one agent's failure lands in its own slot without
 /// disturbing siblings — tokens already spent on the others stay spent.
 /// Anything a thunk RAISES is deliberately not caught: engine bugs and
 /// cancellation fail the task group and cancel every peer, never demoted
@@ -40,12 +40,11 @@ pub async fn[A, B] fan_out(
 /// failure lands in `Err`, while cancellation and engine bugs still
 /// propagate — the distinction the whole failure model rests on.
 ///
-/// `try_agent` is this move over `agent`, and `attempt` is the same move
-/// over ANY raising step: `agent_call` carrying an engine's own input
-/// shape, an `agent_as` whose decode may reject, a `retry` around either,
-/// or a whole multi-stage per-item pipeline. It exists so the shape a
-/// caller wants never has to be a method — one free function covers every
-/// entry point instead of a `try_` twin for each.
+/// It folds ANY raising step: `agent`, `agent_call` carrying an engine's
+/// own input shape, an `agent_as` whose decode may reject, a `retry`
+/// around any of them, or a whole multi-stage per-item pipeline. ONE free
+/// function rather than a `try_` twin per entry point — the shape a
+/// caller wants is a combinator, never another method.
 ///
 /// The right shape at fan-out call sites, where one lost agent must not
 /// poison its siblings.
@@ -83,8 +82,9 @@ pub fn worth_retrying(error : WorkflowError) -> Bool {
 /// Re-run one agent step while it keeps failing retriably: `max_retry`
 /// extra attempts at most, spaced by `backoff`, raising the LAST attempt's
 /// error when the budget runs out. Wraps a RAISING step (`agent`,
-/// `agent_as`, or a whole per-item pipeline) — `try_agent` has already
-/// folded its failure into a value there is nothing left to retry on.
+/// `agent_as`, or a whole per-item pipeline). Wrap it in `attempt`, not
+/// the other way round: a step already folded into a `Result` raises
+/// nothing there is left to retry on.
 ///
 /// What counts as retriable is `worth_retrying` unless `retriable` says
 /// otherwise; cancellation and engine bugs are never retried, they
