@@ -477,11 +477,17 @@ async fn write_report(
   wf : @workflow.Workflow,
 ) -> Unit {
   let out = StringBuilder()
-  out <+ "# Cross-engine review of \{head} against \{base}\n\n"
+  out <+
+    $|# Cross-engine review of \{head} against \{base}
+    $|
+    $|
   let confirmed = rows.filter(row => row.1 == "confirmed")
   let uncertain = rows.filter(row => row.1 == "uncertain")
   let refuted = rows.filter(row => row.1 == "refuted")
-  out <+ "Court: \{engines.join(", ")}. \{rows.length()} finding(s) raised · \{confirmed.length()} confirmed · \{uncertain.length()} uncertain · \{refuted.length()} refuted\n\n"
+  out <+
+    $|Court: \{engines.join(", ")}. \{rows.length()} finding(s) raised · \{confirmed.length()} confirmed · \{uncertain.length()} uncertain · \{refuted.length()} refuted
+    $|
+    $|
   for section in [
       ("Confirmed", confirmed),
       ("Uncertain", uncertain),
@@ -491,25 +497,33 @@ async fn write_report(
     if group.is_empty() {
       continue
     }
-    out <+ "## \{title}\n\n"
+    out <+
+      $|## \{title}
+      $|
+      $|
     for row in group {
       let (finding, _, reason, verifier) = row
-      out <+ "### \{finding.file}:\{finding.line} — \{finding.title} (\{finding.severity}, raised by \{finding.engine})\n\n"
-      out <+ "\{finding.claim}\n\n"
-      out <+ "```\n\{finding.evidence}\n```\n\n"
-      out <+ "Verifier (\{verifier}): \{reason}\n\n"
+      out <+
+        $|### \{finding.file}:\{finding.line} — \{finding.title} (\{finding.severity}, raised by \{finding.engine})
+        $|
+        $|\{finding.claim}
+        $|
+        $|```
+        $|\{finding.evidence}
+        $|```
+        $|
+        $|Verifier (\{verifier}): \{reason}
+        $|
+        $|
     }
   }
   // Cost by engine, from the journal's attempts — replayed calls cost nothing.
-  out.write_string(
-    (
-      #|## Cost
-      #|
-      #|| engine | calls | steps | prompt tokens | completion tokens |
-      #|| --- | ---: | ---: | ---: | ---: |
-      #|
-    ),
-  )
+  out <+
+    #|## Cost
+    #|
+    #|| engine | calls | steps | prompt tokens | completion tokens |
+    #|| --- | ---: | ---: | ---: | ---: |
+    #|
   if wf.journal is Some(journal) {
     for engine in engines {
       let mut calls = 0
@@ -531,10 +545,15 @@ async fn write_report(
           completion += attempt.completion_tokens
         }
       }
-      out <+ "| \{engine} | \{calls} | \{steps} | \{prompt} | \{completion} |\n"
+      out <+
+        $|| \{engine} | \{calls} | \{steps} | \{prompt} | \{completion} |
+        $|
     }
   }
-  out <+ "\n\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens.\n"
+  out <+
+    $|
+    $|\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens.
+    $|
   @fs.write_file("cross-review.md", out.to_string())
   println(
     "\n\{confirmed.length()} confirmed / \{uncertain.length()} uncertain / \{refuted.length()} refuted → cross-review.md · \{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
