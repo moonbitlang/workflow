@@ -326,6 +326,35 @@ async fn shrink() -> Unit {
   )
 
   // ---- One scout per package: its undecided symbols, and the code ----
+  let (judgements, unjudged) = judge(wf, owner, engine, undecided)
+  let out = value(args, "out", "shrink-api.md")
+  @fs.write_file(
+    out,
+    render(repo, owner, decided, judgements, unjudged, foreign),
+  )
+  println(
+    "\nwrote \{out}: \{judgements.length()} judgement(s), \{unjudged.length()} package(s) unjudged",
+  )
+  println(
+    "spent \{wf.tokens_spent()} token(s) over \{wf.calls_made()} call(s), \{wf.calls_replayed()} replayed",
+  )
+}
+
+///|
+/// The judging half, over whatever `Workflow` it is handed — which is
+/// the seam the tests drive with a fake runner, so the fan-out, the
+/// per-package grouping, the answer parsing and the refusal path all run
+/// without an engine. One call per package: a scout reads the code once
+/// and rules on every undecided symbol in it.
+///
+/// A package whose scout failed lands in the second array, never in the
+/// first: silence about a package is not a clean bill.
+async fn judge(
+  wf : @workflow.Workflow,
+  owner : String,
+  engine : String,
+  undecided : Array[Finding],
+) -> (Array[Judgement], Array[String]) {
   wf.phase("Judge")
   let packages = []
   for finding in undecided {
@@ -336,7 +365,7 @@ async fn shrink() -> Unit {
   let judged = @workflow.fan_out(packages, name => {
     let symbols = undecided.filter(f => f.pkg == name).map(f => f.decl)
     @workflow.attempt(() => {
-      wf.agent_as(
+      wf.agent(
         prompt=judge_prompt(owner, name, dir_of(owner, name), symbols),
         kind=engine,
         label="judge:\{name}",
@@ -349,21 +378,11 @@ async fn shrink() -> Unit {
   let unjudged : Array[String] = []
   for index, result in judged {
     match result {
-      Ok(answer) => judgements.append(verdicts_of(packages[index], answer))
+      Ok(report) => judgements.append(verdicts_of(packages[index], report))
       Err(error) => unjudged.push("\{packages[index]}: \{error}")
     }
   }
-  let out = value(args, "out", "shrink-api.md")
-  @fs.write_file(
-    out,
-    render(repo, owner, decided, judgements, unjudged, foreign),
-  )
-  println(
-    "\nwrote \{out}: \{judgements.length()} judgement(s), \{unjudged.length()} package(s) unjudged",
-  )
-  println(
-    "spent \{wf.tokens_spent()} token(s) over \{wf.calls_made()} call(s), \{wf.calls_replayed()} replayed",
-  )
+  (judgements, unjudged)
 }
 
 ///|
@@ -535,9 +554,14 @@ async fn read_text(path : String) -> String {
 
 ///|
 /// The verdicts a scout returned, as rows.
-fn verdicts_of(pkg : String, answer : Json) -> Array[Judgement] {
+fn verdicts_of(pkg : String, report : Json) -> Array[Judgement] {
   let rows : Array[Judgement] = []
-  guard answer is { "verdicts": Array(items), .. } else { return rows }
+  // The report is the CHILD CONTRACT's envelope — `{"answer": …}` — not
+  // the answer itself, and an engine that was told a schema may still
+  // hand the object back as fenced text. Unwrap before reading.
+  guard structured(report) is Some({ "verdicts": Array(items), .. }) else {
+    return rows
+  }
   for item in items {
     if item
       is {
@@ -659,6 +683,77 @@ fn count(args : @argparse.Matches, name : String, fallback : Int) -> Int {
 }
 
 ///|
+/// The ANSWER inside a child-contract report, as an object: the engine
+/// was told a schema, but a report still arrives wrapped, and a model
+/// told to answer in JSON may still fence it or talk around it.
+fn structured(report : Json) -> Json? {
+  match report {
+    { "answer": String(text), .. } => {
+      let body = strip_fences(text)
+      match (Some(@json.parse(body)) catch { _ => None }) {
+        Some(json) => Some(json)
+        None => embedded(body)
+      }
+    }
+    { "answer": value, .. } => Some(value)
+    _ => None
+  }
+}
+
+///|
+/// Unwrap a fenced code block: the run of backticks that opened it also
+/// closes it, and the closing fence is STRIPPED rather than trimmed, so
+/// an answer whose own last character is a backtick keeps it.
+fn strip_fences(text : String) -> String {
+  let trimmed = text.trim()
+  guard trimmed.has_prefix("```") else { return trimmed.to_owned() }
+  let opened = trimmed.trim_start(chars="`")
+  let fence = trimmed.clamped_view(end=trimmed.length() - opened.length())
+  let body = match opened.find("\n") {
+    Some(index) => opened.clamped_view(start=index + 1)
+    None => opened
+  }
+  body.strip_suffix(fence).unwrap_or(body).trim().to_owned()
+}
+
+///|
+/// The FIRST BALANCED `{...}` in a run of prose. An engine that answered
+/// and then explained itself still answered, but only a scan to the
+/// MATCHING brace finds that answer.
+fn embedded(text : String) -> Json? {
+  guard text.find("{") is Some(start) else { return None }
+  let object = StringBuilder()
+  let mut depth = 0
+  let mut quoted = false
+  let mut escaped = false
+  for ch in text.clamped_view(start~) {
+    object.write_char(ch)
+    if escaped {
+      escaped = false
+    } else if quoted {
+      match ch {
+        '\\' => escaped = true
+        '"' => quoted = false
+        _ => ()
+      }
+    } else {
+      match ch {
+        '"' => quoted = true
+        '{' => depth += 1
+        '}' => {
+          depth -= 1
+          if depth == 0 {
+            return Some(@json.parse(object.to_string())) catch { _ => None }
+          }
+        }
+        _ => ()
+      }
+    }
+  }
+  None
+}
+
+///|
 /// The head of a text, cut where a surrogate pair cannot be split.
 fn clip(text : String, limit : Int) -> String {
   text.clamped_view(end=limit).to_owned()
@@ -694,6 +789,135 @@ test "the report parses into findings, and only unused items are findings" {
   assert_true(findings[1].explained)
   assert_true(findings[2].narrowable)
   assert_eq(findings[3].pkg, "vendor/other")
+}
+
+///|
+/// A scout that answers from the CHILD CONTRACT's envelope, the way a
+/// real one does: the verdicts ride `answer`, not the report root. One
+/// package answers in fenced prose, because engines do that; one refuses.
+async fn scripted(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
+  @async.pause()
+  let attempt : @workflow.AgentAttempt = {
+    attempt_id: "sr-\{call.label}",
+    steps_used: 1,
+    prompt_tokens: 20,
+    completion_tokens: 10,
+    cost_usd: None,
+  }
+  if call.label == "judge:acme/lib/broken" {
+    return DidNotFinish(failure=TimedOut, attempt=Some(attempt))
+  }
+  let answer = if call.label == "judge:acme/lib/fenced" {
+    (
+      $|Here is my ruling:
+      $|```json
+      $|{"verdicts": [{"symbol": "pub fn stray() -> Unit", "verdict": "drop",
+      $|"why": "no caller anywhere", "evidence": "lib/stray.mbt:4"}]}
+      $|```
+    )
+  } else {
+    (
+      $|{"verdicts": [
+      $|{"symbol": "pub fn keep_me() -> Unit", "verdict": "export",
+      $| "why": "the documented extension point", "evidence": "lib/api.mbt:12"},
+      $|{"symbol": "malformed"}]}
+    )
+  }
+  Finished(value={ "answer": answer, "engine": "fake" }, attempt~)
+}
+
+///|
+async test "judging fans out per package, unwraps the envelope, keeps refusals visible" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(scripted))
+  let undecided : Array[Finding] = [
+    {
+      pkg: "acme/lib/api",
+      decl: "pub fn keep_me() -> Unit",
+      explained: false,
+      narrowable: false,
+    },
+    {
+      pkg: "acme/lib/api",
+      decl: "pub fn other() -> Unit",
+      explained: false,
+      narrowable: false,
+    },
+    {
+      pkg: "acme/lib/fenced",
+      decl: "pub fn stray() -> Unit",
+      explained: false,
+      narrowable: false,
+    },
+    {
+      pkg: "acme/lib/broken",
+      decl: "pub fn lost() -> Unit",
+      explained: false,
+      narrowable: false,
+    },
+  ]
+  let (judgements, unjudged) = judge(wf, "acme/lib", "explore", undecided)
+  // One call per PACKAGE, not per symbol: `api` has two undecided symbols
+  // and is asked once.
+  assert_eq(wf.calls_made(), 3)
+  assert_eq(judgements.map(row => (row.pkg, row.symbol, row.verdict)), [
+    ("acme/lib/api", "pub fn keep_me() -> Unit", "export"),
+    ("acme/lib/fenced", "pub fn stray() -> Unit", "drop"),
+  ])
+  assert_eq(judgements[0].evidence, "lib/api.mbt:12")
+  // The malformed row is dropped rather than becoming a half-verdict, and
+  // the package whose scout failed is named instead of passing silently.
+  assert_eq(unjudged.length(), 1)
+  assert_true(unjudged[0].has_prefix("acme/lib/broken: "))
+}
+
+///|
+test "a report is read through the envelope, however the engine wrapped it" {
+  let rows = verdicts_of("p", {
+    "answer": "{\"verdicts\": [{\"symbol\": \"s\", \"verdict\": \"drop\", \"why\": \"w\", \"evidence\": \"f:1\"}]}",
+    "engine": "fake",
+  })
+  assert_eq(rows.map(r => r.symbol), ["s"])
+  // A structured answer, not a string, is read the same way.
+  assert_eq(verdicts_of("p", { "answer": { "verdicts": [] } }).length(), 0)
+  // A report that is not the envelope at all yields nothing, never a
+  // half-parse.
+  assert_eq(verdicts_of("p", { "verdicts": [] }).length(), 0)
+}
+
+///|
+test "the report separates what was decided for free from what was judged" {
+  let finding : Finding = {
+    pkg: "acme/lib/cli",
+    decl: "pub fn helper() -> Unit",
+    explained: false,
+    narrowable: false,
+  }
+  let page = render(
+    "/tmp/acme",
+    "acme/lib",
+    [(finding, Unreachable), ({ ..finding, pkg: "acme/lib/api", }, Undecided)],
+    [
+      {
+        pkg: "acme/lib/api",
+        symbol: "pub fn helper() -> Unit",
+        verdict: "drop",
+        why: "nothing outside wants it",
+        evidence: "api/helper.mbt:9",
+      },
+    ],
+    ["acme/lib/late: timed out"],
+    ["vendor/other"],
+  )
+  assert_true(page.contains("# Interface shrink — `acme/lib`"))
+  assert_true(page.contains("## unreachable"))
+  assert_true(page.contains("## drop"))
+  assert_true(page.contains("`api/helper.mbt:9`"))
+  // A package that was never answered is named, not quietly omitted.
+  assert_true(page.contains("## Unjudged"))
+  assert_true(page.contains("acme/lib/late: timed out"))
+  // And code this module does not own is kept separate from its own.
+  assert_true(page.contains("## Not ours"))
+  assert_true(page.contains("`vendor/other`"))
 }
 
 ///|
