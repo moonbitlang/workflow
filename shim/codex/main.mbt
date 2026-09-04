@@ -1,11 +1,17 @@
 ///|
 /// A PROCESS SHIM: Codex as a workflow engine. Speaks the child contract
 /// on its own stdin/stdout (`docs/child-contract.md`) and drives
-/// `codex exec --json` underneath, translating framing both ways. Build
-/// it once, then point a `LaunchSpec` at the binary:
+/// `codex exec --json` underneath, translating framing both ways. Point a
+/// `LaunchSpec` at the PUBLISHED shim — no build step, no path to
+/// hard-code:
 ///
-///   moon build shim/codex --target native
-///   _build/native/release/build/shim/codex/codex.exe [--model m] [--cwd d] [--writable] [--schema f] [-- codex args...]
+///   moonx moonbitlang/workflow/shim/codex [--model m] [--cwd d] [--writable] [--schema f] [-- codex args...]
+///
+/// `moonx` runs the wasm build, which this shim fully supports: it spawns
+/// the CLI, keeps the parent's stdin-EOF cancel channel live, and frames
+/// stdout exactly as the native build does. Building locally
+/// (`just shims`) is for developing THIS shim, where the published
+/// version is not what you want to run.
 ///
 /// Kind policy: read-only runs (the default) use the `read-only` sandbox;
 /// `worker`, or `--writable`, uses `workspace-write`. The request's

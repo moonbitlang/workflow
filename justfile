@@ -21,7 +21,12 @@ tidy:
 viz *args:
     moon run viz -- {{ args }}
 
-# Build the Claude Code and Codex process shims (native).
+# Build the Claude Code and Codex process shims, for developing THEM —
+# a workflow points at the published ones with
+# `moonx moonbitlang/workflow/shim/claude`. Both targets, because that is
+# what `moonx` runs: wasm.
 shims:
     moon build shim/claude --target native
     moon build shim/codex --target native
+    moon build shim/claude --target wasm
+    moon build shim/codex --target wasm

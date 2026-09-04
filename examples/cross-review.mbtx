@@ -17,7 +17,6 @@ import {
 /// report. One model's hallucinated defect rarely survives a second model
 /// reading the code; a real one usually does.
 ///
-///   just shims
 ///   moon run examples/cross-review.mbtx [base=origin/main] [path...]
 ///
 /// Reviews `git diff <base> -- <paths>` (working tree against base, so
@@ -176,22 +175,32 @@ async fn review() -> Unit {
   // to their CLI's structured-output flag; explore is told the shape inline.
 
   // Routing: KIND picks the engine.
-  let shims = "_build/native/debug/build/shim"
+  // The PUBLISHED shims, run by coordinate: no build step and no path to
+  // hard-code. Pinned to the version this script imports, so one run is
+  // one coherent set of published artifacts.
+  let shim = "moonbitlang/workflow/shim"
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
         "claude" =>
           {
-            command: "\{shims}/claude/claude.exe",
-            args: ["--model", claude_model, "--", "--max-budget-usd", "0.60"],
+            command: "moonx",
+            args: [
+              "\{shim}/claude@0.4.1",
+              "--model",
+              claude_model,
+              "--",
+              "--max-budget-usd",
+              "0.60",
+            ],
             cwd: None,
             extra_env: None,
             deadline_ms: Some(600_000),
           }
         "codex" =>
           {
-            command: "\{shims}/codex/codex.exe",
-            args: ["--model", codex_model],
+            command: "moonx",
+            args: ["\{shim}/codex@0.4.1", "--model", codex_model],
             cwd: None,
             extra_env: None,
             deadline_ms: Some(600_000),

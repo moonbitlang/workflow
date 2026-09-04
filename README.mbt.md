@@ -281,24 +281,37 @@ and what the reference engine reads from the envelope versus argv — is
 Two PROCESS SHIMS ship with this module: executables that speak the child
 contract on their own stdin/stdout and drive `claude -p --output-format
 stream-json` or `codex exec --json` underneath, translating framing both
-ways. Build once, then point a `LaunchSpec` at the binary — nothing in the
+ways. They are PUBLISHED, so a `LaunchSpec` points at a coordinate rather
+than a path — no build step and nothing to hard-code, and nothing in the
 library knows they exist:
-
-```sh
-moon build shim/claude --target native   # _build/native/debug/build/shim/claude/claude.exe
-moon build shim/codex --target native    # _build/native/debug/build/shim/codex/codex.exe
-```
 
 ```moonbit nocheck
 ///|
 let runner = @spawn.contract_runner(launch=call => {
-  command: "_build/native/debug/build/shim/claude/claude.exe",
+  command: "moonx",
   // read-only by default; `worker` calls (or --writable) may edit
-  args: ["--model", "claude-sonnet-5", "--", "--max-budget-usd", "2"],
+  args: [
+    "moonbitlang/workflow/shim/claude", "--model", "claude-sonnet-5", "--", "--max-budget-usd",
+    "2",
+  ],
   cwd: None,
   extra_env: None,
   deadline_ms: None,
 })
+```
+
+`moonx` runs the WASM build, which both shims fully support — spawning
+the CLI, holding the parent's stdin-EOF cancel channel open, and framing
+stdout identically to the native build. It prints nothing of its own, so
+the child's JSONL reaches the runner unpolluted, and a warm start costs
+about 0.15s against an agent deadline measured in minutes. Pin the
+version (`…/shim/claude@0.4.1`) when a run must be reproducible.
+
+Building locally is for developing the shims themselves, where the
+published version is not what you want to run:
+
+```sh
+just shims   # _build/native/debug/build/shim/{claude,codex}/*.exe
 ```
 
 Both shims take the same options — `--command <exe>`, `--model <name>`,
