@@ -300,6 +300,7 @@ let runner = @workflow.Runner(call => {
     steps_used,
     prompt_tokens,
     completion_tokens,
+    cost_usd: None, // `Double?` has no default: name it, even when unknown
   })
 })
 ```
