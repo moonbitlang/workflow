@@ -378,12 +378,17 @@ fn structured(report : Json) -> Json? {
 fn strip_fences(text : String) -> String {
   let trimmed = text.trim()
   guard trimmed.has_prefix("```") else { return trimmed.to_owned() }
-  let inner = trimmed.trim_start(chars="`")
-  let after_lang = match inner.find("\n") {
-    Some(index) => inner[index + 1:]
-    None => inner
+  // The fence is whatever run of backticks opened the block, and the
+  // closing fence is exactly that run — STRIPPED, not trimmed away, so an
+  // answer whose own last character is a backtick keeps it.
+  let opened = trimmed.trim_start(chars="`")
+  let fence = trimmed.clamped_view(end=trimmed.length() - opened.length())
+  // Everything up to the first newline is the info string ("json").
+  let body = match opened.find("\n") {
+    Some(index) => opened.clamped_view(start=index + 1)
+    None => opened
   }
-  after_lang.trim_end(chars="`").trim().to_owned()
+  body.strip_suffix(fence).unwrap_or(body).trim().to_owned()
 }
 
 ///|
@@ -570,17 +575,10 @@ async fn git(args : Array[String]) -> String {
 }
 
 ///|
+/// The head of a text, cut where a surrogate pair cannot be split: half
+/// an emoji is neither readable output nor a prompt an engine can use.
 fn clip(text : String, limit : Int) -> String {
-  let out = StringBuilder()
-  let mut count = 0
-  for ch in text {
-    if count >= limit {
-      break
-    }
-    out.write_char(ch)
-    count += 1
-  }
-  out.to_string()
+  text.clamped_view(end=limit).to_owned()
 }
 
 ///|
