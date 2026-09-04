@@ -143,6 +143,11 @@ pub suberror JournalCorrupted {
 }
 
 ///|
+/// The dot-callable form of the Show methods is a migration convenience,
+/// not API: format with interpolation (`\{value}`) or `Show::to_string` /
+/// `Show::output` instead.
+#deprecated("Use the Show trait (interpolation, Show::to_string, or Show::output) instead of the attached to_string/output method")
+#doc(hidden)
 pub extend JournalCorrupted with Show::{to_string, output}
 
 ///|

@@ -187,9 +187,19 @@ pub extend AgentOutcome with ToJson::{to_json}
 pub extend AgentOutcome with FromJson::{from_json}
 
 ///|
+/// The dot-callable form of the Show methods is a migration convenience,
+/// not API: format with interpolation (`\{value}`) or `Show::to_string` /
+/// `Show::output` instead.
+#deprecated("Use the Show trait (interpolation, Show::to_string, or Show::output) instead of the attached to_string/output method")
+#doc(hidden)
 pub extend AgentFailure with Show::{to_string, output}
 
 ///|
+/// The dot-callable form of the Show methods is a migration convenience,
+/// not API: format with interpolation (`\{value}`) or `Show::to_string` /
+/// `Show::output` instead.
+#deprecated("Use the Show trait (interpolation, Show::to_string, or Show::output) instead of the attached to_string/output method")
+#doc(hidden)
 pub extend WorkflowError with Show::{to_string, output}
 
 ///|
