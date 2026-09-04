@@ -19,8 +19,8 @@ Everything else follows from three decisions:
 - **Failure is data, in a typed channel.** An agent that produced no
   usable report raises `WorkflowError::AgentFailed` with a typed
   `AgentFailure` cause; `try_agent` folds it into a `Result` for fan-out
-  sites. Forgetting to choose a failure policy is a compile error, never
-  a silent `null`.
+  sites. A failure is never a silent `null`: it either raises
+  `AgentFailed` or lands in `try_agent`'s `Result`.
 - **Cost is never lost.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
@@ -146,7 +146,8 @@ async test "find then verify, with no barrier between the stages" {
 ## Replay: crash, resume, and pay only for new work
 
 Every live outcome is appended to the `Journal` — the call's WORK
-identity (kind, input, max_steps, schema — never the display label) plus
+identity (kind, input, max_steps, schema, and scope — never the display
+label) plus
 the lossless outcome, plus attribution for readers: the phase the call
 was issued under and the wall-clock window it ran in, as milliseconds
 since the epoch. Attribution never takes part in replay matching.
@@ -296,10 +297,11 @@ wrap it:
 let runner = @workflow.Runner(call => {
   // spawn something, await it, and account honestly:
   Finished(value=report_json, attempt={
-    subrun_id,
+    attempt_id: "sr-\{call.label}",
     steps_used,
     prompt_tokens,
     completion_tokens,
+    cost_usd: None,
   })
 })
 ```

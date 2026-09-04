@@ -4,7 +4,7 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
 
 - Packages live one per directory with a `moon.pkg`; blackbox tests end in
   `_test.mbt`. The core package (this directory) never spawns a process —
-  only `spawn/` does, and `viz/` and `examples/scout/` are executables.
+  only `spawn/` and `shim/` do; `viz/` and `examples/scout/` are executables.
 - The wire contract every engine must speak is `docs/child-contract.md`.
   Changing anything the `spawn` package reads or writes on the wire is a
   contract change: update that document in the same change, and bump the

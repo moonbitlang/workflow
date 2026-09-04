@@ -8,3 +8,5 @@ target/
 # Review-court outputs written next to where it runs.
 cross-review.md
 .cross-review/
+# Doc-audit report written next to where it runs.
+doc-audit.md
