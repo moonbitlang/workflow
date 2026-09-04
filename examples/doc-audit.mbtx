@@ -2,8 +2,8 @@ import {
   "moonbitlang/async@0.21.1",
   "moonbitlang/async@0.21.1/fs",
   "moonbitlang/async@0.21.1/process",
-  "moonbitlang/workflow@0.4.1",
-  "moonbitlang/workflow@0.4.1/spawn",
+  "moonbitlang/workflow@0.5.0",
+  "moonbitlang/workflow@0.5.0/spawn",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/argparse",
   "moonbitlang/core/env",
@@ -333,7 +333,7 @@ async fn audit() -> Unit {
         "claude" =>
           {
             command: "moonx",
-            args: ["\{shim}/claude@0.4.1", "--model", claude_model, "--cwd", repo],
+            args: ["\{shim}/claude@0.5.0", "--model", claude_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),
@@ -341,7 +341,7 @@ async fn audit() -> Unit {
         "codex" =>
           {
             command: "moonx",
-            args: ["\{shim}/codex@0.4.1", "--model", codex_model, "--cwd", repo],
+            args: ["\{shim}/codex@0.5.0", "--model", codex_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),
