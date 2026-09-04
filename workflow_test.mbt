@@ -218,6 +218,105 @@ async test "fan_out gives every item its own result slot" {
 }
 
 ///|
+/// Fails its first `fail_first` launches and then succeeds, reporting how
+/// many launches it took: the transient shape `retry` exists for.
+fn flaky_runner(fail_first : Int) -> @workflow.Runner {
+  let launches : Ref[Int] = { val: 0, }
+  @workflow.Runner(call => {
+    @async.pause()
+    launches.val += 1
+    if launches.val <= fail_first {
+      DidNotFinish(
+        failure=@workflow.AgentFailure::TimedOut,
+        attempt=Some(attempt_for(call)),
+      )
+    } else {
+      Finished(value={ "launches": launches.val }, attempt=attempt_for(call))
+    }
+  })
+}
+
+///|
+async test "retry re-launches a retriable failure until it succeeds" {
+  let wf = @workflow.Workflow(runner=flaky_runner(2))
+  let report = @workflow.retry(
+    () => wf.agent("q", kind="scout", label="flaky"),
+    max_retry=2,
+  )
+  assert_eq(report, { "launches": 3 })
+  // Every attempt is a real launch, and every attempt's tokens are charged
+  // — the failed ones spent them too.
+  assert_eq(wf.calls_made(), 3)
+  assert_eq(wf.tokens_spent(), 30)
+}
+
+///|
+async test "retry raises the last attempt's failure when the budget runs out" {
+  let wf = @workflow.Workflow(runner=flaky_runner(5))
+  let report : Json = @workflow.retry(
+    () => wf.agent("q", kind="scout", label="flaky"),
+    max_retry=1,
+    backoff=FixedDelay(1),
+  ) catch {
+    @workflow.AgentFailed(label="flaky", failure=TimedOut) => Json::null()
+    _ => fail("expected the last attempt's own failure")
+  }
+  assert_eq(report, Json::null())
+  assert_eq(wf.calls_made(), 2)
+}
+
+///|
+async test "retry leaves a refusal, an engine bug, and a spent allowance alone" {
+  let wf = scripted_workflow()
+  let refusal : Json = @workflow.retry(
+    () => wf.agent("skip:a", kind="scout", label="skip"),
+    max_retry=3,
+  ) catch {
+    @workflow.AgentFailed(failure=Skipped, ..) => Json::null()
+    _ => fail("expected the human's refusal to stand after one attempt")
+  }
+  assert_eq(refusal, Json::null())
+  let mut engine_error = false
+  let _ : Json = @workflow.retry(
+    () => wf.agent("boom:b", kind="scout", label="boom"),
+    max_retry=3,
+  ) catch {
+    EngineBoom => {
+      engine_error = true
+      Json::null()
+    }
+    _ => fail("expected the engine bug to propagate as itself")
+  }
+  assert_true(engine_error)
+  // One launch each: neither the refusal nor the engine bug was re-run.
+  assert_eq(wf.calls_made(), 2)
+  let capped = scripted_workflow(max_calls=1)
+  let _ = capped.agent("one", kind="scout")
+  let refused : Json = @workflow.retry(
+    () => capped.agent("two", kind="scout", label="two"),
+    max_retry=3,
+  ) catch {
+    @workflow.CallBudgetExhausted(label="two") => Json::null()
+    _ => fail("expected the spent allowance to refuse without re-attempts")
+  }
+  assert_eq(refused, Json::null())
+  assert_eq(capped.calls_made(), 1)
+}
+
+///|
+async test "cancellation ends a retry loop instead of restarting it" {
+  let wf = scripted_workflow()
+  let finished = @async.with_timeout_opt(30, () => {
+    @workflow.retry(
+      () => wf.agent("slow:a", kind="scout", label="slow"),
+      max_retry=5,
+    )
+  })
+  assert_true(finished is None)
+  assert_eq(wf.calls_made(), 1)
+}
+
+///|
 async test "max_concurrent bounds in-flight agents" {
   let in_flight : Ref[Int] = { val: 0, }
   let peak : Ref[Int] = { val: 0, }

@@ -86,7 +86,46 @@ never poisons its siblings, and the tokens they spent stay spent. When
 later work is worthless without ALL of a stage, use `parallel_all`
 instead: the first failure cancels every sibling still in flight. The
 policies are one identifier each: `all_ok`, `collect_ok(min_ok?)`,
-`quorum(need~)`.
+`quorum(need~)`. Both fan-outs are one task group: a raise inside one
+cancels the rest and unwinds the whole stage, so nothing outlives it.
+
+A model that answered off-schema or ran out of steps is often worth
+asking again. `retry` wraps a RAISING step in the runtime's own retry
+loop — `max_retry` extra attempts, spaced by `backoff` — and stops at
+anything re-running cannot fix: a human's `Skipped` refusal, a spent
+launch allowance, an engine bug, cancellation. Each attempt is a real
+launch (its own slot, allowance, and tokens), and the journal records
+each one, so a resumed run replays the attempt that finally answered:
+
+```mbt check
+///|
+async test "retry until the engine actually answers" {
+  let flaky : Ref[Int] = { val: 0, }
+  let wf = @workflow.Workflow(
+    runner=@workflow.Runner(call => {
+      @async.pause()
+      flaky.val += 1
+      if flaky.val < 3 {
+        DidNotFinish(failure=NoReport, attempt=None)
+      } else {
+        Finished(value={ "attempt": flaky.val }, attempt={
+          attempt_id: "sr-\{call.label}",
+          steps_used: 1,
+          prompt_tokens: 40,
+          completion_tokens: 10,
+          cost_usd: None,
+        })
+      }
+    }),
+  )
+  let report = @workflow.retry(
+    () => wf.agent("Name the worst bug in spawn/", kind="judge"),
+    max_retry=2,
+  )
+  assert_eq(report, { "attempt": 3 })
+  assert_eq(wf.calls_made(), 3)
+}
+```
 
 When the script wants a TYPE rather than JSON, decode at the boundary:
 `agent_as` runs the same call and turns a report that does not satisfy

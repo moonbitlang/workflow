@@ -10,16 +10,7 @@
 pub async fn[T] parallel(
   thunks : Array[async () -> Result[T, WorkflowError]],
 ) -> Array[Result[T, WorkflowError]] {
-  let results : Array[Result[T, WorkflowError]?] = Array::make(
-    thunks.length(),
-    None,
-  )
-  @async.with_task_group(group => {
-    for index, thunk in thunks {
-      group.spawn_bg(() => results[index] = Some(thunk()))
-    }
-  })
-  results.map(slot => slot.unwrap())
+  @async.all(thunks)
 }
 
 ///|
@@ -29,13 +20,7 @@ pub async fn[T] parallel(
 /// later work is worthless without ALL of this stage — otherwise prefer
 /// `parallel`, which keeps what succeeded.
 pub async fn[T] parallel_all(thunks : Array[async () -> T]) -> Array[T] {
-  let results : Array[T?] = Array::make(thunks.length(), None)
-  @async.with_task_group(group => {
-    for index, thunk in thunks {
-      group.spawn_bg(() => results[index] = Some(thunk()))
-    }
-  })
-  results.map(slot => slot.unwrap())
+  @async.all(thunks)
 }
 
 ///|
@@ -48,6 +33,67 @@ pub async fn[A, B] fan_out(
   run : async (A) -> Result[B, WorkflowError],
 ) -> Array[Result[B, WorkflowError]] {
   parallel(items.map(item => () => run(item)))
+}
+
+///|
+/// Is this failure worth ANOTHER launch? The default `retry` policy, and
+/// the vocabulary a caller narrows rather than rebuilds:
+///
+/// - an agent that produced no usable report is retriable — a model that
+///   timed out, blew its step ceiling, or answered off-schema may well
+///   answer on the next attempt;
+/// - `Skipped` is NOT: a human declined this call, and retrying overrides
+///   that decision exactly as replaying it would (the journal keeps a
+///   recorded skip standing for the same reason);
+/// - `CallBudgetExhausted` and `QuorumNotReached` are not: the allowance
+///   is already gone, and a quorum is the caller's verdict over a whole
+///   fan-out, not one call's misfortune.
+pub fn worth_retrying(error : WorkflowError) -> Bool {
+  match error {
+    AgentFailed(failure=Skipped, ..) => false
+    AgentFailed(..) => true
+    CallBudgetExhausted(..) | QuorumNotReached(..) => false
+  }
+}
+
+///|
+/// Re-run one agent step while it keeps failing retriably: `max_retry`
+/// extra attempts at most, spaced by `backoff`, raising the LAST attempt's
+/// error when the budget runs out. Wraps a RAISING step (`agent`,
+/// `agent_as`, or a whole per-item pipeline) — `try_agent` has already
+/// folded its failure into a value there is nothing left to retry on.
+///
+/// What counts as retriable is `worth_retrying` unless `retriable` says
+/// otherwise; cancellation and engine bugs are never retried, they
+/// propagate on the first raise.
+///
+/// Every attempt is a full LAUNCH: it queues for a slot, debits the launch
+/// allowance, and charges its tokens — so `max_calls` must be sized with
+/// re-attempts in mind, exactly as it must for resume. Journal replay is
+/// unaffected: a failed attempt is recorded and never replayed, so a
+/// resumed run replays the attempt that finally succeeded.
+pub async fn[T] retry(
+  attempt : async () -> T,
+  max_retry? : Int = 1,
+  backoff? : @async.RetryMethod = Immediate,
+  retriable? : (WorkflowError) -> Bool = worth_retrying,
+) -> T {
+  @async.retry(
+    backoff,
+    max_retry~,
+    // The runtime's own loop already treats cancellation as fatal; this
+    // adds the workflow's vocabulary — anything that is not a typed
+    // workflow failure is an engine bug and must not be re-run.
+    fatal_error=error => {
+      match error {
+        AgentFailed(..) as failure => !retriable(failure)
+        CallBudgetExhausted(..) as failure => !retriable(failure)
+        QuorumNotReached(..) as failure => !retriable(failure)
+        _ => true
+      }
+    },
+    attempt,
+  )
 }
 
 ///|

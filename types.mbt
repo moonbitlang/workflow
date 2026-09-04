@@ -46,7 +46,9 @@ pub(all) struct AgentAttempt {
 ///|
 /// Why an agent produced no usable report — the workflow-facing vocabulary
 /// a script can meaningfully react to. Transient transport errors never
-/// appear here: retrying those is the engine's job, below this seam.
+/// appear here: retrying those is the engine's job, below this seam. What
+/// a script retries is a whole AGENT that came back with nothing usable —
+/// `retry`, whose default policy is written against this vocabulary.
 /// Mirrors `@agent_subrun.SubrunTerminal` minus `Captured` (that one is the
 /// success path), plus `Skipped` (a human declined the call — replay keeps
 /// it declined rather than overriding the decision).
