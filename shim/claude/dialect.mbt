@@ -45,7 +45,7 @@ fn Cost::event(self : Cost, price? : Double) -> Json {
 
 ///|
 /// A fresh observer.
-pub fn Claude::Claude() -> Claude {
+fn Claude::Claude() -> Claude {
   {
     steps: 0,
     snapshots: {},
@@ -61,7 +61,7 @@ pub fn Claude::Claude() -> Claude {
 
 ///|
 /// Classify one stdout line and return the contract events it implies.
-pub fn Claude::observe(self : Claude, line : String) -> Array[Json] {
+fn Claude::observe(self : Claude, line : String) -> Array[Json] {
   let events : Array[Json] = []
   let trimmed = line.trim(chars="\r\n")
   if trimmed == "" {
@@ -180,7 +180,7 @@ fn cost_of(container : Json) -> Cost? {
 /// a cancel, a crash): the sum of the last snapshot of every message
 /// seen. `None` once the result has charged the true totals, or when
 /// nothing was observed.
-pub fn Claude::settle(self : Claude) -> Json? {
+fn Claude::settle(self : Claude) -> Json? {
   if self.charged || self.snapshots.is_empty() {
     return None
   }
@@ -199,7 +199,7 @@ pub fn Claude::settle(self : Claude) -> Json? {
 ///|
 /// The report, once a successful result arrived: the answer plus what a
 /// caller may want for resume or accounting.
-pub fn Claude::report(self : Claude) -> Json? {
+fn Claude::report(self : Claude) -> Json? {
   guard self.answer is Some(answer) else { return None }
   let report : Json = { "answer": answer, "engine": "claude" }
   guard report is Object(fields) else { return None }

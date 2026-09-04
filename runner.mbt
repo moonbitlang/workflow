@@ -36,13 +36,6 @@ pub fn Runner::Runner(
 }
 
 ///|
-/// Run one call through this runner. Composing runners (a dispatcher
-/// delegating by kind) goes through here, never through the fields.
-pub async fn Runner::invoke(self : Runner, call : AgentCall) -> AgentOutcome {
-  (self.run)(call)
-}
-
-///|
 /// The replay decision for one journal candidate: the validator's, or
 /// `Serve` unchanged when the engine registered none.
 async fn Runner::decide_replay(

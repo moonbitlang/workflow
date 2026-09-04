@@ -6,16 +6,7 @@ package "moonbitlang/workflow/shim/codex"
 // Errors
 
 // Types and methods
-pub struct Codex {
-  mut steps : Int
-  mut thread_id : String?
-  mut last_message : String?
-  mut failure : String?
-  notices : Array[String]
-}
-pub fn Codex::new() -> Self
-pub fn Codex::observe(Self, String) -> Array[Json]
-pub fn Codex::report(Self, structured~ : Bool) -> Json?
+type Codex
 
 // Type aliases
 

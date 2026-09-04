@@ -60,7 +60,7 @@ async fn run() -> Unit {
     }
     None => (options.schema, None)
   }
-  let state = Codex::new()
+  let state = Codex()
   let exit = @shim.run_cli(
     command=options.command,
     args=codex_args(request, options, schema_path),
