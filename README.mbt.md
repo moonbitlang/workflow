@@ -85,7 +85,7 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
 never poisons its siblings, and the tokens they spent stay spent. When
 later work is worthless without ALL of a stage, use `parallel_all`
 instead: the first failure cancels every sibling still in flight. The
-policies are one identifier each: `all_ok`, `collect_ok(min_ok~)`,
+policies are one identifier each: `all_ok`, `collect_ok(min_ok?)`,
 `quorum(need~)`.
 
 When the script wants a TYPE rather than JSON, decode at the boundary:

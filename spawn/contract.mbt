@@ -52,7 +52,9 @@ pub struct ContractResult {
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
-  /// Summed `usage.cost_usd`, or `None` when no usage line carried one.
+  /// Summed `usage.cost_usd` across usage lines that carried a valid
+  /// price; `None` until one is charged — a present-but-invalid price
+  /// voids the whole line, so it does not count as carried.
   cost_usd : Double?
 }
 
@@ -64,7 +66,8 @@ pub struct ContractProgress {
   mut steps : Int
   mut prompt_tokens : Int
   mut completion_tokens : Int
-  /// Summed `usage.cost_usd`; `None` until a usage line carries one.
+  /// Summed `usage.cost_usd`; `None` until a usage line with a valid
+  /// price is charged — a present-but-invalid price voids the whole line.
   mut cost_usd : Double?
 }
 
