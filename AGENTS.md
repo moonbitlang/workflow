@@ -13,6 +13,15 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
   Finish with `just tidy` (`moon info && moon fmt`) and review the
   `pkg.generated.mbti` diff — an unchanged interface means an internal
   refactor.
+- `moon ide analyze` annotates every exported item with how many
+  dependents use it. A `pub` nothing uses is either surface to drop —
+  an executable (`shim/claude`, `shim/codex`, `viz`, `examples/scout`)
+  exports nothing anyone can import — or public on purpose for a caller
+  outside this repository, in which case it goes in that package's
+  `exports.mbt` with a doc comment naming that caller. The tool respects
+  the file and marks those `in exports.mbt`, so the report stays a list
+  of real findings. A symbol that cannot name its outside caller belongs
+  private.
 - `shim/` is the shim side of the contract; `shim/claude` and `shim/codex`
   are process shims around those CLIs. Their dialect tests are recorded
   JSONL lines: when a CLI changes its output format, update the fixture
