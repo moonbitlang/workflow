@@ -7,7 +7,7 @@
 /// lose nothing the live run knew (hence `AgentOutcome`, the lossless
 /// envelope, and not just the value). Attribution is metadata: replay
 /// matches on the call's work identity alone, never on phase or time.
-pub(all) struct JournalEntry {
+pub struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
   /// The workflow phase the call was ISSUED under (`Workflow::phase`), when

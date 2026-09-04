@@ -5,7 +5,7 @@
 /// runner, or the journal append failing after the outcome resolved —
 /// both re-raise after the event fires, so `AgentStarted`/`AgentFinished`
 /// brackets always balance.
-pub(all) enum AgentDisposition {
+pub enum AgentDisposition {
   Succeeded
   FailedAgent
   Interrupted
@@ -20,7 +20,7 @@ pub extend AgentDisposition with Eq::{equal, not_equal}
 /// display, logs are one-line narrator messages, and the started/finished
 /// pair brackets each agent's lifetime — on every path, including
 /// cancellation. Purely observational: no control flow rides on these.
-pub(all) enum WorkflowEvent {
+pub enum WorkflowEvent {
   PhaseStarted(String)
   Log(String)
   AgentStarted(label~ : String, kind~ : String, phase~ : String?)

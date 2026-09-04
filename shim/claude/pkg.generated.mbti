@@ -7,10 +7,6 @@ package "moonbitlang/workflow/shim/claude"
 
 // Types and methods
 type Claude
-pub fn Claude::Claude() -> Self
-pub fn Claude::observe(Self, String) -> Array[Json]
-pub fn Claude::report(Self) -> Json?
-pub fn Claude::settle(Self) -> Json?
 
 // Type aliases
 

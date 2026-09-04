@@ -59,25 +59,6 @@ pub struct ContractResult {
 }
 
 ///|
-/// Live cost counters, updated AS the child streams. Pass one in to keep
-/// visibility into a run that ends by cancellation — the raise unwinds
-/// past the return value, but not past this.
-pub struct ContractProgress {
-  mut steps : Int
-  mut prompt_tokens : Int
-  mut completion_tokens : Int
-  /// Summed `usage.cost_usd`; `None` until a usage line with a valid
-  /// price is charged — a present-but-invalid price voids the whole line.
-  mut cost_usd : Double?
-}
-
-///|
-/// Fresh zeroed counters.
-pub fn ContractProgress::ContractProgress() -> ContractProgress {
-  { steps: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: None, }
-}
-
-///|
 priv struct Observations {
   progress : ContractProgress
   observe_line : ((Json) -> Unit)?
