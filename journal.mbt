@@ -22,12 +22,27 @@ pub struct JournalEntry {
 } derive(Eq)
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend JournalEntry with Eq::{equal, not_equal}
 
 ///|
+/// The dot-callable form of the entry's storage codec is a migration
+/// convenience, not API: serialize with `Json(value)` or
+/// `ToJson::to_json(value)` instead.
+#deprecated("Use Json(value) or ToJson::to_json(value) instead of the attached to_json method")
+#doc(hidden)
 pub extend JournalEntry with ToJson::{to_json}
 
 ///|
+/// The dot-callable form of the entry's storage codec is a migration
+/// convenience, not API: decode through the `@json.FromJson` trait
+/// (`@json.from_json`) instead.
+#deprecated("Use @json.from_json or FromJson::from_json(json, path) instead of the attached from_json method")
+#doc(hidden)
 pub extend JournalEntry with FromJson::{from_json}
 
 ///|
@@ -50,10 +65,7 @@ pub fn JournalEntry::JournalEntry(
 /// JSON reader expects, rather than the string the default `Int64` codec
 /// writes.
 pub impl ToJson for JournalEntry with fn to_json(self) {
-  let json : Json = {
-    "call": self.call.to_json(),
-    "outcome": self.outcome.to_json(),
-  }
+  let json : Json = { "call": self.call, "outcome": self.outcome }
   guard json is Object(fields) else { return json }
   if self.phase is Some(phase) {
     fields["phase"] = phase.to_json()
@@ -78,8 +90,8 @@ pub impl @json.FromJson for JournalEntry with fn from_json(json, path) {
       (path, "JournalEntry: expected an object with `call` and `outcome`"),
     )
   }
-  let call = AgentCall::from_json(call, path.add_key("call"))
-  let outcome = AgentOutcome::from_json(outcome, path.add_key("outcome"))
+  let call = @json.FromJson::from_json(call, path.add_key("call"))
+  let outcome = @json.FromJson::from_json(outcome, path.add_key("outcome"))
   let phase = match json {
     { "phase": String(phase), .. } => Some(phase)
     { "phase": Null, .. } => None
@@ -359,7 +371,7 @@ async fn Journal::record(self : Journal, entry : JournalEntry) -> Unit {
     // wipe the generations already on disk.
     @fs.write_file(
       path,
-      ({ "v": 1, "e": entry.to_json() } : Json).stringify() + "\n",
+      ({ "v": 1, "e": entry } : Json).stringify() + "\n",
       append=true,
       create_mode=OpenOrCreate,
     )

@@ -59,10 +59,6 @@ pub(all) struct AgentCall {
   scope : String
   schema : Json?
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentCall::equal(Self, Self) -> Bool
-pub fn AgentCall::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn AgentCall::not_equal(Self, Self) -> Bool
-pub fn AgentCall::to_json(Self) -> Json
 
 pub enum AgentDisposition {
   Succeeded
@@ -70,8 +66,6 @@ pub enum AgentDisposition {
   Interrupted
   Errored
 } derive(Eq)
-pub fn AgentDisposition::equal(Self, Self) -> Bool
-pub fn AgentDisposition::not_equal(Self, Self) -> Bool
 
 pub(all) enum AgentFailure {
   TimedOut
@@ -81,11 +75,7 @@ pub(all) enum AgentFailure {
   Skipped
   Failed(String)
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentFailure::equal(Self, Self) -> Bool
-pub fn AgentFailure::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn AgentFailure::not_equal(Self, Self) -> Bool
 pub fn AgentFailure::output(Self, &Logger) -> Unit
-pub fn AgentFailure::to_json(Self) -> Json
 pub fn AgentFailure::to_string(Self) -> String
 pub impl Show for AgentFailure
 
@@ -93,10 +83,6 @@ pub(all) enum AgentOutcome {
   Finished(value~ : Json, attempt~ : AgentAttempt)
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentOutcome::equal(Self, Self) -> Bool
-pub fn AgentOutcome::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn AgentOutcome::not_equal(Self, Self) -> Bool
-pub fn AgentOutcome::to_json(Self) -> Json
 
 type Journal
 pub fn Journal::in_memory(prior? : Array[JournalEntry]) -> Self
@@ -112,10 +98,6 @@ pub struct JournalEntry {
   finished_at : Int64?
 } derive(Eq)
 pub fn JournalEntry::JournalEntry(call~ : AgentCall, outcome~ : AgentOutcome, phase? : String, started_at? : Int64, finished_at? : Int64) -> Self
-pub fn JournalEntry::equal(Self, Self) -> Bool
-pub fn JournalEntry::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn JournalEntry::not_equal(Self, Self) -> Bool
-pub fn JournalEntry::to_json(Self) -> Json
 pub impl ToJson for JournalEntry
 pub impl @json.FromJson for JournalEntry
 

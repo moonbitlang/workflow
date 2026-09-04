@@ -41,6 +41,11 @@ pub enum ContractTerminal {
 } derive(Eq)
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend ContractTerminal with Eq::{equal, not_equal}
 
 ///|
@@ -367,6 +372,11 @@ pub(all) struct LaunchSpec {
 } derive(Eq)
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend LaunchSpec with Eq::{equal, not_equal}
 
 ///|
