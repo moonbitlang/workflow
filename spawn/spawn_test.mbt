@@ -129,7 +129,11 @@ async test "a foreign contract engine gets workflows and replay for free" {
   )
   // The report echoes the input line: the v1 request envelope carrying
   // the call's kind and exact input — self-contained, no argv needed.
-  let first = wf1.agent("hello", kind="probe", hints="from a foreign engine")
+  let first = wf1.agent(
+    prompt="hello",
+    kind="probe",
+    hints="from a foreign engine",
+  )
   assert_eq(first, {
     "workflow_contract": 1,
     "id": "cr-1",
@@ -152,7 +156,7 @@ async test "a foreign contract engine gets workflows and replay for free" {
     journal=@workflow.Journal::load(path),
   )
   assert_eq(
-    wf2.agent("hello", kind="probe", hints="from a foreign engine"),
+    wf2.agent(prompt="hello", kind="probe", hints="from a foreign engine"),
     first,
   )
   assert_eq(wf2.calls_made(), 0)

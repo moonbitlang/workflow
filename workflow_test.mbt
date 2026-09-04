@@ -63,7 +63,7 @@ fn scripted_workflow(
 ///|
 async test "agent returns the report value and accounts tokens" {
   let wf = scripted_workflow()
-  let value = wf.agent("hello", kind="scout")
+  let value = wf.agent(prompt="hello", kind="scout")
   assert_eq(value, { "echo": "hello" })
   assert_eq(wf.tokens_spent(), 10)
   assert_eq(wf.calls_made(), 1)
@@ -72,7 +72,7 @@ async test "agent returns the report value and accounts tokens" {
 ///|
 async test "a failed agent still charges its attempt's tokens" {
   let wf = scripted_workflow()
-  guard wf.try_agent("fail:a", kind="scout")
+  guard wf.try_agent(prompt="fail:a", kind="scout")
     is Err(@workflow.AgentFailed(label="fail:a", failure=Failed("boom"))) else {
     fail("expected AgentFailed with the runner's reason")
   }
@@ -82,7 +82,7 @@ async test "a failed agent still charges its attempt's tokens" {
 ///|
 async test "a skipped call spends nothing and replays as a refusal" {
   let wf = scripted_workflow()
-  guard wf.try_agent("skip:a", kind="scout")
+  guard wf.try_agent(prompt="skip:a", kind="scout")
     is Err(@workflow.AgentFailed(failure=Skipped, ..)) else {
     fail("expected the skip to surface as AgentFailed(Skipped)")
   }
@@ -98,9 +98,9 @@ async test "the launch allowance ignores calls cancelled while queued" {
   @async.with_task_group(group => {
     let work = group.spawn(() => {
       @workflow.parallel_all([
-        () => wf.agent("slow:a", kind="scout"),
-        () => wf.agent("ok-b", kind="scout"),
-        () => wf.agent("ok-c", kind="scout"),
+        () => wf.agent(prompt="slow:a", kind="scout"),
+        () => wf.agent(prompt="ok-b", kind="scout"),
+        () => wf.agent(prompt="ok-c", kind="scout"),
       ])
     })
     group.spawn_bg(no_wait=true) <| () => {
@@ -121,16 +121,16 @@ async test "the launch allowance ignores calls cancelled while queued" {
     }
   })
   assert_eq(wf.calls_made(), 1)
-  let _ = wf.agent("ok-fallback", kind="scout")
+  let _ = wf.agent(prompt="ok-fallback", kind="scout")
   assert_eq(wf.calls_made(), 2)
 }
 
 ///|
 async test "the launch allowance refuses the call after the cap" {
   let wf = scripted_workflow(max_calls=2)
-  let _ = wf.agent("one", kind="scout")
-  let _ = wf.agent("two", kind="scout")
-  guard wf.try_agent("three", kind="scout")
+  let _ = wf.agent(prompt="one", kind="scout")
+  let _ = wf.agent(prompt="two", kind="scout")
+  guard wf.try_agent(prompt="three", kind="scout")
     is Err(@workflow.CallBudgetExhausted(..)) else {
     fail("expected the third launch to be refused")
   }
@@ -141,9 +141,9 @@ async test "the launch allowance refuses the call after the cap" {
 async test "parallel keeps sibling successes when one agent fails" {
   let wf = scripted_workflow()
   let results = @workflow.parallel([
-    () => wf.try_agent("a", kind="scout"),
-    () => wf.try_agent("fail:b", kind="scout"),
-    () => wf.try_agent("c", kind="scout"),
+    () => wf.try_agent(prompt="a", kind="scout"),
+    () => wf.try_agent(prompt="fail:b", kind="scout"),
+    () => wf.try_agent(prompt="c", kind="scout"),
   ])
   guard results is [Ok(_), Err(@workflow.AgentFailed(..)), Ok(_)] else {
     fail("expected exactly the middle slot to fail")
@@ -171,8 +171,8 @@ async test "an engine error is never demoted to a policy slot" {
   let wf = scripted_workflow()
   let mut engine_error = false
   let _ : Array[Result[Json, @workflow.WorkflowError]] = @workflow.parallel([
-    () => wf.try_agent("a", kind="scout"),
-    () => wf.try_agent("boom:b", kind="scout"),
+    () => wf.try_agent(prompt="a", kind="scout"),
+    () => wf.try_agent(prompt="boom:b", kind="scout"),
   ]) catch {
     EngineBoom => {
       engine_error = true
@@ -189,9 +189,9 @@ async test "parallel_all cancels a slow sibling and the workflow survives" {
   let events : Array[String] = []
   let wf = scripted_workflow(on_event=event => events.push(render(event)))
   let _ : Array[Json] = @workflow.parallel_all([
-    () => wf.agent("fail:a", kind="scout"),
+    () => wf.agent(prompt="fail:a", kind="scout"),
     () => {
-      let value = wf.agent("slow:b", kind="scout")
+      let value = wf.agent(prompt="slow:b", kind="scout")
       slow_completed.val = true
       value
     },
@@ -203,7 +203,7 @@ async test "parallel_all cancels a slow sibling and the workflow survives" {
   // The cancelled sibling still closed its event bracket.
   assert_true(events.contains("finish slow:b interrupted"))
   // The semaphore and allowance are intact: the workflow keeps working.
-  let value = wf.agent("ok-after", kind="scout")
+  let value = wf.agent(prompt="ok-after", kind="scout")
   assert_eq(value, { "echo": "ok-after" })
 }
 
@@ -211,7 +211,7 @@ async test "parallel_all cancels a slow sibling and the workflow survives" {
 async test "fan_out gives every item its own result slot" {
   let wf = scripted_workflow()
   let results = @workflow.fan_out(["p", "q", "r"], item => {
-    wf.try_agent(item, kind="scout")
+    wf.try_agent(prompt=item, kind="scout")
   })
   assert_eq(@workflow.all_ok(results).length(), 3)
   assert_eq(wf.calls_made(), 3)
@@ -252,7 +252,7 @@ async test "agent_call carries an engine's own input shape" {
   assert_eq(wf.calls_made(), 1)
   // The same call through `agent` would have wrapped the prompt in
   // `{"query": …}`, which this engine does not accept.
-  guard wf.try_agent("rename the seam", kind="worker")
+  guard wf.try_agent(prompt="rename the seam", kind="worker")
     is Err(@workflow.AgentFailed(failure=Failed("not a worker input"), ..)) else {
     fail("expected the explore shape to be refused by a worker kind")
   }
@@ -306,12 +306,12 @@ async test "attempt folds any raising step, agent_call included" {
     fail("expected the agent failure to land in the Err slot")
   }
   // Successes pass through, and engine bugs still propagate.
-  guard @workflow.attempt(() => wf.agent("ok", kind="scout")) is Ok(_) else {
+  guard @workflow.attempt(() => wf.agent(prompt="ok", kind="scout")) is Ok(_) else {
     fail("expected the success to pass through")
   }
   let mut engine_error = false
   let _ : Result[Json, @workflow.WorkflowError] = @workflow.attempt(() => {
-    wf.agent("boom:b", kind="scout")
+    wf.agent(prompt="boom:b", kind="scout")
   }) catch {
     EngineBoom => {
       engine_error = true
@@ -345,7 +345,7 @@ fn flaky_runner(fail_first : Int) -> @workflow.Runner {
 async test "retry re-launches a retriable failure until it succeeds" {
   let wf = @workflow.Workflow(runner=flaky_runner(2))
   let report = @workflow.retry(
-    () => wf.agent("q", kind="scout", label="flaky"),
+    () => wf.agent(prompt="q", kind="scout", label="flaky"),
     max_retry=2,
   )
   assert_eq(report, { "launches": 3 })
@@ -359,7 +359,7 @@ async test "retry re-launches a retriable failure until it succeeds" {
 async test "retry raises the last attempt's failure when the budget runs out" {
   let wf = @workflow.Workflow(runner=flaky_runner(5))
   let report : Json = @workflow.retry(
-    () => wf.agent("q", kind="scout", label="flaky"),
+    () => wf.agent(prompt="q", kind="scout", label="flaky"),
     max_retry=1,
     backoff=FixedDelay(1),
   ) catch {
@@ -374,7 +374,7 @@ async test "retry raises the last attempt's failure when the budget runs out" {
 async test "retry leaves a refusal, an engine bug, and a spent allowance alone" {
   let wf = scripted_workflow()
   let refusal : Json = @workflow.retry(
-    () => wf.agent("skip:a", kind="scout", label="skip"),
+    () => wf.agent(prompt="skip:a", kind="scout", label="skip"),
     max_retry=3,
   ) catch {
     @workflow.AgentFailed(failure=Skipped, ..) => Json::null()
@@ -383,7 +383,7 @@ async test "retry leaves a refusal, an engine bug, and a spent allowance alone" 
   assert_eq(refusal, Json::null())
   let mut engine_error = false
   let _ : Json = @workflow.retry(
-    () => wf.agent("boom:b", kind="scout", label="boom"),
+    () => wf.agent(prompt="boom:b", kind="scout", label="boom"),
     max_retry=3,
   ) catch {
     EngineBoom => {
@@ -396,9 +396,9 @@ async test "retry leaves a refusal, an engine bug, and a spent allowance alone" 
   // One launch each: neither the refusal nor the engine bug was re-run.
   assert_eq(wf.calls_made(), 2)
   let capped = scripted_workflow(max_calls=1)
-  let _ = capped.agent("one", kind="scout")
+  let _ = capped.agent(prompt="one", kind="scout")
   let refused : Json = @workflow.retry(
-    () => capped.agent("two", kind="scout", label="two"),
+    () => capped.agent(prompt="two", kind="scout", label="two"),
     max_retry=3,
   ) catch {
     @workflow.CallBudgetExhausted(label="two") => Json::null()
@@ -413,7 +413,7 @@ async test "cancellation ends a retry loop instead of restarting it" {
   let wf = scripted_workflow()
   let finished = @async.with_timeout_opt(30, () => {
     @workflow.retry(
-      () => wf.agent("slow:a", kind="scout", label="slow"),
+      () => wf.agent(prompt="slow:a", kind="scout", label="slow"),
       max_retry=5,
     )
   })
@@ -436,9 +436,9 @@ async test "max_concurrent bounds in-flight agents" {
   })
   let wf = @workflow.Workflow(runner~, max_concurrent=1)
   let _ = @workflow.parallel_all([
-    () => wf.agent("a", kind="scout"),
-    () => wf.agent("b", kind="scout"),
-    () => wf.agent("c", kind="scout"),
+    () => wf.agent(prompt="a", kind="scout"),
+    () => wf.agent(prompt="b", kind="scout"),
+    () => wf.agent(prompt="c", kind="scout"),
   ])
   assert_eq(peak.val, 1)
 }
@@ -449,9 +449,9 @@ async test "event brackets balance on success, failure, and engine error" {
   let wf = scripted_workflow(on_event=event => events.push(render(event)))
   wf.phase("Scan")
   wf.log("starting")
-  let _ = wf.agent("q", kind="scout", label="scout")
-  let _ = wf.try_agent("fail:x", kind="scout")
-  let _ = wf.agent("boom:y", kind="scout") catch { _ => Json::null() }
+  let _ = wf.agent(prompt="q", kind="scout", label="scout")
+  let _ = wf.try_agent(prompt="fail:x", kind="scout")
+  let _ = wf.agent(prompt="boom:y", kind="scout") catch { _ => Json::null() }
   assert_eq(events, [
     "phase Scan", "log starting", "start scout scout Scan", "finish scout ok", "start fail:x scout Scan",
     "finish fail:x failed", "start boom:y scout Scan", "finish boom:y errored",
@@ -466,11 +466,11 @@ async test "the default label is the prompt's first line, cut well-formed" {
       labels.push(label)
     }
   })
-  let _ = wf.agent("ask one thing\nthen explain yourself", kind="scout")
+  let _ = wf.agent(prompt="ask one thing\nthen explain yourself", kind="scout")
   // 47 units of prose and then an astral emoji: the cut at 48 lands inside
   // that surrogate pair, so the whole pair goes rather than half of it.
-  let _ = wf.agent("x".repeat(47) + "🚀 and more", kind="scout")
-  let _ = wf.agent("short", kind="scout")
+  let _ = wf.agent(prompt="x".repeat(47) + "🚀 and more", kind="scout")
+  let _ = wf.agent(prompt="short", kind="scout")
   assert_eq(labels, ["ask one thing…", "x".repeat(47) + "…", "short"])
 }
 
@@ -513,7 +513,9 @@ async test "outcomes and failures survive the JSON round trip" {
 ///|
 async test "quorum boundaries: zero and negative thresholds collect" {
   let wf = scripted_workflow()
-  let results = @workflow.parallel([() => wf.try_agent("fail:a", kind="scout")])
+  let results = @workflow.parallel([
+    () => wf.try_agent(prompt="fail:a", kind="scout"),
+  ])
   assert_eq(@workflow.quorum(results, need=0).length(), 0)
   assert_eq(@workflow.collect_ok(results, min_ok=-1).length(), 0)
 }
@@ -570,12 +572,12 @@ struct Verdict {
 ///|
 async test "agent_as decodes at the boundary; a stray shape is a typed rejection" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner))
-  let verdict : Verdict = wf.agent_as("is it real?", kind="judge", schema={
+  let verdict : Verdict = wf.agent_as(prompt="is it real?", kind="judge", schema={
     "type": "object",
   })
   assert_eq(verdict.verdict, "real")
   let stray : Result[Verdict, @workflow.WorkflowError] = wf.try_agent_as(
-    "stray shape please",
+    prompt="stray shape please",
     kind="judge",
     label="stray",
   )
@@ -594,8 +596,10 @@ async test "agent_as decodes at the boundary; a stray shape is a typed rejection
 async test "the schema is part of the work identity and reaches the runner" {
   let journal = @workflow.Journal::in_memory()
   let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner), journal~)
-  let plain = wf.agent("shape me", kind="judge")
-  let shaped = wf.agent("shape me", kind="judge", schema={ "type": "object" })
+  let plain = wf.agent(prompt="shape me", kind="judge")
+  let shaped = wf.agent(prompt="shape me", kind="judge", schema={
+    "type": "object",
+  })
   // Same question, different shape: different work, so no replay between them.
   assert_eq(wf.calls_made(), 2)
   assert_eq(wf.calls_replayed(), 0)
@@ -607,7 +611,7 @@ async test "the schema is part of the work identity and reaches the runner" {
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
   assert_eq(
-    again.agent("shape me", kind="judge", schema={ "type": "object" }),
+    again.agent(prompt="shape me", kind="judge", schema={ "type": "object" }),
     shaped,
   )
   assert_eq(again.calls_replayed(), 1)
@@ -636,9 +640,9 @@ async fn priced_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
 async test "cost_usd sums the engines' own figures and ignores unknowns" {
   let journal = @workflow.Journal::in_memory()
   let wf = @workflow.Workflow(runner=@workflow.Runner(priced_runner), journal~)
-  let _ = wf.agent("a", kind="k", label="priced-1")
-  let _ = wf.agent("b", kind="k", label="priced-2")
-  let _ = wf.agent("c", kind="k", label="free")
+  let _ = wf.agent(prompt="a", kind="k", label="priced-1")
+  let _ = wf.agent(prompt="b", kind="k", label="priced-2")
+  let _ = wf.agent(prompt="c", kind="k", label="free")
   assert_eq(wf.cost_usd(), 0.5)
   assert_eq(wf.tokens_spent(), 6)
   // A replayed call costs nothing again — historical spend lives in the journal.
@@ -646,7 +650,7 @@ async test "cost_usd sums the engines' own figures and ignores unknowns" {
     runner=@workflow.Runner(priced_runner),
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
-  let _ = again.agent("a", kind="k", label="priced-1")
+  let _ = again.agent(prompt="a", kind="k", label="priced-1")
   assert_eq(again.cost_usd(), 0.0)
   assert_eq(again.calls_replayed(), 1)
 }
@@ -676,14 +680,14 @@ test "a priced attempt survives the JSON round trip on both arms" {
 async test "a null schema is the same work as no schema" {
   let journal = @workflow.Journal::in_memory()
   let wf = @workflow.Workflow(runner=@workflow.Runner(shaped_runner), journal~)
-  let _ = wf.agent("shape me", kind="judge", schema=Json::null())
+  let _ = wf.agent(prompt="shape me", kind="judge", schema=Json::null())
   assert_eq(journal.recorded()[0].call.schema, None)
   // The next generation, asking with no schema at all, replays it.
   let again = @workflow.Workflow(
     runner=@workflow.Runner(shaped_runner),
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
-  let _ = again.agent("shape me", kind="judge")
+  let _ = again.agent(prompt="shape me", kind="judge")
   assert_eq(again.calls_replayed(), 1)
   assert_eq(again.calls_made(), 0)
 }

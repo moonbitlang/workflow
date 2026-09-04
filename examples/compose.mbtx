@@ -71,14 +71,14 @@ async fn compose() -> Unit {
 
   // ---- Probe: the reference engine, keyless ----
   wf.phase("Probe")
-  let ping = wf.agent("ping", kind="echo", label="probe:openseek")
+  let ping = wf.agent(prompt="ping", kind="echo", label="probe:openseek")
   println("  echo returned \{ping.stringify()}")
 
   // ---- Answer: two engines, in parallel, same question ----
   wf.phase("Answer")
   let question = "In ONE sentence: what does the file spawn/contract.mbt in this repository do? Read it before answering."
   let answers = @workflow.fan_out(["claude", "codex"], engine => wf.try_agent(
-    question,
+    prompt=question,
     kind=engine,
     label="answer:\{engine}",
     max_steps=8,
@@ -103,7 +103,7 @@ async fn compose() -> Unit {
   wf.phase("Judge")
   match
     wf.try_agent(
-      "Two engines answered the question \"\{question}\" ||| A: \{clip(texts[0], 600)} ||| B: \{clip(texts[1], 600)} ||| Read spawn/contract.mbt yourself, then say in one sentence which answer is more accurate and why, ending with VERDICT: A or VERDICT: B.",
+      prompt="Two engines answered the question \"\{question}\" ||| A: \{clip(texts[0], 600)} ||| B: \{clip(texts[1], 600)} ||| Read spawn/contract.mbt yourself, then say in one sentence which answer is more accurate and why, ending with VERDICT: A or VERDICT: B.",
       kind="claude",
       label="judge:claude",
       max_steps=6,

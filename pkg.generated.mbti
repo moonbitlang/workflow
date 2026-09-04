@@ -134,8 +134,8 @@ pub async fn Runner::invoke(Self, AgentCall) -> AgentOutcome
 
 type Workflow
 pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int, max_calls? : Int, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
-pub async fn Workflow::agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Json
-pub async fn[T : @json.FromJson] Workflow::agent_as(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> T
+pub async fn Workflow::agent(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Json
+pub async fn[T : @json.FromJson] Workflow::agent_as(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> T
 pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : String, max_steps? : Int, schema? : Json) -> Json
 pub fn Workflow::calls_made(Self) -> Int
 pub fn Workflow::calls_replayed(Self) -> Int
@@ -143,8 +143,8 @@ pub fn Workflow::cost_usd(Self) -> Double
 pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int
-pub async fn Workflow::try_agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[Json, WorkflowError]
-pub async fn[T : @json.FromJson] Workflow::try_agent_as(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[T, WorkflowError]
+pub async fn Workflow::try_agent(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[Json, WorkflowError]
+pub async fn[T : @json.FromJson] Workflow::try_agent_as(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Result[T, WorkflowError]
 
 pub(all) enum WorkflowEvent {
   PhaseStarted(String)

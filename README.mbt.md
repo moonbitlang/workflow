@@ -68,7 +68,7 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
   let results = @workflow.fan_out(["correctness", "security", "repro"], lens => {
     wf.try_agent(
       kind="judge",
-      "Judge the finding through lens=\{lens}: real?",
+      prompt="Judge the finding through lens=\{lens}: real?",
       label="verify:\{lens}",
     )
   })
@@ -119,7 +119,7 @@ async test "retry until the engine actually answers" {
     }),
   )
   let report = @workflow.retry(
-    () => wf.agent("Name the worst bug in spawn/", kind="judge"),
+    () => wf.agent(prompt="Name the worst bug in spawn/", kind="judge"),
     max_retry=2,
   )
   assert_eq(report, { "attempt": 3 })
@@ -186,7 +186,7 @@ struct Confirmation {
 async test "decode the report at the boundary" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
   let verdict : Confirmation = wf.agent_as(
-    "Judge the finding through lens=security: real?",
+    prompt="Judge the finding through lens=security: real?",
     kind="judge",
     schema={
       "type": "object",
@@ -207,13 +207,16 @@ pipeline:
 async test "find then verify, with no barrier between the stages" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
   let verified = @workflow.fan_out(["pkg/a", "pkg/b"], target => {
-    let finding = wf.try_agent("Find the worst bug in \{target}", kind="judge")
+    let finding = wf.try_agent(
+      prompt="Find the worst bug in \{target}",
+      kind="judge",
+    )
     match finding {
       // Each finding proceeds to verification the moment ITS finder
       // returns — b's finder may still be running while a verifies.
       Ok(_) =>
         wf.try_agent(
-          "Adversarially verify the finding in \{target}",
+          prompt="Adversarially verify the finding in \{target}",
           kind="judge",
         )
       Err(error) => Err(error)
@@ -244,7 +247,7 @@ async test "the second generation replays instead of re-paying" {
     journal~,
   )
   let first = wf1.agent(
-    "Judge the finding through lens=security: real?",
+    prompt="Judge the finding through lens=security: real?",
     kind="judge",
   )
   assert_eq(wf1.tokens_spent(), 100)
@@ -256,7 +259,10 @@ async test "the second generation replays instead of re-paying" {
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
   assert_eq(
-    wf2.agent("Judge the finding through lens=security: real?", kind="judge"),
+    wf2.agent(
+      prompt="Judge the finding through lens=security: real?",
+      kind="judge",
+    ),
     first,
   )
   assert_eq(wf2.calls_made(), 0)
