@@ -98,7 +98,7 @@ pub fn Workflow::Workflow(
 /// scout input shape ({query, hints?} — contract v1). Raises `AgentFailed` when the child
 /// produced no usable report and `CallBudgetExhausted` when the launch
 /// allowance was spent — catch into a `Result` at fan-out sites
-/// (`try_agent` is the shorthand), propagate at load-bearing ones.
+/// (`attempt` folds it into one), propagate at load-bearing ones.
 pub async fn Workflow::agent(
   self : Workflow,
   prompt~ : String,
@@ -240,24 +240,6 @@ pub async fn Workflow::agent_call(
 }
 
 ///|
-/// `agent` with the typed error channel folded into the return value:
-/// workflow-level failures land in `Err`, cancellation and engine errors
-/// still propagate. The right shape at fan-out call sites, where one lost
-/// agent must not poison its siblings. Sugar for the common case of
-/// `attempt`, which folds any raising step the same way.
-pub async fn Workflow::try_agent(
-  self : Workflow,
-  prompt~ : String,
-  kind~ : String,
-  hints? : String,
-  label? : String,
-  max_steps? : Int,
-  schema? : Json,
-) -> Result[Json, WorkflowError] {
-  attempt(() => self.agent(prompt~, kind~, hints?, label?, max_steps?, schema?))
-}
-
-///|
 /// `agent`, decoded at the boundary: the report must satisfy `T`'s
 /// `FromJson`, or the call fails as `AgentFailed` with
 /// `Failed("report rejected: …")` carrying the decoder's message and path —
@@ -281,23 +263,6 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
     error =>
       raise AgentFailed(label~, failure=Failed("report rejected: \{error}"))
   }
-}
-
-///|
-/// `agent_as` with the typed error channel folded into the return value,
-/// exactly as `try_agent` folds `agent`.
-pub async fn[T : @json.FromJson] Workflow::try_agent_as(
-  self : Workflow,
-  prompt~ : String,
-  kind~ : String,
-  hints? : String,
-  label? : String,
-  max_steps? : Int,
-  schema? : Json,
-) -> Result[T, WorkflowError] {
-  attempt(() => {
-    self.agent_as(prompt~, kind~, hints?, label?, max_steps?, schema?)
-  })
 }
 
 ///|

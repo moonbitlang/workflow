@@ -53,13 +53,13 @@ async fn debate() -> Unit {
   let positions = @workflow.all_ok(
     @workflow.fan_out(briefs, brief => {
       let (side, prompt) = brief
-      wf.try_agent(
+      @workflow.attempt(() => wf.agent(
         prompt~,
         kind="explore",
         hints="spawn/contract.mbt runner.mbt moon.pkg spawn/moon.pkg",
         label="advocate:\{side}",
         max_steps=16,
-      )
+      ))
     }),
   ) catch {
     error => {
