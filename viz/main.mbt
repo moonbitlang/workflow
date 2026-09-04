@@ -1,11 +1,12 @@
 ///|
 /// Journal → HTML: render any workflow journal as a self-contained
 /// report — the attempt ledger (status, steps, token costs) plus a
-/// DERIVED dataflow graph: an edge exists where one agent's recorded
-/// output appears verbatim inside a later agent's input. Dynamic
+/// DERIVED dataflow graph: an edge exists where the JSON-escaped first
+/// 50 characters of an answer longer than 60 appear inside a later
+/// agent's input (a prefix probe, not a whole-output match). Dynamic
 /// workflows declare no graph, so none is stored; content recovers it.
 ///
-///   moon run workflow/viz -- <journal.jsonl> [out.html] [--watch]
+///   moon run viz -- <journal.jsonl> [out.html] [--watch]
 ///   moonx moonbitlang/workflow/viz <journal.jsonl> [out.html] [--watch]
 ///
 /// `--watch` re-renders every 2 seconds and the page auto-refreshes —
