@@ -29,8 +29,6 @@ pub fn worth_retrying(WorkflowError) -> Bool
 pub suberror JournalCorrupted {
   JournalCorrupted(path~ : String, line~ : Int)
 }
-pub fn JournalCorrupted::output(Self, &Logger) -> Unit
-pub fn JournalCorrupted::to_string(Self) -> String
 pub impl Show for JournalCorrupted
 
 pub suberror WorkflowError {
@@ -38,8 +36,6 @@ pub suberror WorkflowError {
   CallBudgetExhausted(label~ : String)
   QuorumNotReached(need~ : Int, ok~ : Int, of~ : Int)
 }
-pub fn WorkflowError::output(Self, &Logger) -> Unit
-pub fn WorkflowError::to_string(Self) -> String
 pub impl Show for WorkflowError
 
 // Types and methods
@@ -75,8 +71,6 @@ pub(all) enum AgentFailure {
   Skipped
   Failed(String)
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentFailure::output(Self, &Logger) -> Unit
-pub fn AgentFailure::to_string(Self) -> String
 pub impl Show for AgentFailure
 
 pub(all) enum AgentOutcome {
