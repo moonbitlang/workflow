@@ -3,7 +3,6 @@ package "moonbitlang/workflow"
 
 import {
   "moonbitlang/async",
-  "moonbitlang/async/semaphore",
   "moonbitlang/core/json",
 }
 
@@ -135,20 +134,7 @@ pub struct Runner {
 pub fn Runner::Runner(async (AgentCall) -> AgentOutcome, validate_replay? : async (AgentCall, AgentOutcome) -> ReplayDecision) -> Self
 pub async fn Runner::invoke(Self, AgentCall) -> AgentOutcome
 
-pub struct Workflow {
-  runner : Runner
-  slots : @semaphore.Semaphore
-  on_event : (WorkflowEvent) -> Unit
-  journal : Journal?
-  replay_scope : String
-  max_calls : Int?
-  mut calls_made : Int
-  mut replays : Int
-  mut prompt_tokens : Int
-  mut completion_tokens : Int
-  mut cost_usd : Double
-  mut current_phase : String?
-}
+type Workflow
 pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int, max_calls? : Int, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
 pub async fn Workflow::agent(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Json
 pub async fn[T : @json.FromJson] Workflow::agent_as(Self, String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> T
