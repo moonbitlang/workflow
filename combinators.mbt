@@ -67,6 +67,11 @@ pub fn worth_retrying(error : WorkflowError) -> Bool {
 /// otherwise; cancellation and engine bugs are never retried, they
 /// propagate on the first raise.
 ///
+/// `backoff` is the async runtime's own `RetryMethod`, and NAMING one
+/// (`FixedDelay(500)`) needs `moonbitlang/async` in the caller's
+/// `moon.pkg` — a re-export cannot lend it, since an aliased type still
+/// resolves through the package that owns it. The default needs nothing.
+///
 /// Every attempt is a full LAUNCH: it queues for a slot, debits the launch
 /// allowance, and charges its tokens — so `max_calls` must be sized with
 /// re-attempts in mind, exactly as it must for resume. Journal replay is
