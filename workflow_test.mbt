@@ -507,7 +507,7 @@ async test "outcomes and failures survive the JSON round trip" {
     DidNotFinish(failure=@workflow.AgentFailure::Failed("reason"), attempt=None),
   ]
   for outcome in outcomes {
-    let back : @workflow.AgentOutcome = @json.from_json(outcome.to_json())
+    let back : @workflow.AgentOutcome = @json.from_json(Json(outcome))
     assert_true(back == outcome)
   }
 }
@@ -669,7 +669,7 @@ test "a priced attempt survives the JSON round trip on both arms" {
       @workflow.Finished(value="ok", attempt=priced),
       @workflow.DidNotFinish(failure=TimedOut, attempt=Some(priced)),
     ] {
-    let json = outcome.to_json()
+    let json = Json(outcome)
     assert_true(json.stringify().contains("\"cost_usd\":0.25"))
     let back : @workflow.AgentOutcome = @json.from_json(json)
     assert_true(back == outcome)

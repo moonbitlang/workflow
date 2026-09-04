@@ -35,8 +35,6 @@ pub enum CliExit {
   Cancelled
   Failed(String)
 } derive(Eq)
-pub fn CliExit::equal(Self, Self) -> Bool
-pub fn CliExit::not_equal(Self, Self) -> Bool
 
 pub(all) struct Options {
   command : String
@@ -62,8 +60,6 @@ pub(all) enum Verdict {
   Continue
   Stop
 } derive(Eq)
-pub fn Verdict::equal(Self, Self) -> Bool
-pub fn Verdict::not_equal(Self, Self) -> Bool
 
 // Type aliases
 

@@ -499,7 +499,7 @@ async test "an entry records its phase and wall-clock window; replay ignores bot
 ///|
 test "the entry's JSON shape: attribution only when known, timestamps as numbers" {
   let bare = success_entry("q", { "a": 1 })
-  let text = bare.to_json().stringify()
+  let text = Json(bare).stringify()
   assert_false(text.contains("\"phase\""))
   assert_false(text.contains("started_at"))
   assert_false(text.contains("finished_at"))
@@ -510,12 +510,12 @@ test "the entry's JSON shape: attribution only when known, timestamps as numbers
     started_at=1_700_000_000_000,
     finished_at=1_700_000_000_250,
   )
-  let text = full.to_json().stringify()
+  let text = Json(full).stringify()
   assert_true(text.contains("\"phase\":\"Scan\""))
   assert_true(text.contains("\"started_at\":1700000000000"))
   assert_true(text.contains("\"finished_at\":1700000000250"))
   for entry in [bare, full] {
-    let back : @workflow.JournalEntry = @json.from_json(entry.to_json())
+    let back : @workflow.JournalEntry = @json.from_json(Json(entry))
     assert_true(back == entry)
   }
 }
@@ -529,7 +529,7 @@ test "a mistyped attribution field is a malformed entry, not a missing one" {
       { "started_at": "soon" },
       { "finished_at": 1.5 },
     ] {
-    let json = entry.to_json()
+    let json = Json(entry)
     guard json is Object(fields) && bad is Object(extra) else {
       fail("objects expected")
     }
@@ -544,7 +544,7 @@ test "a mistyped attribution field is a malformed entry, not a missing one" {
     assert_true(decoded is Err(_))
   }
   // `null` reads as absent.
-  let json = entry.to_json()
+  let json = Json(entry)
   guard json is Object(fields) else { fail("object expected") }
   fields["phase"] = Json::null()
   fields["started_at"] = Json::null()

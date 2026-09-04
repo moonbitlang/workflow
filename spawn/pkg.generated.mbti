@@ -38,8 +38,6 @@ pub enum ContractTerminal {
   TimedOut
   Failed(String)
 } derive(Eq)
-pub fn ContractTerminal::equal(Self, Self) -> Bool
-pub fn ContractTerminal::not_equal(Self, Self) -> Bool
 
 pub(all) struct LaunchSpec {
   command : String
@@ -48,8 +46,6 @@ pub(all) struct LaunchSpec {
   extra_env : Map[String, String]?
   deadline_ms : Int?
 } derive(Eq)
-pub fn LaunchSpec::equal(Self, Self) -> Bool
-pub fn LaunchSpec::not_equal(Self, Self) -> Bool
 
 // Type aliases
 

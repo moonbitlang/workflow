@@ -91,12 +91,27 @@ pub suberror WorkflowError {
 }
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend AgentCall with Eq::{equal, not_equal}
 
 ///|
+/// The dot-callable form of the derived serializer is a migration
+/// convenience, not API: serialize with `Json(value)` or
+/// `ToJson::to_json(value)` instead.
+#deprecated("Use Json(value) or ToJson::to_json(value) instead of the attached to_json method")
+#doc(hidden)
 pub extend AgentCall with ToJson::{to_json}
 
 ///|
+/// The dot-callable form of the derived decoder is a migration
+/// convenience, not API: decode through the `@json.FromJson` trait
+/// (`@json.from_json`) instead.
+#deprecated("Use @json.from_json or FromJson::from_json(json, path) instead of the attached from_json method")
+#doc(hidden)
 pub extend AgentCall with FromJson::{from_json}
 
 ///|
@@ -124,21 +139,51 @@ pub extend AgentAttempt with ToJson::{to_json}
 pub extend AgentAttempt with FromJson::{from_json}
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend AgentFailure with Eq::{equal, not_equal}
 
 ///|
+/// The dot-callable form of the derived serializer is a migration
+/// convenience, not API: serialize with `Json(value)` or
+/// `ToJson::to_json(value)` instead.
+#deprecated("Use Json(value) or ToJson::to_json(value) instead of the attached to_json method")
+#doc(hidden)
 pub extend AgentFailure with ToJson::{to_json}
 
 ///|
+/// The dot-callable form of the derived decoder is a migration
+/// convenience, not API: decode through the `@json.FromJson` trait
+/// (`@json.from_json`) instead.
+#deprecated("Use @json.from_json or FromJson::from_json(json, path) instead of the attached from_json method")
+#doc(hidden)
 pub extend AgentFailure with FromJson::{from_json}
 
 ///|
+/// The dot-callable form of the derived equality methods is a migration
+/// convenience, not API: compare with `==` / `!=` (through the `Eq`
+/// trait) instead.
+#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
+#doc(hidden)
 pub extend AgentOutcome with Eq::{equal, not_equal}
 
 ///|
+/// The dot-callable form of the derived serializer is a migration
+/// convenience, not API: serialize with `Json(value)` or
+/// `ToJson::to_json(value)` instead.
+#deprecated("Use Json(value) or ToJson::to_json(value) instead of the attached to_json method")
+#doc(hidden)
 pub extend AgentOutcome with ToJson::{to_json}
 
 ///|
+/// The dot-callable form of the derived decoder is a migration
+/// convenience, not API: decode through the `@json.FromJson` trait
+/// (`@json.from_json`) instead.
+#deprecated("Use @json.from_json or FromJson::from_json(json, path) instead of the attached from_json method")
+#doc(hidden)
 pub extend AgentOutcome with FromJson::{from_json}
 
 ///|
