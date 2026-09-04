@@ -47,7 +47,7 @@ import {
 /// replays whichever attempt actually answered.
 ///
 /// Engines (`--engine`, default `explore`): `claude` and `codex` run
-/// through this module's shims (`just shims` first), anything else is an
+/// through this module's published shims (via `moonx`), anything else is an
 /// `openseek subrun <kind>` scout. `--model` overrides the chosen
 /// engine's default; without it, DOC_AUDIT_CLAUDE (claude-sonnet-5),
 /// DOC_AUDIT_CODEX (gpt-5.3-codex-spark), DOC_AUDIT_DEEPSEEK
@@ -314,7 +314,10 @@ async fn audit() -> Unit {
   )
 
   // ---- Routing: KIND picks the engine, and every scout runs in the repo ----
-  let shims = "_build/native/debug/build/shim"
+  // The PUBLISHED shims, run by coordinate: no build step and no path to
+  // hard-code. Pinned to the version this script imports, so one run is
+  // one coherent set of published artifacts.
+  let shim = "moonbitlang/workflow/shim"
   let claude_model = model.unwrap_or(
     @env.get_env_var("DOC_AUDIT_CLAUDE").unwrap_or("claude-sonnet-5"),
   )
@@ -329,16 +332,16 @@ async fn audit() -> Unit {
       match call.kind {
         "claude" =>
           {
-            command: "\{shims}/claude/claude.exe",
-            args: ["--model", claude_model, "--cwd", repo],
+            command: "moonx",
+            args: ["\{shim}/claude@0.4.1", "--model", claude_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),
           }
         "codex" =>
           {
-            command: "\{shims}/codex/codex.exe",
-            args: ["--model", codex_model, "--cwd", repo],
+            command: "moonx",
+            args: ["\{shim}/codex@0.4.1", "--model", codex_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),
