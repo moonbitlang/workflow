@@ -87,7 +87,7 @@ async fn research() -> Unit {
   let found = @workflow.collect_ok(
     @workflow.fan_out(surveys, survey => {
       let (name, prompt, hints) = survey
-      wf.try_agent(prompt, kind="explore", hints~, label="survey:\{name}", max_steps=14)
+      wf.try_agent(prompt~, kind="explore", hints~, label="survey:\{name}", max_steps=14)
     }),
     min_ok=2,
   ) catch {
@@ -101,7 +101,7 @@ async fn research() -> Unit {
   // ---- Phase 2: probe the open question the survey exposes ----
   wf.phase("Probe")
   let probe = wf.try_agent(
-    (
+    prompt=(
       $|Given these findings on \{question}
       $|— \{notes.join(" ||| ")} —
       $|identify the SINGLE hardest unresolved design problem and investigate
@@ -124,7 +124,7 @@ async fn research() -> Unit {
   wf.phase("Synthesize")
   match
     wf.try_agent(
-      (
+      prompt=(
         $|Write a concrete design proposal for \{question}
         $|Base it ONLY on this research: \{notes.join(" ||| ")} ||| HARDEST: \{probe_note}.
         $|Give: the new API surface, the journal representation of a pending

@@ -56,7 +56,7 @@ fn failure_entry(
 async test "a journalled success replays without launching or charging" {
   let journal = @workflow.Journal::in_memory()
   let wf1 = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  let first = wf1.agent("hello", kind="scout")
+  let first = wf1.agent(prompt="hello", kind="scout")
   assert_eq(wf1.calls_made(), 1)
   assert_eq(journal.recorded().length(), 1)
   let events : Array[String] = []
@@ -65,7 +65,7 @@ async test "a journalled success replays without launching or charging" {
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
     on_event=event => events.push(render(event)),
   )
-  let second = wf2.agent("hello", kind="scout")
+  let second = wf2.agent(prompt="hello", kind="scout")
   assert_eq(second, first)
   assert_eq(wf2.calls_made(), 0)
   assert_eq(wf2.calls_replayed(), 1)
@@ -77,7 +77,7 @@ async test "a journalled success replays without launching or charging" {
 async test "a journalled failure is re-attempted live" {
   let journal = @workflow.Journal::in_memory()
   let wf1 = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  guard wf1.try_agent("fail:x", kind="scout") is Err(_) else {
+  guard wf1.try_agent(prompt="fail:x", kind="scout") is Err(_) else {
     fail("expected the first attempt to fail")
   }
   guard journal.recorded() is [{ outcome: DidNotFinish(..), .. }] else {
@@ -87,7 +87,7 @@ async test "a journalled failure is re-attempted live" {
     runner=@workflow.Runner(recovered),
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
-  let value = wf2.agent("fail:x", kind="scout")
+  let value = wf2.agent(prompt="fail:x", kind="scout")
   assert_eq(value, { "recovered": "fail:x" })
   assert_eq(wf2.calls_made(), 1)
   assert_eq(wf2.calls_replayed(), 0)
@@ -101,7 +101,7 @@ async test "a journalled skip replays as the same refusal" {
       failure_entry("risky", @workflow.AgentFailure::Skipped),
     ]),
   )
-  guard wf.try_agent("risky", kind="scout")
+  guard wf.try_agent(prompt="risky", kind="scout")
     is Err(@workflow.AgentFailed(failure=Skipped, ..)) else {
     fail("expected the recorded refusal to stand")
   }
@@ -118,7 +118,7 @@ async test "replay prefers a newer success over an older failure" {
       success_entry("x", { "answer": 42 }),
     ]),
   )
-  assert_eq(wf.agent("x", kind="scout"), { "answer": 42 })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "answer": 42 })
 }
 
 ///|
@@ -130,10 +130,10 @@ async test "identical calls consume journal entries as a multiset" {
       success_entry("vote", { "sample": 2 }),
     ]),
   )
-  assert_eq(wf.agent("vote", kind="scout"), { "sample": 1 })
-  assert_eq(wf.agent("vote", kind="scout"), { "sample": 2 })
+  assert_eq(wf.agent(prompt="vote", kind="scout"), { "sample": 1 })
+  assert_eq(wf.agent(prompt="vote", kind="scout"), { "sample": 2 })
   // A third identical call outruns the journal: it runs live.
-  assert_eq(wf.agent("vote", kind="scout"), { "recovered": "vote" })
+  assert_eq(wf.agent(prompt="vote", kind="scout"), { "recovered": "vote" })
   assert_eq(wf.calls_replayed(), 2)
   assert_eq(wf.calls_made(), 1)
 }
@@ -146,7 +146,7 @@ async test "the display label is not part of the work identity" {
       success_entry("q", { "a": 1 }, label="scout-one"),
     ]),
   )
-  assert_eq(wf.agent("q", kind="scout", label="scout-two"), { "a": 1 })
+  assert_eq(wf.agent(prompt="q", kind="scout", label="scout-two"), { "a": 1 })
 }
 
 ///|
@@ -158,8 +158,8 @@ async test "a file-backed journal resumes across generations" {
     runner=@workflow.Runner(scripted),
     journal=@workflow.Journal::load(path),
   )
-  let first = wf1.agent("hello", kind="scout")
-  guard wf1.try_agent("fail:x", kind="scout") is Err(_) else {
+  let first = wf1.agent(prompt="hello", kind="scout")
+  guard wf1.try_agent(prompt="fail:x", kind="scout") is Err(_) else {
     fail("expected the first attempt to fail")
   }
   // Generation 2: the success replays, the failure re-attempts and
@@ -170,8 +170,8 @@ async test "a file-backed journal resumes across generations" {
     runner=@workflow.Runner(recovered),
     journal=journal2,
   )
-  assert_eq(wf2.agent("hello", kind="scout"), first)
-  assert_eq(wf2.agent("fail:x", kind="scout"), { "recovered": "fail:x" })
+  assert_eq(wf2.agent(prompt="hello", kind="scout"), first)
+  assert_eq(wf2.agent(prompt="fail:x", kind="scout"), { "recovered": "fail:x" })
   assert_eq(wf2.calls_replayed(), 1)
   assert_eq(wf2.calls_made(), 1)
   // Generation 3: everything replays; nothing may launch.
@@ -181,8 +181,8 @@ async test "a file-backed journal resumes across generations" {
     runner=@workflow.Runner(must_not_run),
     journal=journal3,
   )
-  assert_eq(wf3.agent("hello", kind="scout"), first)
-  assert_eq(wf3.agent("fail:x", kind="scout"), { "recovered": "fail:x" })
+  assert_eq(wf3.agent(prompt="hello", kind="scout"), first)
+  assert_eq(wf3.agent(prompt="fail:x", kind="scout"), { "recovered": "fail:x" })
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
   }
@@ -197,7 +197,7 @@ async test "replay prefers a success over a recorded skip" {
       success_entry("x", { "answer": 1 }),
     ]),
   )
-  assert_eq(wf.agent("x", kind="scout"), { "answer": 1 })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "answer": 1 })
 }
 
 ///|
@@ -212,8 +212,8 @@ async test "re-attempting a journalled failure consumes fresh allowance" {
     ]),
     max_calls=1,
   )
-  assert_eq(wf.agent("x", kind="scout"), { "recovered": "x" })
-  guard wf.try_agent("y", kind="scout")
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "recovered": "x" })
+  guard wf.try_agent(prompt="y", kind="scout")
     is Err(@workflow.CallBudgetExhausted(..)) else {
     fail("expected the re-attempt to have spent the allowance")
   }
@@ -229,8 +229,8 @@ async test "concurrent identical calls consume distinct journal entries" {
     ]),
   )
   let results = @workflow.parallel([
-    () => wf.try_agent("vote", kind="scout"),
-    () => wf.try_agent("vote", kind="scout"),
+    () => wf.try_agent(prompt="vote", kind="scout"),
+    () => wf.try_agent(prompt="vote", kind="scout"),
   ])
   let values = @workflow.all_ok(results)
   // Completion order is scheduling-dependent; the multiset is not.
@@ -248,9 +248,9 @@ async test "concurrent live agents append whole lines" {
     journal=@workflow.Journal::load(path),
   )
   let results = @workflow.parallel([
-    () => wf.try_agent("a", kind="scout"),
-    () => wf.try_agent("b", kind="scout"),
-    () => wf.try_agent("c", kind="scout"),
+    () => wf.try_agent(prompt="a", kind="scout"),
+    () => wf.try_agent(prompt="b", kind="scout"),
+    () => wf.try_agent(prompt="c", kind="scout"),
   ])
   assert_eq(@workflow.all_ok(results).length(), 3)
   // Every line survives a reload: no interleaved bytes, no torn entries.
@@ -268,12 +268,12 @@ async test "label-only differences replay through a file round trip" {
     runner=@workflow.Runner(scripted),
     journal=@workflow.Journal::load(path),
   )
-  let first = wf1.agent("q", kind="scout", label="scout-one")
+  let first = wf1.agent(prompt="q", kind="scout", label="scout-one")
   let wf2 = @workflow.Workflow(
     runner=@workflow.Runner(must_not_run),
     journal=@workflow.Journal::load(path),
   )
-  assert_eq(wf2.agent("q", kind="scout", label="scout-two"), first)
+  assert_eq(wf2.agent(prompt="q", kind="scout", label="scout-two"), first)
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
   }
@@ -292,7 +292,7 @@ async test "a failed journal append surfaces as one errored bracket" {
     events.push(render(event))
   })
   let mut raised = false
-  let _ = wf.agent("q", kind="scout") catch {
+  let _ = wf.agent(prompt="q", kind="scout") catch {
     _ => {
       raised = true
       Json::null()
@@ -320,7 +320,7 @@ async test "a torn final line is dropped AND repaired on disk" {
   // clean line boundary, and the next generation must see both entries —
   // the regression for append-after-torn-tail corrupting the file.
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  let _ = wf.agent("world", kind="scout")
+  let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(torn).prior().length(), 2)
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
@@ -341,7 +341,7 @@ async test "a valid final line missing its newline is kept and normalized" {
   assert_eq(journal.prior().length(), 2)
   // Repair added the missing newline: an append cannot fuse two entries.
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  let _ = wf.agent("world", kind="scout")
+  let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(path).prior().length(), 3)
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
@@ -401,13 +401,13 @@ async test "a vetoed replay runs live and the stale entry stays consumed" {
     ]),
   )
   // The journal has a hit, but the engine vetoes it: live run.
-  assert_eq(wf.agent("x", kind="scout"), { "recovered": "x" })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "recovered": "x" })
   assert_eq(wf.calls_replayed(), 0)
   assert_eq(wf.calls_made(), 1)
   assert_eq(vetoes.val, 1)
   // The vetoed entry was consumed: the next identical call never even
   // reaches the validator.
-  assert_eq(wf.agent("x", kind="scout"), { "recovered": "x" })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "recovered": "x" })
   assert_eq(vetoes.val, 1)
 }
 
@@ -429,12 +429,12 @@ async test "a stale candidate does not mask the newer valid one" {
       success_entry("x", { "sample": 2 }),
     ]),
   )
-  assert_eq(wf.agent("x", kind="scout"), { "sample": 2 })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "sample": 2 })
   assert_eq(wf.calls_replayed(), 1)
   assert_eq(wf.calls_made(), 0)
   // Both candidates are now consumed (one vetoed, one served): the next
   // identical call runs live.
-  assert_eq(wf.agent("x", kind="scout"), { "recovered": "x" })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "recovered": "x" })
   assert_eq(wf.calls_made(), 1)
 }
 
@@ -456,7 +456,7 @@ async test "a validator unwind rolls the claim back" {
     ]),
   )
   let mut unwound = false
-  let _ = wf.agent("x", kind="scout") catch {
+  let _ = wf.agent(prompt="x", kind="scout") catch {
     _ => {
       unwound = true
       Json::null()
@@ -465,7 +465,7 @@ async test "a validator unwind rolls the claim back" {
   assert_true(unwound)
   // Same entry, second chance: validation now passes and the entry is
   // still there to serve.
-  assert_eq(wf.agent("x", kind="scout"), { "answer": 42 })
+  assert_eq(wf.agent(prompt="x", kind="scout"), { "answer": 42 })
   assert_eq(wf.calls_replayed(), 1)
 }
 
@@ -474,7 +474,7 @@ async test "an entry records its phase and wall-clock window; replay ignores bot
   let journal = @workflow.Journal::in_memory()
   let wf1 = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
   wf1.phase("Scan")
-  let _ = wf1.agent("q", kind="scout")
+  let _ = wf1.agent(prompt="q", kind="scout")
   guard journal.recorded() is [entry] else { fail("expected one entry") }
   assert_eq(entry.phase, Some("Scan"))
   guard entry.started_at is Some(started) && entry.finished_at is Some(finished) else {
@@ -490,7 +490,7 @@ async test "an entry records its phase and wall-clock window; replay ignores bot
     journal=@workflow.Journal::in_memory(prior=journal.recorded()),
   )
   wf2.phase("Verify")
-  let _ = wf2.agent("q", kind="scout")
+  let _ = wf2.agent(prompt="q", kind="scout")
   assert_eq(wf2.calls_replayed(), 1)
 }
 
@@ -565,7 +565,7 @@ async test "a pre-attribution journal line loads unchanged and still replays" {
   assert_eq(entry.finished_at, None)
   assert_true(entry == success_entry("hello", { "a": 1 }))
   let wf = @workflow.Workflow(runner=@workflow.Runner(must_not_run), journal~)
-  assert_eq(wf.agent("hello", kind="scout"), { "a": 1 })
+  assert_eq(wf.agent(prompt="hello", kind="scout"), { "a": 1 })
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
   }
@@ -588,7 +588,7 @@ async test "a metadata line is skipped by replay and preserved by repair" {
   assert_eq(@fs.read_file(path).text(), meta + entry_line + "\n")
   // The next generation appends after it and reads both entries.
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  let _ = wf.agent("world", kind="scout")
+  let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(path).prior().length(), 2)
   assert_true(@fs.read_file(path).text().has_prefix(meta + entry_line))
   @fs.rmdir(dir, recursive=true) catch {

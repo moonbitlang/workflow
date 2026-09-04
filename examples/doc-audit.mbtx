@@ -384,7 +384,7 @@ async fn audit() -> Unit {
     let prompt = audit_prompt(slice, engine)
     let label = "audit:\{slice.path}#\{slice.index + 1}"
     let first = wf.try_agent(
-      prompt,
+      prompt~,
       kind=engine,
       label~,
       max_steps=steps_for(engine),
@@ -399,7 +399,7 @@ async fn audit() -> Unit {
       first
     } else {
       let second = wf.try_agent(
-        prompt,
+        prompt~,
         kind=engine,
         label="\{label} (retry)",
         max_steps=steps_for(engine) * 2,

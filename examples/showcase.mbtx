@@ -38,7 +38,7 @@ async fn showcase() -> Unit {
   let topics = ["journal", "contract", "workers", "budget", "events"]
   let surveyed = @workflow.collect_ok(
     @workflow.fan_out(topics, topic => wf.try_agent(
-      "survey \{topic}",
+      prompt="survey \{topic}",
       kind="echo",
       label="survey:\{topic}",
     )),
@@ -55,9 +55,9 @@ async fn showcase() -> Unit {
   // ---- Phase 2: adversarial quorum over IDENTICAL calls (multiset) ----
   wf.phase("Verify")
   let votes = @workflow.parallel([
-    () => wf.try_agent("vote on the finding", kind="echo", label="voter-1"),
-    () => wf.try_agent("vote on the finding", kind="echo", label="voter-2"),
-    () => wf.try_agent("vote on the finding", kind="echo", label="voter-3"),
+    () => wf.try_agent(prompt="vote on the finding", kind="echo", label="voter-1"),
+    () => wf.try_agent(prompt="vote on the finding", kind="echo", label="voter-2"),
+    () => wf.try_agent(prompt="vote on the finding", kind="echo", label="voter-3"),
   ])
   let agreed = @workflow.quorum(votes, need=2) catch {
     @workflow.QuorumNotReached(need~, ok~, of~) => {
@@ -76,7 +76,7 @@ async fn showcase() -> Unit {
   let bounded = @workflow.Workflow(runner~, journal~, max_calls=2)
   let mut sweeps = 0
   for index in 0..<10 {
-    match bounded.try_agent("sweep \{index}", kind="echo") {
+    match bounded.try_agent(prompt="sweep \{index}", kind="echo") {
       Ok(_) => sweeps += 1
       Err(@workflow.CallBudgetExhausted(..)) => {
         println("tail: allowance spent after \{sweeps} sweeps — typed refusal, not a crash")

@@ -101,7 +101,7 @@ pub fn Workflow::Workflow(
 /// (`try_agent` is the shorthand), propagate at load-bearing ones.
 pub async fn Workflow::agent(
   self : Workflow,
-  prompt : String,
+  prompt~ : String,
   kind~ : String,
   hints? : String,
   label? : String,
@@ -247,14 +247,14 @@ pub async fn Workflow::agent_call(
 /// `attempt`, which folds any raising step the same way.
 pub async fn Workflow::try_agent(
   self : Workflow,
-  prompt : String,
+  prompt~ : String,
   kind~ : String,
   hints? : String,
   label? : String,
   max_steps? : Int,
   schema? : Json,
 ) -> Result[Json, WorkflowError] {
-  attempt(() => self.agent(prompt, kind~, hints?, label?, max_steps?, schema?))
+  attempt(() => self.agent(prompt~, kind~, hints?, label?, max_steps?, schema?))
 }
 
 ///|
@@ -268,7 +268,7 @@ pub async fn Workflow::try_agent(
 /// replays as the same rejection.
 pub async fn[T : @json.FromJson] Workflow::agent_as(
   self : Workflow,
-  prompt : String,
+  prompt~ : String,
   kind~ : String,
   hints? : String,
   label? : String,
@@ -276,7 +276,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
   schema? : Json,
 ) -> T {
   let label = label.unwrap_or(brief(prompt))
-  let value = self.agent(prompt, kind~, hints?, label~, max_steps?, schema?)
+  let value = self.agent(prompt~, kind~, hints?, label~, max_steps?, schema?)
   @json.from_json(value) catch {
     error =>
       raise AgentFailed(label~, failure=Failed("report rejected: \{error}"))
@@ -288,7 +288,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
 /// exactly as `try_agent` folds `agent`.
 pub async fn[T : @json.FromJson] Workflow::try_agent_as(
   self : Workflow,
-  prompt : String,
+  prompt~ : String,
   kind~ : String,
   hints? : String,
   label? : String,
@@ -296,7 +296,7 @@ pub async fn[T : @json.FromJson] Workflow::try_agent_as(
   schema? : Json,
 ) -> Result[T, WorkflowError] {
   attempt(() => {
-    self.agent_as(prompt, kind~, hints?, label?, max_steps?, schema?)
+    self.agent_as(prompt~, kind~, hints?, label?, max_steps?, schema?)
   })
 }
 

@@ -54,7 +54,7 @@ async fn debate() -> Unit {
     @workflow.fan_out(briefs, brief => {
       let (side, prompt) = brief
       wf.try_agent(
-        prompt,
+        prompt~,
         kind="explore",
         hints="spawn/contract.mbt runner.mbt moon.pkg spawn/moon.pkg",
         label="advocate:\{side}",
@@ -78,7 +78,7 @@ async fn debate() -> Unit {
   // further.
   wf.phase("Judge")
   let ruling = wf.agent(
-    "Two advocates examined: \{question} Rule which position the CODE better supports, in one paragraph ending with VERDICT: KEEP or VERDICT: FOLD. Verify their claims yourself before ruling.",
+    prompt="Two advocates examined: \{question} Rule which position the CODE better supports, in one paragraph ending with VERDICT: KEEP or VERDICT: FOLD. Verify their claims yourself before ruling.",
     kind="explore",
     hints="KEEP: \{clip(keep_case, 900)} ||| FOLD: \{clip(fold_case, 900)}",
     label="judge",
