@@ -163,12 +163,12 @@ pub impl Show for JournalCorrupted with fn output(self, logger) {
 ///
 /// A file-backed journal assumes ONE writing workflow process per path:
 /// appends are serialized within the process, not across processes.
-pub struct Journal {
-  priv prior : Array[JournalEntry]
-  priv consumed : Array[Bool]
-  priv path : String?
-  priv recorded : Array[JournalEntry]
-  priv write_lock : @async.Mutex
+struct Journal {
+  prior : Array[JournalEntry]
+  consumed : Array[Bool]
+  path : String?
+  recorded : Array[JournalEntry]
+  write_lock : @async.Mutex
 }
 
 ///|

@@ -21,9 +21,9 @@ pub(all) enum ReplayDecision {
 /// live state (does the branch this outcome names still exist?) and
 /// decide. Engines whose outcomes are pure values need no validator:
 /// replay of a plain report can never lie.
-pub struct Runner {
-  priv run : async (AgentCall) -> AgentOutcome
-  priv validate_replay : (async (AgentCall, AgentOutcome) -> ReplayDecision)?
+struct Runner {
+  run : async (AgentCall) -> AgentOutcome
+  validate_replay : (async (AgentCall, AgentOutcome) -> ReplayDecision)?
 }
 
 ///|
