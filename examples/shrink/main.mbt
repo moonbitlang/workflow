@@ -148,6 +148,16 @@ async fn shrink() -> Unit {
         long="list",
         about="print the plan and stop, spending nothing",
       ),
+      @argparse.FlagArg(
+        "apply",
+        long="apply",
+        about="make the mechanical edits, keeping them only if the module still checks and tests",
+      ),
+      @argparse.FlagArg(
+        "judge",
+        long="judge",
+        about="ALSO put a scout on what the mechanical pass could not decide (this spends tokens)",
+      ),
     ],
     positionals=[
       @argparse.PositionArg(
@@ -245,8 +255,27 @@ async fn shrink() -> Unit {
     }
     return
   }
-  guard !undecided.is_empty() else {
-    println("nothing left to judge — the mechanical pass settled everything")
+  // ---- Spending is OPT-IN ----
+  // A scout costs money, so no run reaches one by default. Without
+  // `--judge` this stops at the mechanical half, which is the part that
+  // needs nothing and, on most modules, decides most of the findings.
+  let judging = args.flags.get("judge") is Some(true) && !undecided.is_empty()
+  if !judging {
+    if undecided.is_empty() {
+      println(
+        "nothing left to judge — the mechanical pass settled everything",
+      )
+    } else {
+      println(
+        "  (\{undecided.length()} left undecided; pass --judge to spend a scout on them)",
+      )
+    }
+    let (edits, reverted) = if args.flags.get("apply") is Some(true) {
+      apply_mechanical(repo, owner, decided)
+    } else {
+      ([], None)
+    }
+    finish(args, repo, owner, decided, [], [], foreign, edits, reverted, None)
     return
   }
 
@@ -327,17 +356,99 @@ async fn shrink() -> Unit {
 
   // ---- One scout per package: its undecided symbols, and the code ----
   let (judgements, unjudged) = judge(wf, owner, engine, undecided)
+
+  // ---- Deliver the CHANGE, not a list of chores ----
+  // Everything the sweep decided mechanically, plus every `drop` a scout
+  // argued for, is one edit each; the compiler says whether they were
+  // right, and a run that does not check and test puts the files back.
+  let (edits, reverted) = if args.flags.get("apply") is Some(true) {
+    let targets = mechanical_targets(decided)
+    for row in judgements {
+      if row.verdict == "drop" {
+        for finding in undecided {
+          if finding.pkg == row.pkg && finding.decl == row.symbol {
+            targets.push((finding, false))
+          }
+        }
+      }
+    }
+    apply(repo, owner, targets)
+  } else {
+    ([], None)
+  }
+  finish(
+    args,
+    repo,
+    owner,
+    decided,
+    judgements,
+    unjudged,
+    foreign,
+    edits,
+    reverted,
+    Some(wf),
+  )
+}
+
+///|
+/// The verdicts the mechanical pass reached, as edits to attempt: narrow
+/// a `pub(all)`, unexport what an executable cannot share.
+fn mechanical_targets(
+  decided : Array[(Finding, Verdict)],
+) -> Array[(Finding, Bool)] {
+  let targets : Array[(Finding, Bool)] = []
+  for pair in decided {
+    match pair.1 {
+      Narrow => targets.push((pair.0, true))
+      Unreachable => targets.push((pair.0, false))
+      _ => ()
+    }
+  }
+  targets
+}
+
+///|
+/// The mechanical half's edits, with no scout involved and nothing spent.
+async fn apply_mechanical(
+  repo : String,
+  owner : String,
+  decided : Array[(Finding, Verdict)],
+) -> (Array[Edit], String?) {
+  apply(repo, owner, mechanical_targets(decided))
+}
+
+///|
+/// Write the report and say what happened — the one place a run ends, so
+/// a mechanical run and a judged one tell the story the same way.
+async fn finish(
+  args : @argparse.Matches,
+  repo : String,
+  owner : String,
+  decided : Array[(Finding, Verdict)],
+  judgements : Array[Judgement],
+  unjudged : Array[String],
+  foreign : Array[String],
+  edits : Array[Edit],
+  reverted : String?,
+  wf : @workflow.Workflow?,
+) -> Unit {
   let out = value(args, "out", "shrink-api.md")
   @fs.write_file(
     out,
-    render(repo, owner, decided, judgements, unjudged, foreign),
+    render(repo, owner, decided, judgements, unjudged, foreign, edits, reverted),
   )
+  let landed = edits.filter(edit => edit.applied).length()
   println(
-    "\nwrote \{out}: \{judgements.length()} judgement(s), \{unjudged.length()} package(s) unjudged",
+    "\nwrote \{out}: \{judgements.length()} judgement(s), \{unjudged.length()} package(s) unjudged, \{landed} edit(s) applied",
   )
-  println(
-    "spent \{wf.tokens_spent()} token(s) over \{wf.calls_made()} call(s), \{wf.calls_replayed()} replayed",
-  )
+  if reverted is Some(reason) {
+    println("edits REVERTED — nothing changed:\n\{reason}")
+  }
+  if wf is Some(wf) {
+    println(
+      "spent \{wf.tokens_spent()} token(s) over \{wf.calls_made()} call(s), \{wf.calls_replayed()} replayed",
+    )
+  }
 }
 
 ///|
@@ -585,10 +696,39 @@ fn render(
   judgements : Array[Judgement],
   unjudged : Array[String],
   foreign : Array[String],
+  edits : Array[Edit],
+  reverted : String?,
 ) -> String {
   let out = StringBuilder()
   out.write_string("# Interface shrink — `\{owner}`\n\n")
   out.write_string("`\{repo}`\n\n")
+  if reverted is Some(reason) {
+    out.write_string("## Reverted\n\n")
+    out.write_string(
+      "The edits below were made and then PUT BACK: the module did not survive them, so nothing in the working tree changed.\n\n```\n\{reason}\n```\n\n",
+    )
+  } else if edits.filter(edit => edit.applied).length() > 0 {
+    let landed = edits.filter(edit => edit.applied)
+    out.write_string("## Applied\n\n")
+    out.write_string(
+      "\{landed.length()} edit(s), kept because `moon check --deny-warn` and `moon test` still pass. The working tree is changed and uncommitted — review it before committing.\n\n",
+    )
+    for edit in landed {
+      out.write_string("- `\{edit.decl}` — \{edit.where_}\n")
+    }
+    out.write_string("\n")
+  }
+  let declined = edits.filter(edit => !edit.applied)
+  if !declined.is_empty() && reverted is None {
+    out.write_string("## Not edited\n\n")
+    out.write_string(
+      "Located ambiguously or not at all. An edit only happens where the declaration is found exactly once:\n\n",
+    )
+    for edit in declined {
+      out.write_string("- `\{edit.pkg}` — `\{edit.decl}` (\{edit.where_})\n")
+    }
+    out.write_string("\n")
+  }
   let mechanical = decided.filter(pair => !(pair.1 is Undecided))
   out.write_string(
     "\{decided.length()} finding(s): \{mechanical.length()} settled mechanically, \{judgements.length()} judged.\n\n",
@@ -680,6 +820,233 @@ fn count(args : @argparse.Matches, name : String, fallback : Int) -> Int {
   } else {
     fallback
   }
+}
+
+///|
+/// One edit the sweep made, or declined to make.
+struct Edit {
+  pkg : String
+  decl : String
+  /// The file it landed in, or why it did not land.
+  where_ : String
+  applied : Bool
+}
+
+///|
+/// Apply the verdicts that are MECHANICAL, then let the compiler say
+/// whether they were right.
+///
+/// This is the whole reason this workflow ends in an edit rather than a
+/// report: dropping an export is checkable. `moon check --deny-warn` and
+/// `moon test` in the target module either pass or they do not, and a run
+/// that does not pass puts every file back exactly as it was. A doc audit
+/// cannot offer that, which is why doc-audit stops at prose.
+///
+/// An edit only happens where the declaration can be located EXACTLY
+/// ONCE in its package. Two candidate lines, or none, is a finding the
+/// report keeps and the sweep does not touch — guessing is how a refactor
+/// edits the wrong line.
+async fn apply(
+  repo : String,
+  owner : String,
+  targets : Array[(Finding, Bool)],
+) -> (Array[Edit], String?) {
+  // A BASELINE first. A module that does not pass its own gate before we
+  // touch it will not pass it after, and blaming the edits for damage
+  // they did not do is how a tool teaches people to distrust it.
+  if gate(repo) is Some(reason) {
+    return (
+      [],
+      Some("the module did not pass its own gate BEFORE any edit:\n\{reason}"),
+    )
+  }
+  let edits : Array[Edit] = []
+  let originals : Map[String, String] = Map([])
+  for target in targets {
+    let (finding, narrow) = target
+    guard declared_name(finding.decl) is Some(name) else {
+      edits.push({
+        pkg: finding.pkg,
+        decl: finding.decl,
+        where_: "no anchor: an impl or an unnamed shape",
+        applied: false,
+      })
+      continue
+    }
+    let dir = dir_of(owner, finding.pkg)
+    let root = if dir == "." { repo } else { "\{repo}/\{dir}" }
+    let hits = locate(root, name, narrow~) catch {
+      error => {
+        edits.push({
+          pkg: finding.pkg,
+          decl: finding.decl,
+          where_: "unreadable: \{error}",
+          applied: false,
+        })
+        continue
+      }
+    }
+    guard hits.length() == 1 else {
+      edits.push({
+        pkg: finding.pkg,
+        decl: finding.decl,
+        where_: if hits.is_empty() {
+          "not found in \{dir}/"
+        } else {
+          "\{hits.length()} candidate lines in \{dir}/ — left alone"
+        },
+        applied: false,
+      })
+      continue
+    }
+    let (path, index, rewritten) = hits[0]
+    let text = read_text(path) catch { _ => continue }
+    if !originals.contains(path) {
+      originals[path] = text
+    }
+    let lines = text.split("\n").map(line => line.to_owned()).collect()
+    lines[index] = rewritten
+    @fs.write_file(path, lines.join("\n"))
+    edits.push({
+      pkg: finding.pkg,
+      decl: finding.decl,
+      where_: "\{path}:\{index + 1}",
+      applied: true,
+    })
+  }
+  if edits.filter(edit => edit.applied).is_empty() {
+    return (edits, None)
+  }
+  // The gate. Anything short of a clean check AND a clean test run puts
+  // every file back: a shrink that does not compile is not a shrink.
+  let failure = gate(repo)
+  if failure is Some(_) {
+    for path, text in originals {
+      @fs.write_file(path, text) catch {
+        _ => ()
+      }
+    }
+    return (edits.map(edit => { ..edit, applied: false, }), failure)
+  }
+  (edits, None)
+}
+
+///|
+/// Every line in a package that declares `name` with an export marker,
+/// paired with what the line becomes.
+async fn locate(
+  root : String,
+  name : String,
+  narrow~ : Bool,
+) -> Array[(String, Int, String)] {
+  let hits : Array[(String, Int, String)] = []
+  for entry in @fs.readdir(root) {
+    guard entry.has_suffix(".mbt") && !entry.has_suffix("_test.mbt") else {
+      continue
+    }
+    let path = "\{root}/\{entry}"
+    let text = read_text(path)
+    for index, line in text.split("\n").map(l => l.to_owned()).collect() {
+      guard declares(line, name) else { continue }
+      if unexport(line, narrow~) is Some(rewritten) {
+        hits.push((path, index, rewritten))
+      }
+    }
+  }
+  hits
+}
+
+///|
+/// Does this line declare that name? The name must be followed by a
+/// delimiter, so `run` never matches `run_cli`.
+fn declares(line : String, name : String) -> Bool {
+  guard line.find(name) is Some(at) else { return false }
+  let before = line.clamped_view(end=at).to_owned()
+  guard before.has_prefix("pub") else { return false }
+  let after = line.clamped_view(start=at + name.length())
+  match after.to_owned().iter().next() {
+    None => true
+    Some(ch) => !(ch.is_ascii_alphabetic() || ch.is_ascii_digit() || ch == '_')
+  }
+}
+
+///|
+/// `just check` and `just test`, in the target module's own terms.
+async fn gate(repo : String) -> String? {
+  for step in [["check", "--deny-warn"], ["test"]] {
+    let (code, output) = @process.collect_stdout("moon", step, cwd=repo) catch {
+      error => return Some("cannot run `moon \{step[0]}`: \{error}")
+    }
+    if code != 0 {
+      return Some(
+        "`moon \{step.join(" ")}` exited \{code}:\n\{clip(@utf8.decode_lossy(output.binary()), 800)}",
+      )
+    }
+  }
+  None
+}
+
+///|
+/// The name a declaration binds — what an edit anchors on, because the
+/// report prints a NORMALISED signature (`Self`, no parameter names) that
+/// no source line matches verbatim. `None` for a shape whose name is not
+/// a safe anchor: a trait `impl` has no unique one, and guessing at it is
+/// how a refactor edits the wrong line.
+fn declared_name(decl : String) -> String? {
+  let mut rest = decl.trim().to_owned()
+  for marker in ["pub(all) ", "pub(open) ", "pub ", "async ", "extern "] {
+    if rest.strip_prefix(marker) is Some(shorter) {
+      rest = shorter.trim_start(chars=" ").to_owned()
+    }
+  }
+  // `impl` bodies are matched by trait AND type; there is no one name.
+  if rest.has_prefix("impl ") || rest.has_prefix("extend ") {
+    return None
+  }
+  for
+    keyword in ["fn ", "struct ", "enum ", "type ", "trait ", "let ", "const "] {
+    if rest.strip_prefix(keyword) is Some(after) {
+      let name = StringBuilder()
+      for ch in after.trim_start(chars=" ") {
+        if ch.is_ascii_alphabetic() ||
+          ch.is_ascii_digit() ||
+          ch == '_' ||
+          ch == ':' {
+          name.write_char(ch)
+        } else {
+          break
+        }
+      }
+      let bound = name.to_string()
+      return if bound.is_empty() { None } else { Some(bound) }
+    }
+  }
+  None
+}
+
+///|
+/// Drop one export marker from a declaration line: `pub(all) enum X {`
+/// becomes `pub enum X {`, `pub fn f(…)` becomes `fn f(…)`. `None` when
+/// the line carries no marker to drop, which is how a mis-located edit
+/// declines to happen.
+fn unexport(line : String, narrow~ : Bool) -> String? {
+  let indent = line.length() - line.trim_start(chars=" ").length()
+  let head = line.clamped_view(end=indent).to_owned()
+  let body = line.clamped_view(start=indent).to_owned()
+  if narrow {
+    for marker in ["pub(all) ", "pub(open) "] {
+      if body.strip_prefix(marker) is Some(rest) {
+        return Some(head + "pub " + rest.to_owned())
+      }
+    }
+    return None
+  }
+  for marker in ["pub(all) ", "pub(open) ", "pub "] {
+    if body.strip_prefix(marker) is Some(rest) {
+      return Some(head + rest.to_owned())
+    }
+  }
+  None
 }
 
 ///|
@@ -907,6 +1274,8 @@ test "the report separates what was decided for free from what was judged" {
     ],
     ["acme/lib/late: timed out"],
     ["vendor/other"],
+    [],
+    None,
   )
   assert_true(page.contains("# Interface shrink — `acme/lib`"))
   assert_true(page.contains("## unreachable"))
@@ -918,6 +1287,57 @@ test "the report separates what was decided for free from what was judged" {
   // And code this module does not own is kept separate from its own.
   assert_true(page.contains("## Not ours"))
   assert_true(page.contains("`vendor/other`"))
+}
+
+///|
+test "an edit anchors on the declared name, and declines where it cannot" {
+  assert_eq(
+    declared_name("pub fn Codex::report(Self, structured~ : Bool) -> Json?"),
+    Some("Codex::report"),
+  )
+  assert_eq(
+    declared_name("pub async fn run(api_key~ : String) -> Unit"),
+    Some("run"),
+  )
+  assert_eq(declared_name("pub(all) enum Wide {"), Some("Wide"))
+  assert_eq(declared_name("pub struct UrlFilter {"), Some("UrlFilter"))
+  // A trait impl is matched by trait AND type: no single anchor, so the
+  // sweep must refuse rather than guess at a line.
+  assert_eq(declared_name("pub impl @debug.Debug for UrlFilter"), None)
+  assert_eq(declared_name("  content : Array[ContentBlock]"), None)
+}
+
+///|
+test "unexport drops exactly one marker, and nothing when there is none" {
+  assert_eq(
+    unexport("pub(all) enum Wide {", narrow=true),
+    Some("pub enum Wide {"),
+  )
+  assert_eq(unexport("pub(open) trait T {", narrow=true), Some("pub trait T {"))
+  // Narrowing has nothing to do to a plain `pub`: it is already narrow.
+  assert_eq(unexport("pub fn f() -> Unit {", narrow=true), None)
+  assert_eq(
+    unexport("pub fn f() -> Unit {", narrow=false),
+    Some("fn f() -> Unit {"),
+  )
+  assert_eq(unexport("pub(all) struct S {", narrow=false), Some("struct S {"))
+  assert_eq(unexport("fn already_private() -> Unit {", narrow=false), None)
+  // Indentation survives, so a nested declaration is not un-indented.
+  assert_eq(
+    unexport("  pub fn m() -> Unit {", narrow=false),
+    Some("  fn m() -> Unit {"),
+  )
+}
+
+///|
+test "a name matches a declaration, never a longer one that contains it" {
+  assert_true(declares("pub fn run() -> Unit {", "run"))
+  assert_true(declares("pub async fn run(x : Int) -> Unit {", "run"))
+  // The trap: `run_cli` and `runner` both contain `run`.
+  assert_false(declares("pub fn run_cli() -> Unit {", "run"))
+  assert_false(declares("pub fn runner() -> Unit {", "run"))
+  // A private declaration is not ours to shrink further.
+  assert_false(declares("fn run() -> Unit {", "run"))
 }
 
 ///|
