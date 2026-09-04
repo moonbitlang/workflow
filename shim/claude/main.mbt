@@ -55,7 +55,7 @@ async fn run() -> Unit {
       }
     (None, None) => None
   }
-  let state = Claude::new()
+  let state = Claude()
   let exit = @shim.run_cli(
     command=options.command,
     args=claude_args(request, options, schema),
