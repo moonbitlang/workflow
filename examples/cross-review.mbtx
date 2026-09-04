@@ -43,12 +43,48 @@ async fn main {
 let chunk_limit : Int = 20_000
 
 ///|
-let findings_schema : String =
-  #|{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["high","medium","low"]},"title":{"type":"string"},"claim":{"type":"string"},"evidence":{"type":"string"}},"required":["file","line","severity","title","claim","evidence"],"additionalProperties":false}}},"required":["findings"],"additionalProperties":false}
+let findings_schema : Json =
+  {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "severity": {
+              "type": "string",
+              "enum": ["high", "medium", "low"],
+            },
+            "title": { "type": "string" },
+            "claim": { "type": "string" },
+            "evidence": { "type": "string" },
+          },
+          "required": ["file", "line", "severity", "title", "claim", "evidence"],
+          "additionalProperties": false,
+        },
+      },
+    },
+    "required": ["findings"],
+    "additionalProperties": false,
+  }
 
 ///|
-let verdict_schema : String =
-  #|{"type":"object","properties":{"verdict":{"type":"string","enum":["confirmed","refuted","uncertain"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}
+let verdict_schema : Json =
+  {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": ["confirmed", "refuted", "uncertain"],
+      },
+      "reason": { "type": "string" },
+    },
+    "required": ["verdict", "reason"],
+    "additionalProperties": false,
+  }
 
 ///|
 struct Finding {
@@ -138,8 +174,6 @@ async fn review() -> Unit {
 
   // The schemas ride each call's envelope (`schema=`): the shims hand them
   // to their CLI's structured-output flag; explore is told the shape inline.
-  let findings_shape : Json = @json.parse(findings_schema)
-  let verdict_shape : Json = @json.parse(verdict_schema)
 
   // Routing: KIND picks the engine.
   let shims = "_build/native/debug/build/shim"
@@ -222,7 +256,7 @@ async fn review() -> Unit {
       kind=engine,
       label="review:\{engine}:\{index + 1}",
       max_steps=steps_for(engine, review=true),
-      schema=findings_shape,
+      schema=findings_schema,
     )
   })
   let findings : Array[Finding] = []
@@ -274,7 +308,7 @@ async fn review() -> Unit {
       kind=verifier,
       label="verify:\{finding.file}:\{finding.line}",
       max_steps=steps_for(verifier, review=false),
-      schema=verdict_shape,
+      schema=verdict_schema,
     )
   })
   let rows : Array[(Finding, String, String, String)] = []
