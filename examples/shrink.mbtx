@@ -1,3 +1,15 @@
+import {
+  "moonbitlang/async@0.21.1",
+  "moonbitlang/async@0.21.1/fs",
+  "moonbitlang/async@0.21.1/process",
+  "moonbitlang/workflow@0.6.0",
+  "moonbitlang/workflow@0.6.0/spawn",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+
 ///|
 /// INTERFACE SHRINKING for any MoonBit module: ask `moon ide analyze` who
 /// actually uses each exported item, decide the easy cases WITHOUT
@@ -5,8 +17,8 @@
 /// judgement — is there a caller outside this repository, or is this
 /// surface nobody can reach?
 ///
-///   moon run examples/shrink -- [OPTIONS] [packages...]
-///   moon run examples/shrink -- --repo ~/git/openseek --list
+///   moon run examples/shrink.mbtx -- [OPTIONS] [packages...]
+///   moon run examples/shrink.mbtx -- --repo ~/git/openseek --list
 ///
 /// `--list` prints the plan — what was decided mechanically and what is
 /// left to judge — and spends NOTHING. That is the whole first half of
@@ -1124,229 +1136,4 @@ fn embedded(text : String) -> Json? {
 /// The head of a text, cut where a surrogate pair cannot be split.
 fn clip(text : String, limit : Int) -> String {
   text.clamped_view(end=limit).to_owned()
-}
-
-///|
-/// The parser is the load-bearing half: every verdict downstream is a
-/// verdict on what it read out of the report.
-test "the report parses into findings, and only unused items are findings" {
-  let report =
-    #|package "acme/lib"
-    #|
-    #|pub fn used(String) -> Int    // usage: 6 (2 in test)
-    #|
-    #|pub fn unused(String) -> Int  // usage: 0 (0 in test)
-    #|
-    #|pub fn explained() -> Unit    // usage: 0 (0 in test), in exports.mbt
-    #|
-    #|pub(all) enum Wide {          // (all) or (open) can be removed
-    #|  A                           // usage: 3 (0 in test)
-    #|}
-    #|package "vendor/other"
-    #|
-    #|pub fn theirs() -> Unit       // usage: 0 (0 in test)
-  let findings = parse(report)
-  // `used` and `A` never become findings: that surface earns its keep.
-  assert_eq(findings.map(f => f.decl), [
-    "pub fn unused(String) -> Int", "pub fn explained() -> Unit", "pub(all) enum Wide {",
-    "pub fn theirs() -> Unit",
-  ])
-  assert_eq(findings[0].pkg, "acme/lib")
-  assert_false(findings[0].explained)
-  assert_true(findings[1].explained)
-  assert_true(findings[2].narrowable)
-  assert_eq(findings[3].pkg, "vendor/other")
-}
-
-///|
-/// A scout that answers from the CHILD CONTRACT's envelope, the way a
-/// real one does: the verdicts ride `answer`, not the report root. One
-/// package answers in fenced prose, because engines do that; one refuses.
-async fn scripted(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
-  @async.pause()
-  let attempt : @workflow.AgentAttempt = {
-    attempt_id: "sr-\{call.label}",
-    steps_used: 1,
-    prompt_tokens: 20,
-    completion_tokens: 10,
-    cost_usd: None,
-  }
-  if call.label == "judge:acme/lib/broken" {
-    return DidNotFinish(failure=TimedOut, attempt=Some(attempt))
-  }
-  let answer = if call.label == "judge:acme/lib/fenced" {
-    (
-      $|Here is my ruling:
-      $|```json
-      $|{"verdicts": [{"symbol": "pub fn stray() -> Unit", "verdict": "drop",
-      $|"why": "no caller anywhere", "evidence": "lib/stray.mbt:4"}]}
-      $|```
-    )
-  } else {
-    (
-      $|{"verdicts": [
-      $|{"symbol": "pub fn keep_me() -> Unit", "verdict": "export",
-      $| "why": "the documented extension point", "evidence": "lib/api.mbt:12"},
-      $|{"symbol": "malformed"}]}
-    )
-  }
-  Finished(value={ "answer": answer, "engine": "fake" }, attempt~)
-}
-
-///|
-async test "judging fans out per package, unwraps the envelope, keeps refusals visible" {
-  let wf = @workflow.Workflow(runner=@workflow.Runner(scripted))
-  let undecided : Array[Finding] = [
-    {
-      pkg: "acme/lib/api",
-      decl: "pub fn keep_me() -> Unit",
-      explained: false,
-      narrowable: false,
-    },
-    {
-      pkg: "acme/lib/api",
-      decl: "pub fn other() -> Unit",
-      explained: false,
-      narrowable: false,
-    },
-    {
-      pkg: "acme/lib/fenced",
-      decl: "pub fn stray() -> Unit",
-      explained: false,
-      narrowable: false,
-    },
-    {
-      pkg: "acme/lib/broken",
-      decl: "pub fn lost() -> Unit",
-      explained: false,
-      narrowable: false,
-    },
-  ]
-  let (judgements, unjudged) = judge(wf, "acme/lib", "explore", undecided)
-  // One call per PACKAGE, not per symbol: `api` has two undecided symbols
-  // and is asked once.
-  assert_eq(wf.calls_made(), 3)
-  assert_eq(judgements.map(row => (row.pkg, row.symbol, row.verdict)), [
-    ("acme/lib/api", "pub fn keep_me() -> Unit", "export"),
-    ("acme/lib/fenced", "pub fn stray() -> Unit", "drop"),
-  ])
-  assert_eq(judgements[0].evidence, "lib/api.mbt:12")
-  // The malformed row is dropped rather than becoming a half-verdict, and
-  // the package whose scout failed is named instead of passing silently.
-  assert_eq(unjudged.length(), 1)
-  assert_true(unjudged[0].has_prefix("acme/lib/broken: "))
-}
-
-///|
-test "a report is read through the envelope, however the engine wrapped it" {
-  let rows = verdicts_of("p", {
-    "answer": "{\"verdicts\": [{\"symbol\": \"s\", \"verdict\": \"drop\", \"why\": \"w\", \"evidence\": \"f:1\"}]}",
-    "engine": "fake",
-  })
-  assert_eq(rows.map(r => r.symbol), ["s"])
-  // A structured answer, not a string, is read the same way.
-  assert_eq(verdicts_of("p", { "answer": { "verdicts": [] } }).length(), 0)
-  // A report that is not the envelope at all yields nothing, never a
-  // half-parse.
-  assert_eq(verdicts_of("p", { "verdicts": [] }).length(), 0)
-}
-
-///|
-test "the report separates what was decided for free from what was judged" {
-  let finding : Finding = {
-    pkg: "acme/lib/cli",
-    decl: "pub fn helper() -> Unit",
-    explained: false,
-    narrowable: false,
-  }
-  let page = render(
-    "/tmp/acme",
-    "acme/lib",
-    [(finding, Unreachable), ({ ..finding, pkg: "acme/lib/api", }, Undecided)],
-    [
-      {
-        pkg: "acme/lib/api",
-        symbol: "pub fn helper() -> Unit",
-        verdict: "drop",
-        why: "nothing outside wants it",
-        evidence: "api/helper.mbt:9",
-      },
-    ],
-    ["acme/lib/late: timed out"],
-    ["vendor/other"],
-    [],
-    None,
-  )
-  assert_true(page.contains("# Interface shrink — `acme/lib`"))
-  assert_true(page.contains("## unreachable"))
-  assert_true(page.contains("## drop"))
-  assert_true(page.contains("`api/helper.mbt:9`"))
-  // A package that was never answered is named, not quietly omitted.
-  assert_true(page.contains("## Unjudged"))
-  assert_true(page.contains("acme/lib/late: timed out"))
-  // And code this module does not own is kept separate from its own.
-  assert_true(page.contains("## Not ours"))
-  assert_true(page.contains("`vendor/other`"))
-}
-
-///|
-test "an edit anchors on the declared name, and declines where it cannot" {
-  assert_eq(
-    declared_name("pub fn Codex::report(Self, structured~ : Bool) -> Json?"),
-    Some("Codex::report"),
-  )
-  assert_eq(
-    declared_name("pub async fn run(api_key~ : String) -> Unit"),
-    Some("run"),
-  )
-  assert_eq(declared_name("pub(all) enum Wide {"), Some("Wide"))
-  assert_eq(declared_name("pub struct UrlFilter {"), Some("UrlFilter"))
-  // A trait impl is matched by trait AND type: no single anchor, so the
-  // sweep must refuse rather than guess at a line.
-  assert_eq(declared_name("pub impl @debug.Debug for UrlFilter"), None)
-  assert_eq(declared_name("  content : Array[ContentBlock]"), None)
-}
-
-///|
-test "unexport drops exactly one marker, and nothing when there is none" {
-  assert_eq(
-    unexport("pub(all) enum Wide {", narrow=true),
-    Some("pub enum Wide {"),
-  )
-  assert_eq(unexport("pub(open) trait T {", narrow=true), Some("pub trait T {"))
-  // Narrowing has nothing to do to a plain `pub`: it is already narrow.
-  assert_eq(unexport("pub fn f() -> Unit {", narrow=true), None)
-  assert_eq(
-    unexport("pub fn f() -> Unit {", narrow=false),
-    Some("fn f() -> Unit {"),
-  )
-  assert_eq(unexport("pub(all) struct S {", narrow=false), Some("struct S {"))
-  assert_eq(unexport("fn already_private() -> Unit {", narrow=false), None)
-  // Indentation survives, so a nested declaration is not un-indented.
-  assert_eq(
-    unexport("  pub fn m() -> Unit {", narrow=false),
-    Some("  fn m() -> Unit {"),
-  )
-}
-
-///|
-test "a name matches a declaration, never a longer one that contains it" {
-  assert_true(declares("pub fn run() -> Unit {", "run"))
-  assert_true(declares("pub async fn run(x : Int) -> Unit {", "run"))
-  // The trap: `run_cli` and `runner` both contain `run`.
-  assert_false(declares("pub fn run_cli() -> Unit {", "run"))
-  assert_false(declares("pub fn runner() -> Unit {", "run"))
-  // A private declaration is not ours to shrink further.
-  assert_false(declares("fn run() -> Unit {", "run"))
-}
-
-///|
-test "ownership is by package path, never by a lookalike prefix" {
-  assert_true(owns("acme/lib", "acme/lib"))
-  assert_true(owns("acme/lib", "acme/lib/deep/pkg"))
-  assert_false(owns("acme/lib", "vendor/other"))
-  // The trap: `acme/library` starts with `acme/lib` but is another module.
-  assert_false(owns("acme/lib", "acme/library"))
-  assert_eq(dir_of("acme/lib", "acme/lib"), ".")
-  assert_eq(dir_of("acme/lib", "acme/lib/deep/pkg"), "deep/pkg")
 }

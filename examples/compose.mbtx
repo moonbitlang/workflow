@@ -1,7 +1,7 @@
 import {
   "moonbitlang/async@0.21.1",
-  "moonbitlang/workflow@0.5.0",
-  "moonbitlang/workflow@0.5.0/spawn",
+  "moonbitlang/workflow@0.6.0",
+  "moonbitlang/workflow@0.6.0/spawn",
   "moonbitlang/core/env",
 }
 
@@ -37,7 +37,7 @@ async fn compose() -> Unit {
       "claude" =>
         {
           command: "moonx",
-          args: ["\{shim}/claude@0.5.0", "--model", claude_model],
+          args: ["\{shim}/claude@0.6.0", "--model", claude_model],
           cwd: None,
           extra_env: None,
           deadline_ms: Some(180_000),
@@ -45,7 +45,7 @@ async fn compose() -> Unit {
       "codex" =>
         {
           command: "moonx",
-          args: ["\{shim}/codex@0.5.0", "--model", codex_model],
+          args: ["\{shim}/codex@0.6.0", "--model", codex_model],
           cwd: None,
           extra_env: None,
           deadline_ms: Some(180_000),
