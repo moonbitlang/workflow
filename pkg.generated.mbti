@@ -68,7 +68,7 @@ pub fn AgentCall::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecode
 pub fn AgentCall::not_equal(Self, Self) -> Bool
 pub fn AgentCall::to_json(Self) -> Json
 
-pub(all) enum AgentDisposition {
+pub enum AgentDisposition {
   Succeeded
   FailedAgent
   Interrupted
@@ -108,7 +108,7 @@ pub async fn Journal::load(String) -> Self
 pub fn Journal::prior(Self) -> Array[JournalEntry]
 pub fn Journal::recorded(Self) -> Array[JournalEntry]
 
-pub(all) struct JournalEntry {
+pub struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
   phase : String?
@@ -144,7 +144,7 @@ pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int
 
-pub(all) enum WorkflowEvent {
+pub enum WorkflowEvent {
   PhaseStarted(String)
   Log(String)
   AgentStarted(label~ : String, kind~ : String, phase~ : String?)

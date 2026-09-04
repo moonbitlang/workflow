@@ -10,7 +10,7 @@
 /// be omitted"), not a failure — the run goes on and usually completes.
 /// Only `turn.failed` and a top-level `error` event end a run without a
 /// report.
-pub struct Codex {
+struct Codex {
   mut steps : Int
   mut thread_id : String?
   mut last_message : String?
@@ -20,13 +20,13 @@ pub struct Codex {
 
 ///|
 /// A fresh observer.
-pub fn Codex::new() -> Codex {
+fn Codex::Codex() -> Codex {
   { steps: 0, thread_id: None, last_message: None, failure: None, notices: [], }
 }
 
 ///|
 /// Classify one stdout line and return the contract events it implies.
-pub fn Codex::observe(self : Codex, line : String) -> Array[Json] {
+fn Codex::observe(self : Codex, line : String) -> Array[Json] {
   let events : Array[Json] = []
   let trimmed = line.trim(chars="\r\n")
   if trimmed == "" {
@@ -94,7 +94,7 @@ pub fn Codex::observe(self : Codex, line : String) -> Array[Json] {
 /// The report, once an agent message arrived: the answer (parsed when
 /// `structured`, the text otherwise), the thread id for resume, and any
 /// notices the CLI raised along the way.
-pub fn Codex::report(self : Codex, structured~ : Bool) -> Json? {
+fn Codex::report(self : Codex, structured~ : Bool) -> Json? {
   guard self.last_message is Some(text) else { return None }
   let answer : Json = if structured {
     @json.parse(text) catch {
@@ -119,7 +119,7 @@ pub fn Codex::report(self : Codex, structured~ : Bool) -> Json? {
 /// prompt "Reply with exactly the single word: ok"), trimmed to the fields
 /// that matter. The two `error` items are the service-tier notice.
 test "notices are neither steps nor failures; the turn still reports" {
-  let state = Codex::new()
+  let state = Codex()
   let lines = [
     (
       #|{"type":"thread.started","thread_id":"t1"}
@@ -170,7 +170,7 @@ test "notices are neither steps nor failures; the turn still reports" {
 
 ///|
 test "commands and messages are steps; reasoning is not; the last message wins" {
-  let state = Codex::new()
+  let state = Codex()
   let lines = [
     (
       #|{"type":"item.completed","item":{"id":"i1","type":"reasoning","text":"hmm"}}
@@ -202,7 +202,7 @@ test "commands and messages are steps; reasoning is not; the last message wins" 
 
 ///|
 test "a structured answer is parsed; unparseable text stays text" {
-  let state = Codex::new()
+  let state = Codex()
   let _ = state.observe(
     (
       #|{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"real\"}"}}
@@ -212,7 +212,7 @@ test "a structured answer is parsed; unparseable text stays text" {
     state.report(structured=true),
     Some({ "answer": { "verdict": "real" }, "engine": "codex" }),
   )
-  let prose = Codex::new()
+  let prose = Codex()
   let _ = prose.observe(
     (
       #|{"type":"item.completed","item":{"type":"agent_message","text":"no json here"}}
@@ -226,7 +226,7 @@ test "a structured answer is parsed; unparseable text stays text" {
 
 ///|
 test "turn and stream errors are failures; the first one wins" {
-  let state = Codex::new()
+  let state = Codex()
   let _ = state.observe(
     (
       #|{"type":"turn.failed","error":{"message":"quota"}}

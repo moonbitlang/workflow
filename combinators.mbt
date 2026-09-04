@@ -58,27 +58,6 @@ pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
 }
 
 ///|
-/// Is this failure worth ANOTHER launch? The default `retry` policy, and
-/// the vocabulary a caller narrows rather than rebuilds:
-///
-/// - an agent that produced no usable report is retriable — a model that
-///   timed out, blew its step ceiling, or answered off-schema may well
-///   answer on the next attempt;
-/// - `Skipped` is NOT: a human declined this call, and retrying overrides
-///   that decision exactly as replaying it would (the journal keeps a
-///   recorded skip standing for the same reason);
-/// - `CallBudgetExhausted` and `QuorumNotReached` are not: the allowance
-///   is already gone, and a quorum is the caller's verdict over a whole
-///   fan-out, not one call's misfortune.
-pub fn worth_retrying(error : WorkflowError) -> Bool {
-  match error {
-    AgentFailed(failure=Skipped, ..) => false
-    AgentFailed(..) => true
-    CallBudgetExhausted(..) | QuorumNotReached(..) => false
-  }
-}
-
-///|
 /// Re-run one agent step while it keeps failing retriably: `max_retry`
 /// extra attempts at most, spaced by `backoff`, raising the LAST attempt's
 /// error when the budget runs out. Wraps a RAISING step (`agent`,
