@@ -2,6 +2,7 @@
 package "moonbitlang/workflow"
 
 import {
+  "moonbitlang/async",
   "moonbitlang/async/semaphore",
   "moonbitlang/core/json",
 }
@@ -18,6 +19,10 @@ pub async fn[T] parallel(Array[async () -> Result[T, WorkflowError]]) -> Array[R
 pub async fn[T] parallel_all(Array[async () -> T]) -> Array[T]
 
 pub fn[T] quorum(Array[Result[T, WorkflowError]], need~ : Int) -> Array[T] raise WorkflowError
+
+pub async fn[T] retry(async () -> T, max_retry? : Int, backoff? : @async.RetryMethod, retriable? : (WorkflowError) -> Bool) -> T
+
+pub fn worth_retrying(WorkflowError) -> Bool
 
 // Errors
 pub suberror JournalCorrupted {
