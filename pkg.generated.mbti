@@ -100,9 +100,7 @@ pub fn AgentOutcome::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDec
 pub fn AgentOutcome::not_equal(Self, Self) -> Bool
 pub fn AgentOutcome::to_json(Self) -> Json
 
-pub struct Journal {
-  // private fields
-}
+type Journal
 pub fn Journal::in_memory(prior? : Array[JournalEntry]) -> Self
 pub async fn Journal::load(String) -> Self
 pub fn Journal::prior(Self) -> Array[JournalEntry]
@@ -128,9 +126,7 @@ pub(all) enum ReplayDecision {
   Rerun
 }
 
-pub struct Runner {
-  // private fields
-}
+type Runner
 pub fn Runner::Runner(async (AgentCall) -> AgentOutcome, validate_replay? : async (AgentCall, AgentOutcome) -> ReplayDecision) -> Self
 pub async fn Runner::invoke(Self, AgentCall) -> AgentOutcome
 
