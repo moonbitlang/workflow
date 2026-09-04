@@ -35,6 +35,10 @@ import {
 /// journal (`--journal`, default doc-audit.jsonl; `moon run viz --
 /// doc-audit.jsonl` draws it). The repository path is the journal's
 /// replay scope, so one journal can never serve another repo's answers.
+/// A slice that came back with nothing is a RECORDED FAILURE, and replay
+/// re-attempts those while serving the answered ones for free — so with
+/// an engine that sometimes narrates instead of answering, running the
+/// same command twice is how a sweep converges.
 /// Output: doc-audit.md (`--out`).
 ///
 /// Engines (`--engine`, default `explore`): `claude` and `codex` run
@@ -613,16 +617,48 @@ fn structured(report : Json) -> Json? {
 }
 
 ///|
-/// The outermost `{...}` of a run of prose, when it parses. An engine
-/// that wrapped the object it was asked for in a paragraph of narration
-/// still answered the question.
+/// The FIRST BALANCED `{...}` of a run of prose, when it parses. An
+/// engine that answered and then explained itself still answered — but
+/// only a scan to the MATCHING brace finds that answer: taking everything
+/// up to the last `}` in the text swallows the explanation with it and
+/// parses as nothing, which is how a clean `{"findings": []}` came back
+/// from `moonbitlang/core` looking like a failure. Strings and their
+/// escapes are respected, so a brace inside a quoted claim cannot
+/// unbalance the scan.
 fn embedded(text : String) -> Json? {
   guard text.find("{") is Some(start) else { return None }
-  guard text.rev_find("}") is Some(stop) else { return None }
-  guard start < stop else { return None }
-  Some(@json.parse(text[start:stop + 1].to_owned())) catch {
-    _ => None
+  let object = StringBuilder()
+  let mut depth = 0
+  let mut quoted = false
+  let mut escaped = false
+  for ch in text[start:] {
+    object.write_char(ch)
+    if escaped {
+      escaped = false
+    } else if quoted {
+      match ch {
+        '\\' => escaped = true
+        '"' => quoted = false
+        _ => ()
+      }
+    } else {
+      match ch {
+        '"' => quoted = true
+        '{' => depth += 1
+        '}' => {
+          depth -= 1
+          if depth == 0 {
+            let parsed = Some(@json.parse(object.to_string())) catch {
+              _ => None
+            }
+            return parsed
+          }
+        }
+        _ => ()
+      }
+    }
   }
+  None
 }
 
 ///|
@@ -778,6 +814,10 @@ async fn write_report(
     out <+
       $|## Not audited
       $|
+      $|Re-running the same command re-attempts exactly these: the journal
+      $|replays every answered slice for free and only a recorded failure
+      $|is tried again.
+      $|
       $|
     for failure in audit.failures {
       out <+
@@ -818,7 +858,9 @@ async fn write_report(
     println("\{audit.unverified.length()} finding(s) cited no file:line and were quarantined")
   }
   if !audit.failures.is_empty() {
-    println("\{audit.failures.length()} slice(s) were not audited")
+    println(
+      "\{audit.failures.length()} slice(s) were not audited — re-run to re-attempt just those",
+    )
   }
   println(
     "\{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
