@@ -372,17 +372,16 @@ fn wall_clock_ms() -> Int64 {
 
 ///|
 /// The one-line display label a call gets when the caller gave none: the
-/// prompt's first line, capped at 48 chars.
+/// prompt's first line, capped, with an ellipsis marking whatever was
+/// cut. The cut goes through `clamped_view`, so a prompt whose 48th unit
+/// falls inside a surrogate pair drops the whole pair rather than half of
+/// one: a label is display text and must stay well-formed text.
 fn brief(text : String) -> String {
-  let out = StringBuilder()
-  let mut count = 0
-  for c in text {
-    if c == '\n' || count >= 48 {
-      out.write_string("…")
-      break
-    }
-    out.write_char(c)
-    count += 1
+  let line = text.clamped_view(end=text.find("\n").unwrap_or(text.length()))
+  let head = line.clamped_view(end=48)
+  if head.length() < text.length() {
+    "\{head}…"
+  } else {
+    head.to_owned()
   }
-  out.to_string()
 }

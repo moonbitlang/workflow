@@ -104,15 +104,8 @@ fn answer_of(report : Json) -> String {
 }
 
 ///|
+/// The head of a text, cut where a surrogate pair cannot be split: half
+/// an emoji is neither readable output nor a prompt an engine can use.
 fn clip(text : String, limit : Int) -> String {
-  let out = StringBuilder()
-  let mut count = 0
-  for ch in text {
-    if count >= limit {
-      break
-    }
-    out.write_char(ch)
-    count += 1
-  }
-  out.to_string()
+  text.clamped_view(end=limit).to_owned()
 }

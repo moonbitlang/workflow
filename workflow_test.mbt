@@ -255,6 +255,22 @@ async test "event brackets balance on success, failure, and engine error" {
 }
 
 ///|
+async test "the default label is the prompt's first line, cut well-formed" {
+  let labels : Array[String] = []
+  let wf = scripted_workflow(on_event=event => {
+    if event is @workflow.AgentStarted(label~, ..) {
+      labels.push(label)
+    }
+  })
+  let _ = wf.agent("ask one thing\nthen explain yourself", kind="scout")
+  // 47 units of prose and then an astral emoji: the cut at 48 lands inside
+  // that surrogate pair, so the whole pair goes rather than half of it.
+  let _ = wf.agent("x".repeat(47) + "🚀 and more", kind="scout")
+  let _ = wf.agent("short", kind="scout")
+  assert_eq(labels, ["ask one thing…", "x".repeat(47) + "…", "short"])
+}
+
+///|
 async test "outcomes and failures survive the JSON round trip" {
   let attempt : @workflow.AgentAttempt = {
     attempt_id: "sr-1",

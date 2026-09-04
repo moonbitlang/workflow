@@ -120,9 +120,14 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
     for i in 0..<j {
       let value = values[i]
       if value.length() > 60 {
+        // The encoder wrote the delimiters; strip exactly those back off,
+        // keeping every escape it put inside them.
         let quoted = Json::string(clip(value, 50)).stringify()
-        let probe = quoted[1:quoted.length() - 1]
-        if input.contains(probe.to_owned()) {
+        guard quoted.strip_prefix("\"") is Some(open) &&
+          open.strip_suffix("\"") is Some(probe) else {
+          continue
+        }
+        if input.contains(probe) {
           edges.push((i, j))
         }
       }
@@ -329,17 +334,12 @@ fn answer_of_value(value : Json) -> String {
 }
 
 ///|
+/// The head of a report, for a display cell or a dataflow probe.
+/// `clamped_view` never cuts a surrogate pair in half, so the result is
+/// always well-formed text — half an emoji would be neither renderable
+/// HTML nor a probe that could match anything.
 fn clip(text : String, limit : Int) -> String {
-  let out = StringBuilder()
-  let mut count = 0
-  for ch in text {
-    if count >= limit {
-      break
-    }
-    out.write_char(ch)
-    count += 1
-  }
-  out.to_string()
+  text.clamped_view(end=limit).to_owned()
 }
 
 ///|
