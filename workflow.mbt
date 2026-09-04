@@ -36,7 +36,12 @@ pub(all) enum WorkflowEvent {
 /// launch passes through, the launch allowance, and the running token
 /// account. Combinators (`parallel`, `fan_out`, policies) are free
 /// functions — this context only owns what must be shared state.
-pub struct Workflow {
+///
+/// ABSTRACT, like `Runner` and `Journal`: the layout is not the contract.
+/// Every field a caller has business reading has a reader that says what
+/// the number MEANS — `calls_made`, `calls_replayed`, `tokens_spent`,
+/// `cost_usd` — and the rest are the bookkeeping those readers protect.
+struct Workflow {
   runner : Runner
   slots : @async.Semaphore
   on_event : (WorkflowEvent) -> Unit
