@@ -218,6 +218,111 @@ async test "fan_out gives every item its own result slot" {
 }
 
 ///|
+/// A kind whose input is NOT the explore shape — the `worker` slice of
+/// the child contract, near enough. `agent` cannot express this; it is
+/// what `agent_call` is for, so the fake answers from the input's own
+/// fields rather than from a `query`.
+async fn worker_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
+  @async.pause()
+  guard call.input is { "task": String(task), "worker_root": String(root), .. } else {
+    return DidNotFinish(
+      failure=@workflow.AgentFailure::Failed("not a worker input"),
+      attempt=None,
+    )
+  }
+  Finished(
+    value={ "status": "done", "task": task, "root": root },
+    attempt=attempt_for(call),
+  )
+}
+
+///|
+async test "agent_call carries an engine's own input shape" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(worker_runner))
+  let report = wf.agent_call(
+    kind="worker",
+    input={ "task": "rename the seam", "worker_root": "/w/1" },
+    label="worker:1",
+  )
+  assert_eq(report, {
+    "status": "done",
+    "task": "rename the seam",
+    "root": "/w/1",
+  })
+  assert_eq(wf.calls_made(), 1)
+  // The same call through `agent` would have wrapped the prompt in
+  // `{"query": …}`, which this engine does not accept.
+  guard wf.try_agent("rename the seam", kind="worker")
+    is Err(@workflow.AgentFailed(failure=Failed("not a worker input"), ..)) else {
+    fail("expected the explore shape to be refused by a worker kind")
+  }
+}
+
+///|
+async test "agent_call's replay identity is the input the caller gave" {
+  let journal = @workflow.Journal::in_memory()
+  let first = @workflow.Workflow(
+    runner=@workflow.Runner(worker_runner),
+    journal~,
+  )
+  let input : Json = { "task": "rename the seam", "worker_root": "/w/1" }
+  let report = first.agent_call(kind="worker", input~, label="worker:1")
+  assert_eq(first.calls_made(), 1)
+
+  // Next generation: the SAME input replays for free, and the label is
+  // no part of that identity — this one is deliberately different.
+  let next = @workflow.Workflow(
+    runner=@workflow.Runner(worker_runner),
+    journal=@workflow.Journal::in_memory(prior=journal.recorded()),
+  )
+  assert_eq(
+    next.agent_call(kind="worker", input~, label="worker:renamed"),
+    report,
+  )
+  assert_eq(next.calls_made(), 0)
+  assert_eq(next.calls_replayed(), 1)
+  // A DIFFERENT input is different work, so it runs live.
+  let _ = next.agent_call(
+    kind="worker",
+    input={ "task": "rename the seam", "worker_root": "/w/2" },
+    label="worker:2",
+  )
+  assert_eq(next.calls_made(), 1)
+}
+
+///|
+async test "attempt folds any raising step, agent_call included" {
+  let wf = scripted_workflow()
+  // The fold `try_agent` gives `agent`, over the entry point that has no
+  // `try_` twin of its own.
+  let refused = @workflow.attempt(() => {
+    wf.agent_call(
+      kind="scout",
+      input={ "query": "fail:worker" },
+      label="worker:1",
+    )
+  })
+  guard refused is Err(@workflow.AgentFailed(label="worker:1", ..)) else {
+    fail("expected the agent failure to land in the Err slot")
+  }
+  // Successes pass through, and engine bugs still propagate.
+  guard @workflow.attempt(() => wf.agent("ok", kind="scout")) is Ok(_) else {
+    fail("expected the success to pass through")
+  }
+  let mut engine_error = false
+  let _ : Result[Json, @workflow.WorkflowError] = @workflow.attempt(() => {
+    wf.agent("boom:b", kind="scout")
+  }) catch {
+    EngineBoom => {
+      engine_error = true
+      Ok(Json::null())
+    }
+    _ => fail("expected the engine bug to propagate as itself")
+  }
+  assert_true(engine_error)
+}
+
+///|
 /// Fails its first `fail_first` launches and then succeeds, reporting how
 /// many launches it took: the transient shape `retry` exists for.
 fn flaky_runner(fail_first : Int) -> @workflow.Runner {

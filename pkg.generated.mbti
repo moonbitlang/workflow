@@ -9,6 +9,8 @@ import {
 // Values
 pub fn[T] all_ok(Array[Result[T, WorkflowError]]) -> Array[T] raise WorkflowError
 
+pub async fn[T] attempt(async () -> T) -> Result[T, WorkflowError]
+
 pub fn[T] collect_ok(Array[Result[T, WorkflowError]], min_ok? : Int) -> Array[T] raise WorkflowError
 
 pub async fn[A, B] fan_out(Array[A], async (A) -> Result[B, WorkflowError]) -> Array[Result[B, WorkflowError]]

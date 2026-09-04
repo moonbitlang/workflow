@@ -36,6 +36,29 @@ pub async fn[A, B] fan_out(
 }
 
 ///|
+/// Fold the typed error channel into the return value: a workflow-level
+/// failure lands in `Err`, while cancellation and engine bugs still
+/// propagate — the distinction the whole failure model rests on.
+///
+/// `try_agent` is this move over `agent`, and `attempt` is the same move
+/// over ANY raising step: `agent_call` carrying an engine's own input
+/// shape, an `agent_as` whose decode may reject, a `retry` around either,
+/// or a whole multi-stage per-item pipeline. It exists so the shape a
+/// caller wants never has to be a method — one free function covers every
+/// entry point instead of a `try_` twin for each.
+///
+/// The right shape at fan-out call sites, where one lost agent must not
+/// poison its siblings.
+pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
+  Ok(step()) catch {
+    AgentFailed(..) as failure => Err(failure)
+    CallBudgetExhausted(..) as failure => Err(failure)
+    QuorumNotReached(..) as failure => Err(failure)
+    error => raise error
+  }
+}
+
+///|
 /// Is this failure worth ANOTHER launch? The default `retry` policy, and
 /// the vocabulary a caller narrows rather than rebuilds:
 ///

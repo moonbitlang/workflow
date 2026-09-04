@@ -127,6 +127,47 @@ async test "retry until the engine actually answers" {
 }
 ```
 
+`agent` builds the explore input shape — `{query, hints?}` — because that
+is what most calls are. A kind with its own shape (the contract's
+`review` and `worker`) goes through `agent_call`, which sends the exact
+JSON it is given; that input IS the replay identity, so an engine
+encoding its own kinds gets replay for free. `attempt` folds the typed
+error channel around ANY raising step, so those calls reach a fan-out
+without a `try_` twin per entry point:
+
+```mbt check
+///|
+async fn slice_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
+  @async.pause()
+  guard call.input is { "task": String(task), .. } else {
+    return DidNotFinish(failure=Failed("not a worker input"), attempt=None)
+  }
+  Finished(value={ "status": "done", "task": task }, attempt={
+    attempt_id: "sr-\{call.label}",
+    steps_used: 1,
+    prompt_tokens: 10,
+    completion_tokens: 5,
+    cost_usd: None,
+  })
+}
+
+///|
+async test "fan a worker kind out through its own input shape" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(slice_runner))
+  let slices = ["rename the seam", "widen the ceiling"]
+  let done = @workflow.fan_out(slices, task => {
+    @workflow.attempt(() => {
+      wf.agent_call(
+        kind="worker",
+        input={ "task": task, "worker_root": "/w" },
+        label="worker:\{task}",
+      )
+    })
+  })
+  assert_eq(@workflow.all_ok(done).length(), 2)
+}
+```
+
 When the script wants a TYPE rather than JSON, decode at the boundary:
 `agent_as` runs the same call and turns a report that does not satisfy
 the type into a typed `AgentFailed(Failed("report rejected: …"))` carrying
