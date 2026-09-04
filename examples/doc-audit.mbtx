@@ -1,18 +1,57 @@
 import {
   "moonbitlang/async@0.21.1",
+  "moonbitlang/async@0.21.1/fs",
+  "moonbitlang/async@0.21.1/process",
   "moonbitlang/workflow@0.4.1",
   "moonbitlang/workflow@0.4.1/spawn",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
 }
 
 ///|
-/// Documentation drift audit: one scout per package README, each
-/// comparing the doc's CLAIMS against the code it describes, reduced to
-/// an actionable drift report. The practical pre-release sweep —
-/// journaled, so iterating on the report format below re-runs nothing.
+/// DOCUMENTATION DRIFT AUDIT for any repository: discover the docs git
+/// tracks, slice each one so no call carries an unbounded prompt, and put
+/// one scout on every slice with the CLAIMS in front of it and the code
+/// it describes one read away. Only a claim the scout can DISPROVE with a
+/// `file:line` it has read reaches the report — the discipline that keeps
+/// a doc audit from becoming a list of opinions.
 ///
-///   moon run examples/doc-audit.mbtx     (from the repo root)
+///   moon run examples/doc-audit.mbtx -- [OPTIONS] [paths...]
+///   moon run examples/doc-audit.mbtx -- --repo ~/git/core --list
+///   moon run examples/doc-audit.mbtx -- --repo ~/git/core immut/
 ///
-/// Needs `openseek` on PATH and a provider key in the environment.
+/// `--repo` is both where the docs are found and the working directory
+/// every scout runs in, so the audit is not about the repository it ships
+/// in. Positional arguments are git pathspecs that narrow the sweep.
+/// `--list` prints the plan — documents, slices, characters — and spends
+/// nothing. `-h` renders the rest.
+///
+/// The doc text rides the prompt, so replay identity is a function of the
+/// document's CONTENT: rerun after editing one README and only that
+/// README's slices are re-audited, everything else replays from the
+/// journal (`--journal`, default doc-audit.jsonl; `moon run viz --
+/// doc-audit.jsonl` draws it). The repository path is the journal's
+/// replay scope, so one journal can never serve another repo's answers.
+/// A slice that came back with nothing is a RECORDED FAILURE, and replay
+/// re-attempts those while serving the answered ones for free — so with
+/// an engine that sometimes narrates instead of answering, running the
+/// same command twice is how a sweep converges.
+/// Output: doc-audit.md (`--out`).
+///
+/// Within one run, a slice that failed or answered with no readable
+/// object earns ONE retry at double the step ceiling. The retry carries a
+/// different ceiling, so it is its own journal entry and a resumed run
+/// replays whichever attempt actually answered.
+///
+/// Engines (`--engine`, default `explore`): `claude` and `codex` run
+/// through this module's shims (`just shims` first), anything else is an
+/// `openseek subrun <kind>` scout. `--model` overrides the chosen
+/// engine's default; without it, DOC_AUDIT_CLAUDE (claude-sonnet-5),
+/// DOC_AUDIT_CODEX (gpt-5.3-codex-spark), DOC_AUDIT_DEEPSEEK
+/// (deepseek-v4-flash). `--max-calls` caps live launches for the run.
 async fn main {
   audit() catch {
     error => println("workflow failed: \{error}")
@@ -20,54 +59,950 @@ async fn main {
 }
 
 ///|
+/// The most characters of documentation one audit call carries. A larger
+/// document is cut at its `##` headings and audited in slices, so a
+/// 40 KB README costs several bounded calls instead of one call whose
+/// prompt crowds out the code the scout came to read.
+let slice_limit : Int = 12_000
+
+///|
+let audit_schema : Json =
+  {
+    "type": "object",
+    "properties": {
+      "claims_checked": { "type": "integer" },
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "quote": { "type": "string" },
+            "kind": {
+              "type": "string",
+              "enum": ["wrong", "stale", "incomplete"],
+            },
+            "severity": {
+              "type": "string",
+              "enum": ["high", "medium", "low"],
+            },
+            "why": { "type": "string" },
+            "evidence": { "type": "string" },
+            "fix": { "type": "string" },
+          },
+          "required": [
+            "quote", "kind", "severity", "why", "evidence", "fix",
+          ],
+          "additionalProperties": false,
+        },
+      },
+    },
+    "required": ["claims_checked", "findings"],
+    "additionalProperties": false,
+  }
+
+///|
+/// One bounded piece of one document: exactly what a single audit call
+/// reads, and the unit the journal replays.
+struct Slice {
+  path : String
+  index : Int
+  of : Int
+  text : String
+}
+
+///|
+/// One claim the audit says the code does not support.
+struct Drift {
+  path : String
+  quote : String
+  kind : String
+  severity : String
+  why : String
+  evidence : String
+  fix : String
+}
+
+///|
+/// Everything the report is written from.
+struct Audit {
+  repo : String
+  head : String
+  engine : String
+  docs : Array[String]
+  slices : Int
+  claims : Int
+  drifts : Array[Drift]
+  /// Findings whose evidence cites no `file:line`. Kept, but quarantined:
+  /// they are the shape a hallucinated finding takes.
+  unverified : Array[Drift]
+  failures : Array[Unaudited]
+}
+
+///|
+/// A slice the audit never got an answer for, and the document it belongs
+/// to — silence about a document is not the same as a clean bill, so the
+/// report must never call it one.
+struct Unaudited {
+  path : String
+  slice : String
+  reason : String
+}
+
+///|
 async fn audit() -> Unit {
-  let wf = @workflow.Workflow(
-    runner=@spawn.contract_runner(launch=_ => {
-      command: "openseek",
-      args: ["subrun", "explore"],
-      cwd: None,
-      extra_env: None,
-      deadline_ms: None,
-    }),
-    journal=@workflow.Journal::load("doc-audit.jsonl"),
-    max_concurrent=4,
+  let spec = @argparse.Command(
+    "doc-audit",
+    about="Audit a repository's documentation against the code it describes.",
+    options=[
+      @argparse.OptionArg(
+        "repo",
+        short='C',
+        long="repo",
+        about="the repository to audit",
+        default_values=["."],
+      ),
+      @argparse.OptionArg(
+        "engine",
+        long="engine",
+        about="engine kind: explore, claude, or codex",
+        env="DOC_AUDIT_ENGINE",
+        default_values=["explore"],
+      ),
+      @argparse.OptionArg(
+        "journal",
+        long="journal",
+        about="journal file, for replay and resume",
+        default_values=["doc-audit.jsonl"],
+      ),
+      @argparse.OptionArg(
+        "out",
+        short='o',
+        long="out",
+        about="where to write the report",
+        default_values=["doc-audit.md"],
+      ),
+      @argparse.OptionArg(
+        "max-docs",
+        long="max-docs",
+        about="audit at most this many documents",
+        default_values=["40"],
+      ),
+      @argparse.OptionArg(
+        "jobs",
+        short='j',
+        long="jobs",
+        about="audits to run at once",
+        default_values=["4"],
+      ),
+      @argparse.OptionArg(
+        "model",
+        long="model",
+        about="model name for the chosen engine, overriding its default",
+      ),
+      @argparse.OptionArg(
+        "max-calls",
+        long="max-calls",
+        about="stop launching after this many live calls",
+      ),
+    ],
+    flags=[
+      @argparse.FlagArg(
+        "list",
+        long="list",
+        about="print the documents that would be audited, then stop",
+      ),
+    ],
+    positionals=[
+      @argparse.PositionArg(
+        "paths",
+        about="git pathspecs, relative to the repository, to narrow the sweep",
+        num_args=@argparse.ValueRange(lower=0),
+      ),
+    ],
   )
-  wf.phase("Audit")
-  let targets = [
-    ("readme", "README.mbt.md"),
-    ("spawn", "spawn/contract.mbt"),
-    ("child-contract", "docs/child-contract.md"),
-    ("viz", "viz/main.mbt"),
-  ]
-  let results = @workflow.fan_out(targets, target => {
-    let (name, doc) = target
-    wf.try_agent(
-      "Audit \{doc} (its prose claims, including doc comments if it is source) against the CODE it describes. Report the single most significant DRIFT — a claim that is stale, wrong, or importantly incomplete — as one sentence starting with DRIFT:, plus file:line evidence. If everything checks out, say NO DRIFT and cite the claim you found hardest to verify.",
-      kind="explore",
-      hints=doc,
-      label="audit:\{name}",
-      max_steps=20,
-    )
-  })
-  // ---- Reduce: the drift report ----
-  let mut drifts = 0
-  for index, result in results {
-    let (name, _) = targets[index]
-    match result {
-      Ok(report) => {
-        let answer = match report {
-          { "answer": String(text), .. } => text
-          other => other.stringify()
-        }
-        if answer.contains("DRIFT:") && !answer.contains("NO DRIFT") {
-          drifts += 1
-        }
-        println("── \{name}:\n\{answer}\n")
-      }
-      Err(error) => println("── \{name}: AUDIT FAILED — \{error}\n")
+  // Parse failures and `--help` carry their own contextual help text.
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
     }
   }
+  let engine = value(args, "engine", "explore")
+  let max_docs = count(args, "max-docs", 40)
+  let jobs = count(args, "jobs", 4)
+  // `--model` overrides whichever engine's default is chosen; `--max-calls`
+  // is the framework's own launch allowance, so a ceiling stops the sweep
+  // rather than merely reporting what it already spent.
+  let model = match args.values.get("model") {
+    Some([value, ..]) => Some(value.trim().to_owned())
+    _ => None
+  }
+  let max_calls = match args.values.get("max-calls") {
+    Some([value, ..]) => Some(@string.parse_int(value)) catch { _ => None }
+    _ => None
+  }
+  let paths = args.values.get("paths").unwrap_or([])
+  // An absolute repository: it becomes every scout's working directory
+  // and the journal's replay scope, and neither may drift with ours.
+  let repo = @fs.realpath(value(args, "repo", ".")) catch {
+    error => {
+      println("cannot resolve --repo: \{error}")
+      return
+    }
+  }
+  let docs = discover(repo, paths) catch {
+    error => {
+      println("cannot list documents in \{repo}: \{error}")
+      return
+    }
+  }
+  guard !docs.is_empty() else {
+    println("no tracked documentation found in \{repo}")
+    return
+  }
+  let audited = if docs.length() > max_docs {
+    println(
+      "\{docs.length()} documents found; auditing the first \{max_docs} (raise --max-docs)",
+    )
+    docs[:max_docs].to_owned()
+  } else {
+    docs
+  }
+
+  // ---- Read and slice: every call's prompt is bounded before we spend ----
+  let slices : Array[Slice] = []
+  let unreadable : Array[Unaudited] = []
+  for path in audited {
+    let text = read(repo + "/" + path) catch {
+      error => {
+        unreadable.push({ path, slice: path, reason: "unreadable: \{error}" })
+        continue
+      }
+    }
+    if text.trim().is_empty() {
+      continue
+    }
+    let pieces = pack(sections(text))
+    for index, piece in pieces {
+      slices.push({ path, index, of: pieces.length(), text: piece })
+    }
+  }
+  guard !slices.is_empty() else {
+    println("nothing to audit: every document found was empty or unreadable")
+    return
+  }
+  let head = git(repo, ["rev-parse", "--short", "HEAD"]).trim().to_owned() catch {
+    _ => "?"
+  }
+  if args.flags.get("list") is Some(true) {
+    println("\{audited.length()} document(s), \{slices.length()} slice(s) in \{repo} @ \{head}:")
+    let mut current = ""
+    for slice in slices {
+      if slice.path != current {
+        current = slice.path
+        println("  \{slice.path} — \{slice.of} slice(s)")
+      }
+      println("      #\{slice.index + 1}  \{slice.text.length()} chars")
+    }
+    for failure in unreadable {
+      println("  \{failure.path} — \{failure.reason}")
+    }
+    return
+  }
   println(
-    "\{drifts}/\{targets.length()} docs drifted · \{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
+    "auditing \{audited.length()} document(s) in \{slices.length()} slice(s) — \{repo} @ \{head}, engine \{engine}",
   )
+
+  // ---- Routing: KIND picks the engine, and every scout runs in the repo ----
+  let shims = "_build/native/debug/build/shim"
+  let claude_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_CLAUDE").unwrap_or("claude-sonnet-5"),
+  )
+  let codex_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_CODEX").unwrap_or("gpt-5.3-codex-spark"),
+  )
+  let deepseek_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_DEEPSEEK").unwrap_or("deepseek-v4-flash"),
+  )
+  let wf = @workflow.Workflow(
+    runner=@spawn.contract_runner(launch=call => {
+      match call.kind {
+        "claude" =>
+          {
+            command: "\{shims}/claude/claude.exe",
+            args: ["--model", claude_model, "--cwd", repo],
+            cwd: Some(repo),
+            extra_env: None,
+            deadline_ms: Some(600_000),
+          }
+        "codex" =>
+          {
+            command: "\{shims}/codex/codex.exe",
+            args: ["--model", codex_model, "--cwd", repo],
+            cwd: Some(repo),
+            extra_env: None,
+            deadline_ms: Some(600_000),
+          }
+        kind => {
+          // openseek reads kind and the step ceiling from ARGV
+          // (docs/child-contract.md §7.1): mirror them.
+          let argv = ["subrun", kind, "--model", deepseek_model]
+          if call.max_steps is Some(steps) {
+            argv.push("--max-steps")
+            argv.push("\{steps}")
+          }
+          {
+            command: "openseek",
+            args: argv,
+            cwd: Some(repo),
+            extra_env: None,
+            deadline_ms: Some(600_000),
+          }
+        }
+      }
+    }),
+    journal=@workflow.Journal::load(value(args, "journal", "doc-audit.jsonl")),
+    // The repository IS the world these answers describe, so it scopes
+    // replay: one journal can never serve another repo's audit.
+    replay_scope=repo,
+    max_concurrent=jobs,
+    max_calls?=max_calls,
+    on_event=event => match event {
+      @workflow.PhaseStarted(title) => println("━━ \{title}")
+      @workflow.AgentStarted(label~, ..) => println("  ▶ \{label}")
+      @workflow.AgentReplayed(label~, ..) => println("  ↺ \{label} (replayed)")
+      _ => ()
+    },
+  )
+
+  // ---- One scout per slice, claims in hand, code one read away ----
+  wf.phase("Audit")
+  let reports = @workflow.fan_out(slices, slice => {
+    let prompt = audit_prompt(slice, engine)
+    let label = "audit:\{slice.path}#\{slice.index + 1}"
+    let first = wf.try_agent(
+      prompt,
+      kind=engine,
+      label~,
+      max_steps=steps_for(engine),
+      schema=audit_schema,
+    )
+    // One retry, at double the ceiling. A slice that ran out of steps and
+    // a slice that answered in prose carrying no object are the same
+    // thing to the report — nothing — and the second pass usually lands.
+    // Its ceiling differs, so it is its own journal entry: a resumed run
+    // replays whichever attempt actually answered.
+    if first is Ok(report) && structured(report) is Some(_) {
+      first
+    } else {
+      let second = wf.try_agent(
+        prompt,
+        kind=engine,
+        label="\{label} (retry)",
+        max_steps=steps_for(engine) * 2,
+        schema=audit_schema,
+      )
+      if second is Ok(report) && structured(report) is Some(_) {
+        second
+      } else if first is Ok(_) {
+        // Neither answered: keep the first, whose text the report quotes.
+        first
+      } else {
+        second
+      }
+    }
+  })
+
+  // ---- Reduce: evidence sorts the report ----
+  let drifts : Array[Drift] = []
+  let unverified : Array[Drift] = []
+  // A document we could not even read failed in the same way a slice
+  // that came back empty did, and belongs in the same section.
+  let failures = unreadable
+  let mut claims = 0
+  for index, slice in slices {
+    let label = "\{slice.path}#\{slice.index + 1}"
+    match reports[index] {
+      Ok(report) =>
+        match structured(report) {
+          Some(answer) => {
+            claims += claims_checked(answer)
+            for finding in findings_of(slice.path, answer) {
+              if cites_line(finding.evidence) {
+                drifts.push(finding)
+              } else {
+                unverified.push(finding)
+              }
+            }
+          }
+          None =>
+            failures.push({
+              path: slice.path,
+              slice: label,
+              reason: "unparseable answer: \{clip(report.stringify(), 200)}",
+            })
+        }
+      Err(error) =>
+        failures.push({ path: slice.path, slice: label, reason: "\{error}" })
+    }
+  }
+  let audit : Audit = {
+    repo,
+    head,
+    engine,
+    docs: audited,
+    slices: slices.length(),
+    claims,
+    drifts,
+    unverified,
+    failures,
+  }
+  write_report(audit, value(args, "out", "doc-audit.md"), wf)
+}
+
+///|
+/// One scout's brief. The document leads and the instructions close: what
+/// an engine is asked for LAST is what it actually returns, and a format
+/// demand buried above nine kilobytes of markdown is a format demand
+/// ignored.
+fn audit_prompt(slice : Slice, engine : String) -> String {
+  (
+      $|You are auditing DOCUMENTATION for drift against the code it
+      $|describes, in the repository at the current directory. Here is
+      $|\{slice.path}\{part_of(slice)}, verbatim:
+      $|
+      $|--- begin \{slice.path} ---
+      $|\{slice.text}
+      $|--- end \{slice.path} ---
+      $|
+      $|Check its CLAIMS against the code: names, signatures, arguments,
+      $|defaults, return values, flags, file paths, commands, invariants,
+      $|and the behaviour of every example. READ THE CODE — never judge
+      $|from the prose alone.
+      $|
+      $|Report a claim ONLY when code you have actually read DISPROVES it,
+      $|and cite that code as `path/to/file:LINE`. A claim you could not
+      $|find support for is NOT drift — leave it out. No style, wording, or
+      $|"this should also document X" findings.
+      $|
+      $|kind: `wrong` — the code contradicts the claim; `stale` — the claim
+      $|described the code before a change (what it names was renamed,
+      $|moved, or removed); `incomplete` — it omits something that makes a
+      $|reader who follows it get the wrong result.
+      $|severity: `high` — a reader following this is broken; `medium` —
+      $|misled; `low` — cosmetic.
+      $|Quote the exact sentence you are challenging, say in one sentence
+      $|why the code disproves it, and give a one-line fix.
+      $|At most 4 findings; an empty list means this slice reads true.
+      $|`claims_checked` is how many distinct claims you actually verified.
+      $|
+      $|Your steps are capped, and a run that never answers is worth
+      $|nothing: read at most \{reads_for(engine)} files, pick the claims
+      $|most likely to have rotted rather than sweeping every one, and
+      $|answer the moment you are running low on steps.
+      $|\{format_hint(engine)}
+  )
+}
+
+// ---- Discovery -------------------------------------------------------
+
+///|
+/// Every documentation file git tracks under `paths`, minus what a code
+/// audit cannot judge and minus a generated twin.
+async fn discover(repo : String, paths : Array[String]) -> Array[String] {
+  let listing = git(repo, ["ls-files", "--", ..paths])
+  let tracked : Array[String] = []
+  for line in listing.split("\n") {
+    let path = line.trim().to_owned()
+    if path.is_empty() || !is_doc(path) || is_noise(path) {
+      continue
+    }
+    tracked.push(path)
+  }
+  // A generated twin — `x.md` rendered from the `x.mbt.md` beside it —
+  // says the same things twice, and only the source is worth fixing.
+  let generated : Map[String, Bool] = Map([])
+  for path in tracked {
+    if path.has_suffix(".mbt.md") {
+      generated[path[:path.length() - 7].to_owned() + ".md"] = true
+    }
+  }
+  tracked.filter(path => !generated.contains(path))
+}
+
+///|
+fn is_doc(path : String) -> Bool {
+  for suffix in [".md", ".markdown", ".rst", ".adoc"] {
+    if path.has_suffix(suffix) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Prose no reading of the code can confirm or refute: release history,
+/// legal text, repository furniture, vendored trees.
+fn is_noise(path : String) -> Bool {
+  for dir in [".github/", "vendor/", "third_party/", "node_modules/"] {
+    if path.has_prefix(dir) || path.contains("/" + dir) {
+      return true
+    }
+  }
+  let name = basename(path).to_upper()
+  for stem in [
+      "CHANGELOG", "LICENSE", "NOTICE", "AUTHORS", "CODE_OF_CONDUCT", "SECURITY",
+    ] {
+    if name.has_prefix(stem) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn basename(path : String) -> String {
+  let mut name = path
+  for part in path.split("/") {
+    name = part.to_owned()
+  }
+  name
+}
+
+// ---- Slicing ---------------------------------------------------------
+
+///|
+/// A document cut at its `##` headings — the coarsest boundary that keeps
+/// a claim next to the prose that qualifies it. A heading inside a fenced
+/// code block is text, not a heading, so fences are tracked.
+fn sections(text : String) -> Array[String] {
+  let out : Array[String] = []
+  let current = StringBuilder()
+  let mut started = false
+  let mut fenced = false
+  for line in text.split("\n") {
+    if line.trim().has_prefix("```") {
+      fenced = !fenced
+    } else if !fenced && line.has_prefix("## ") && started {
+      out.push(current.to_string())
+      current.reset()
+    }
+    current.write_string(line.to_owned())
+    current.write_char('\n')
+    started = true
+  }
+  if started {
+    out.push(current.to_string())
+  }
+  out
+}
+
+///|
+/// Pack sections greedily into slices of at most `slice_limit`
+/// characters; a single section over the limit is truncated with a
+/// marker, so one runaway section cannot unbound a prompt.
+fn pack(pieces : Array[String]) -> Array[String] {
+  let slices : Array[String] = []
+  let current = StringBuilder()
+  let mut used = 0
+  for piece in pieces {
+    let piece = if piece.length() > slice_limit {
+      "\{clip(piece, slice_limit)}\n[section truncated at \{slice_limit} characters]\n"
+    } else {
+      piece
+    }
+    if used > 0 && used + piece.length() > slice_limit {
+      slices.push(current.to_string())
+      current.reset()
+      used = 0
+    }
+    current.write_string(piece)
+    used += piece.length()
+  }
+  if used > 0 {
+    slices.push(current.to_string())
+  }
+  slices
+}
+
+///|
+fn part_of(slice : Slice) -> String {
+  if slice.of == 1 {
+    ""
+  } else {
+    " (slice \{slice.index + 1} of \{slice.of})"
+  }
+}
+
+// ---- Reading the answers ---------------------------------------------
+
+///|
+/// The shims enforce the schema; openseek's scout answers in prose, so it
+/// is told to answer with the JSON object alone. Its own line in the
+/// prompt, so an empty hint costs nothing but a blank one.
+fn format_hint(engine : String) -> String {
+  match engine {
+    "claude" | "codex" => ""
+    _ =>
+      (
+        #|
+        #|YOUR ENTIRE ANSWER MUST BE ONE JSON OBJECT — no narration before
+        #|it, no summary after it, no code fences — of exactly this shape:
+        #|{"claims_checked": <integer>, "findings": [{"quote": "...",
+        #|"kind": "wrong|stale|incomplete", "severity": "high|medium|low",
+        #|"why": "...", "evidence": "path/to/file.ext:LINE", "fix": "..."}]}
+        #|A clean slice is {"claims_checked": <integer>, "findings": []}.
+        #|Do not describe what you did; return the object.
+      )
+  }
+}
+
+///|
+/// The structured answer of a report. The shims constrain their CLI to
+/// the schema and hand back a JSON value; openseek IGNORES the schema
+/// (docs/child-contract.md §7.1) and answers with a string, so a prose
+/// engine's answer is mined for the object it was asked for — whole
+/// first, then from the outermost braces narration wrapped it in.
+fn structured(report : Json) -> Json? {
+  match report {
+    { "answer": String(text), .. } => {
+      let body = strip_fences(text)
+      match (Some(@json.parse(body)) catch { _ => None }) {
+        Some(json) => Some(json)
+        None => embedded(body)
+      }
+    }
+    { "answer": value, .. } => Some(value)
+    _ => None
+  }
+}
+
+///|
+/// The FIRST BALANCED `{...}` of a run of prose, when it parses. An
+/// engine that answered and then explained itself still answered — but
+/// only a scan to the MATCHING brace finds that answer: taking everything
+/// up to the last `}` in the text swallows the explanation with it and
+/// parses as nothing, which is how a clean `{"findings": []}` came back
+/// from `moonbitlang/core` looking like a failure. Strings and their
+/// escapes are respected, so a brace inside a quoted claim cannot
+/// unbalance the scan.
+fn embedded(text : String) -> Json? {
+  guard text.find("{") is Some(start) else { return None }
+  let object = StringBuilder()
+  let mut depth = 0
+  let mut quoted = false
+  let mut escaped = false
+  for ch in text[start:] {
+    object.write_char(ch)
+    if escaped {
+      escaped = false
+    } else if quoted {
+      match ch {
+        '\\' => escaped = true
+        '"' => quoted = false
+        _ => ()
+      }
+    } else {
+      match ch {
+        '"' => quoted = true
+        '{' => depth += 1
+        '}' => {
+          depth -= 1
+          if depth == 0 {
+            let parsed = Some(@json.parse(object.to_string())) catch {
+              _ => None
+            }
+            return parsed
+          }
+        }
+        _ => ()
+      }
+    }
+  }
+  None
+}
+
+///|
+fn strip_fences(text : String) -> String {
+  let trimmed = text.trim()
+  guard trimmed.has_prefix("```") else { return trimmed.to_owned() }
+  let inner = trimmed.trim_start(chars="`")
+  let after_lang = match inner.find("\n") {
+    Some(index) => inner[index + 1:]
+    None => inner
+  }
+  after_lang.trim_end(chars="`").trim().to_owned()
+}
+
+///|
+fn claims_checked(answer : Json) -> Int {
+  match answer {
+    { "claims_checked": Number(count, ..), .. } => count.to_int()
+    _ => 0
+  }
+}
+
+///|
+fn findings_of(path : String, answer : Json) -> Array[Drift] {
+  let out : Array[Drift] = []
+  guard answer is { "findings": Array(items), .. } else { return out }
+  for item in items {
+    guard item
+      is {
+        "quote": String(quote),
+        "kind": String(kind),
+        "severity": String(severity),
+        "why": String(why),
+        "evidence": String(evidence),
+        "fix": String(fix),
+        ..
+      } else {
+      continue
+    }
+    out.push({ path, quote, kind, severity, why, evidence, fix })
+  }
+  out
+}
+
+///|
+/// Whether evidence names a line of code — a `:` followed by a digit.
+/// The audit's whole discipline is that a finding points AT something,
+/// and this is the cheapest test that it does.
+fn cites_line(evidence : String) -> Bool {
+  let mut colon = false
+  for ch in evidence {
+    if colon && ch.is_ascii_digit() {
+      return true
+    }
+    colon = ch == ':'
+  }
+  false
+}
+
+///|
+fn rank(severity : String) -> Int {
+  match severity {
+    "high" => 0
+    "medium" => 1
+    _ => 2
+  }
+}
+
+// ---- The report ------------------------------------------------------
+
+///|
+async fn write_report(
+  audit : Audit,
+  out_path : String,
+  wf : @workflow.Workflow,
+) -> Unit {
+  let out = StringBuilder()
+  let high = audit.drifts.filter(drift => drift.severity == "high")
+  let medium = audit.drifts.filter(drift => drift.severity == "medium")
+  let low = audit.drifts.filter(drift => drift.severity == "low")
+  out <+
+    $|# Documentation audit of \{audit.repo} @ \{audit.head}
+    $|
+    $|
+    $|`\{audit.engine}` read \{audit.docs.length()} document(s) in \{audit.slices} slice(s) and checked \{audit.claims} claim(s): \{audit.drifts.length()} drifted — \{high.length()} high, \{medium.length()} medium, \{low.length()} low.
+    $|
+    $|
+  // Findings grouped by document, in discovery order, worst first.
+  let by_doc : Map[String, Array[Drift]] = Map([])
+  for drift in audit.drifts {
+    by_doc.get_or_init(drift.path, () => []).push(drift)
+  }
+  let mut drifted_docs = 0
+  for path in audit.docs {
+    guard by_doc.get(path) is Some(found) else { continue }
+    drifted_docs += 1
+    found.sort_by_key(drift => rank(drift.severity))
+    out <+
+      $|## \{path}
+      $|
+      $|
+    for drift in found {
+      out <+
+        $|### \{drift.severity} · \{drift.kind} — \{drift.quote}
+        $|
+        $|\{drift.why}
+        $|
+        $|- Evidence: \{drift.evidence}
+        $|- Fix: \{drift.fix}
+        $|
+        $|
+    }
+  }
+  // Silence is not a clean bill: a document any of whose slices went
+  // unanswered belongs in "not audited", never in "reads true".
+  let failed : Map[String, Bool] = Map([])
+  for failure in audit.failures {
+    failed[failure.path] = true
+  }
+  let clean = audit.docs.filter(path => !by_doc.contains(path) &&
+    !failed.contains(path))
+  if !clean.is_empty() {
+    out <+
+      $|## Reads true
+      $|
+      $|
+    for path in clean {
+      out <+
+        $|- \{path}
+        $|
+    }
+    out <+
+      $|
+      $|
+  }
+  // Quarantine, not a verdict: a finding that points at nothing is the
+  // shape a hallucination takes, but throwing it away hides a real one.
+  if !audit.unverified.is_empty() {
+    out <+
+      $|## Unverified (no `file:line` in the evidence)
+      $|
+      $|
+    for drift in audit.unverified {
+      out <+
+        $|- **\{drift.path}** (\{drift.severity} · \{drift.kind}) — \{drift.quote} · \{drift.why}
+        $|
+    }
+    out <+
+      $|
+      $|
+  }
+  if !audit.failures.is_empty() {
+    out <+
+      $|## Not audited
+      $|
+      $|Re-running the same command re-attempts exactly these: the journal
+      $|replays every answered slice for free and only a recorded failure
+      $|is tried again.
+      $|
+      $|
+    for failure in audit.failures {
+      out <+
+        $|- **\{failure.slice}** — \{failure.reason}
+        $|
+    }
+    out <+
+      $|
+      $|
+  }
+  // Cost from the journal's attempts — replayed calls cost nothing.
+  let mut steps = 0
+  let mut prompt = 0
+  let mut completion = 0
+  if wf.journal is Some(journal) {
+    for entry in journal.recorded() {
+      let attempt = match entry.outcome {
+        Finished(attempt~, ..) => Some(attempt)
+        DidNotFinish(attempt~, ..) => attempt
+      }
+      if attempt is Some(attempt) {
+        steps += attempt.steps_used
+        prompt += attempt.prompt_tokens
+        completion += attempt.completion_tokens
+      }
+    }
+  }
+  out <+
+    $|## Cost
+    $|
+    $|\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed · \{steps} step(s) · \{prompt} prompt + \{completion} completion tokens.
+    $|
+  @fs.write_file(out_path, out.to_string())
+  println(
+    "\n\{audit.drifts.length()} drift(s) across \{drifted_docs} of \{audit.docs.length()} document(s) — \{high.length()} high, \{medium.length()} medium, \{low.length()} low → \{out_path}",
+  )
+  if !audit.unverified.is_empty() {
+    println("\{audit.unverified.length()} finding(s) cited no file:line and were quarantined")
+  }
+  if !audit.failures.is_empty() {
+    println(
+      "\{audit.failures.length()} slice(s) were not audited — re-run to re-attempt just those",
+    )
+  }
+  println(
+    "\{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
+  )
+}
+
+// ---- Plumbing --------------------------------------------------------
+
+///|
+async fn git(repo : String, args : Array[String]) -> String {
+  // Plain built-in output: a user's config must not leak into what the
+  // audit (and the journal) sees.
+  let (code, output) = @process.collect_stdout(
+    "git",
+    ["-c", "color.ui=never", "--no-pager", ..args],
+    cwd=repo,
+  )
+  guard code == 0 else { fail("git \{args.join(" ")} exited \{code}") }
+  @utf8.decode_lossy(output.binary())
+}
+
+///|
+async fn read(path : String) -> String {
+  @utf8.decode_lossy(@fs.read_file(path).binary())
+}
+
+///|
+fn value(args : @argparse.Matches, name : String, fallback : String) -> String {
+  match args.values.get(name) {
+    Some([value, ..]) => value
+    _ => fallback
+  }
+}
+
+///|
+/// A positive count from the argv, or the default — a garbage or
+/// non-positive value must not silently turn the sweep into nothing.
+fn count(args : @argparse.Matches, name : String, fallback : Int) -> Int {
+  let parsed = @string.parse_int(value(args, name, "")) catch {
+    _ => 0
+  }
+  if parsed > 0 {
+    parsed
+  } else {
+    fallback
+  }
+}
+
+///|
+fn clip(text : String, limit : Int) -> String {
+  let out = StringBuilder()
+  let mut count = 0
+  for ch in text {
+    if count >= limit {
+      break
+    }
+    out.write_char(ch)
+    count += 1
+  }
+  out.to_string()
+}
+
+///|
+/// Step ceilings per engine: a Codex step is one shell command (cheap and
+/// numerous), a Claude or openseek step is one model call with batched
+/// tool use. The doc text is already in the prompt, so every step buys a
+/// read of the code — and an audit that never answers is worth nothing,
+/// so the ceiling is generous and the prompt spends it deliberately.
+fn steps_for(engine : String) -> Int {
+  match engine {
+    "codex" => 36
+    "claude" => 24
+    _ => 40
+  }
+}
+
+///|
+/// The reading budget the prompt hands the scout, under its ceiling.
+fn reads_for(engine : String) -> Int {
+  match engine {
+    "codex" => 10
+    _ => 6
+  }
 }

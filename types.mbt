@@ -73,9 +73,9 @@ pub(all) enum AgentOutcome {
 } derive(Eq, ToJson, FromJson)
 
 ///|
-/// The typed error channel of the workflow layer. Every call site must
-/// either propagate one of these or catch it into a `Result` — forgetting
-/// to choose a failure policy is a compile error, not a silent `null`.
+/// The typed error channel of the workflow layer. Every call site either
+/// propagates one of these (via `raise`) or catches it into `try_agent`'s
+/// `Result` — there is no silent `null` to forget.
 pub suberror WorkflowError {
   /// The named agent call produced no usable report, and why.
   AgentFailed(label~ : String, failure~ : AgentFailure)

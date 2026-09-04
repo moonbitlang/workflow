@@ -311,7 +311,9 @@ An executable is a workflow engine when it:
 6. emits exactly one `{"subrun_report": …}` line, last, when it finished.
 
 The scripted-`sh` children in `spawn/spawn_test.mbt` are executable
-examples of every terminal; openseek's `tests/cram/subrun.md` pins the
+examples of the terminals a child can drive on its own — `Captured`,
+`NoReport`, `MaxSteps`, `Failed` (`TimedOut` and `ContextYield` are the
+runner's and the engine's to raise); openseek's `tests/cram/subrun.md` pins the
 reference engine's echo, error, and worker-validation lines byte for byte.
 The `shim/claude` and `shim/codex` executables in this module are two
 further conforming engines: each wraps a foreign CLI, reads the envelope
