@@ -179,6 +179,7 @@ async fn review() -> Unit {
   // hard-code. Pinned to the version this script imports, so one run is
   // one coherent set of published artifacts.
   let shim = "moonbitlang/workflow/shim"
+  let journal = @workflow.Journal::load("cross-review.jsonl")
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
@@ -223,7 +224,7 @@ async fn review() -> Unit {
         }
       }
     }),
-    journal=@workflow.Journal::load("cross-review.jsonl"),
+    journal~,
     max_concurrent=4,
     on_event=event => match event {
       @workflow.PhaseStarted(title) => println("━━ \{title}")
@@ -291,7 +292,7 @@ async fn review() -> Unit {
   }
   guard !findings.is_empty() else {
     println("\nno findings raised — nothing to verify")
-    write_report(head, base, engines, [], wf)
+    write_report(head, base, engines, [], wf, journal)
     return
   }
 
@@ -335,7 +336,7 @@ async fn review() -> Unit {
     rows.push((finding, verdict, reason, verifier))
     println("  \{verdict.to_upper()} \{finding.file}:\{finding.line} — \{finding.title}")
   }
-  write_report(head, base, engines, rows, wf)
+  write_report(head, base, engines, rows, wf, journal)
 }
 
 ///|
@@ -489,6 +490,7 @@ async fn write_report(
   engines : Array[String],
   rows : Array[(Finding, String, String, String)],
   wf : @workflow.Workflow,
+  journal : @workflow.Journal,
 ) -> Unit {
   let out = StringBuilder()
   out <+
@@ -538,7 +540,7 @@ async fn write_report(
     #|| engine | calls | steps | prompt tokens | completion tokens |
     #|| --- | ---: | ---: | ---: | ---: |
     #|
-  if wf.journal is Some(journal) {
+  {
     for engine in engines {
       let mut calls = 0
       let mut steps = 0
