@@ -327,6 +327,7 @@ async fn audit() -> Unit {
   let deepseek_model = model.unwrap_or(
     @env.get_env_var("DOC_AUDIT_DEEPSEEK").unwrap_or("deepseek-v4-flash"),
   )
+  let journal = @workflow.Journal::load(value(args, "journal", "doc-audit.jsonl"))
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
@@ -364,7 +365,7 @@ async fn audit() -> Unit {
         }
       }
     }),
-    journal=@workflow.Journal::load(value(args, "journal", "doc-audit.jsonl")),
+    journal~,
     // The repository IS the world these answers describe, so it scopes
     // replay: one journal can never serve another repo's audit.
     replay_scope=repo,
@@ -460,7 +461,7 @@ async fn audit() -> Unit {
     unverified,
     failures,
   }
-  write_report(audit, value(args, "out", "doc-audit.md"), wf)
+  write_report(audit, value(args, "out", "doc-audit.md"), wf, journal)
 }
 
 ///|
@@ -803,6 +804,7 @@ async fn write_report(
   audit : Audit,
   out_path : String,
   wf : @workflow.Workflow,
+  journal : @workflow.Journal,
 ) -> Unit {
   let out = StringBuilder()
   let high = audit.drifts.filter(drift => drift.severity == "high")
@@ -901,7 +903,7 @@ async fn write_report(
   let mut steps = 0
   let mut prompt = 0
   let mut completion = 0
-  if wf.journal is Some(journal) {
+  {
     for entry in journal.recorded() {
       let attempt = match entry.outcome {
         Finished(attempt~, ..) => Some(attempt)
