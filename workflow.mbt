@@ -243,7 +243,8 @@ pub async fn Workflow::agent_call(
 /// `agent` with the typed error channel folded into the return value:
 /// workflow-level failures land in `Err`, cancellation and engine errors
 /// still propagate. The right shape at fan-out call sites, where one lost
-/// agent must not poison its siblings.
+/// agent must not poison its siblings. Sugar for the common case of
+/// `attempt`, which folds any raising step the same way.
 pub async fn Workflow::try_agent(
   self : Workflow,
   prompt : String,
@@ -253,12 +254,7 @@ pub async fn Workflow::try_agent(
   max_steps? : Int,
   schema? : Json,
 ) -> Result[Json, WorkflowError] {
-  Ok(self.agent(prompt, kind~, hints?, label?, max_steps?, schema?)) catch {
-    AgentFailed(..) as err => Err(err)
-    CallBudgetExhausted(..) as err => Err(err)
-    QuorumNotReached(..) as err => Err(err)
-    error => raise error
-  }
+  attempt(() => self.agent(prompt, kind~, hints?, label?, max_steps?, schema?))
 }
 
 ///|
@@ -299,12 +295,9 @@ pub async fn[T : @json.FromJson] Workflow::try_agent_as(
   max_steps? : Int,
   schema? : Json,
 ) -> Result[T, WorkflowError] {
-  Ok(self.agent_as(prompt, kind~, hints?, label?, max_steps?, schema?)) catch {
-    AgentFailed(..) as err => Err(err)
-    CallBudgetExhausted(..) as err => Err(err)
-    QuorumNotReached(..) as err => Err(err)
-    error => raise error
-  }
+  attempt(() => {
+    self.agent_as(prompt, kind~, hints?, label?, max_steps?, schema?)
+  })
 }
 
 ///|
