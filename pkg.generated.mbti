@@ -50,10 +50,6 @@ pub(all) struct AgentAttempt {
   completion_tokens : Int
   cost_usd : Double?
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentAttempt::equal(Self, Self) -> Bool
-pub fn AgentAttempt::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn AgentAttempt::not_equal(Self, Self) -> Bool
-pub fn AgentAttempt::to_json(Self) -> Json
 
 pub(all) struct AgentCall {
   kind : String
