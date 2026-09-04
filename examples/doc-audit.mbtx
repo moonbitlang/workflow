@@ -41,11 +41,17 @@ import {
 /// same command twice is how a sweep converges.
 /// Output: doc-audit.md (`--out`).
 ///
+/// Within one run, a slice that failed or answered with no readable
+/// object earns ONE retry at double the step ceiling. The retry carries a
+/// different ceiling, so it is its own journal entry and a resumed run
+/// replays whichever attempt actually answered.
+///
 /// Engines (`--engine`, default `explore`): `claude` and `codex` run
 /// through this module's shims (`just shims` first), anything else is an
-/// `openseek subrun <kind>` scout. Models: DOC_AUDIT_CLAUDE
-/// (claude-sonnet-5), DOC_AUDIT_CODEX (gpt-5.3-codex-spark),
-/// DOC_AUDIT_DEEPSEEK (deepseek-v4-flash).
+/// `openseek subrun <kind>` scout. `--model` overrides the chosen
+/// engine's default; without it, DOC_AUDIT_CLAUDE (claude-sonnet-5),
+/// DOC_AUDIT_CODEX (gpt-5.3-codex-spark), DOC_AUDIT_DEEPSEEK
+/// (deepseek-v4-flash). `--max-calls` caps live launches for the run.
 async fn main {
   audit() catch {
     error => println("workflow failed: \{error}")
@@ -188,6 +194,16 @@ async fn audit() -> Unit {
         about="audits to run at once",
         default_values=["4"],
       ),
+      @argparse.OptionArg(
+        "model",
+        long="model",
+        about="model name for the chosen engine, overriding its default",
+      ),
+      @argparse.OptionArg(
+        "max-calls",
+        long="max-calls",
+        about="stop launching after this many live calls",
+      ),
     ],
     flags=[
       @argparse.FlagArg(
@@ -214,6 +230,17 @@ async fn audit() -> Unit {
   let engine = value(args, "engine", "explore")
   let max_docs = count(args, "max-docs", 40)
   let jobs = count(args, "jobs", 4)
+  // `--model` overrides whichever engine's default is chosen; `--max-calls`
+  // is the framework's own launch allowance, so a ceiling stops the sweep
+  // rather than merely reporting what it already spent.
+  let model = match args.values.get("model") {
+    Some([value, ..]) => Some(value.trim().to_owned())
+    _ => None
+  }
+  let max_calls = match args.values.get("max-calls") {
+    Some([value, ..]) => Some(@string.parse_int(value)) catch { _ => None }
+    _ => None
+  }
   let paths = args.values.get("paths").unwrap_or([])
   // An absolute repository: it becomes every scout's working directory
   // and the journal's replay scope, and neither may drift with ours.
@@ -288,14 +315,14 @@ async fn audit() -> Unit {
 
   // ---- Routing: KIND picks the engine, and every scout runs in the repo ----
   let shims = "_build/native/debug/build/shim"
-  let claude_model = @env.get_env_var("DOC_AUDIT_CLAUDE").unwrap_or(
-    "claude-sonnet-5",
+  let claude_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_CLAUDE").unwrap_or("claude-sonnet-5"),
   )
-  let codex_model = @env.get_env_var("DOC_AUDIT_CODEX").unwrap_or(
-    "gpt-5.3-codex-spark",
+  let codex_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_CODEX").unwrap_or("gpt-5.3-codex-spark"),
   )
-  let deepseek_model = @env.get_env_var("DOC_AUDIT_DEEPSEEK").unwrap_or(
-    "deepseek-v4-flash",
+  let deepseek_model = model.unwrap_or(
+    @env.get_env_var("DOC_AUDIT_DEEPSEEK").unwrap_or("deepseek-v4-flash"),
   )
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
@@ -339,6 +366,7 @@ async fn audit() -> Unit {
     // replay: one journal can never serve another repo's audit.
     replay_scope=repo,
     max_concurrent=jobs,
+    max_calls?=max_calls,
     on_event=event => match event {
       @workflow.PhaseStarted(title) => println("━━ \{title}")
       @workflow.AgentStarted(label~, ..) => println("  ▶ \{label}")
@@ -349,52 +377,41 @@ async fn audit() -> Unit {
 
   // ---- One scout per slice, claims in hand, code one read away ----
   wf.phase("Audit")
-  let reports = @workflow.fan_out(slices, slice => wf.try_agent(
-    (
-      // The document leads and the instructions close: what an engine is
-      // asked for LAST is what it actually returns, and a format demand
-      // buried above nine kilobytes of markdown is a format demand
-      // ignored.
-      $|You are auditing DOCUMENTATION for drift against the code it
-      $|describes, in the repository at the current directory. Here is
-      $|\{slice.path}\{part_of(slice)}, verbatim:
-      $|
-      $|--- begin \{slice.path} ---
-      $|\{slice.text}
-      $|--- end \{slice.path} ---
-      $|
-      $|Check its CLAIMS against the code: names, signatures, arguments,
-      $|defaults, return values, flags, file paths, commands, invariants,
-      $|and the behaviour of every example. READ THE CODE — never judge
-      $|from the prose alone.
-      $|
-      $|Report a claim ONLY when code you have actually read DISPROVES it,
-      $|and cite that code as `path/to/file:LINE`. A claim you could not
-      $|find support for is NOT drift — leave it out. No style, wording, or
-      $|"this should also document X" findings.
-      $|
-      $|kind: `wrong` — the code contradicts the claim; `stale` — the claim
-      $|described the code before a change (what it names was renamed,
-      $|moved, or removed); `incomplete` — it omits something that makes a
-      $|reader who follows it get the wrong result.
-      $|severity: `high` — a reader following this is broken; `medium` —
-      $|misled; `low` — cosmetic.
-      $|Quote the exact sentence you are challenging, say in one sentence
-      $|why the code disproves it, and give a one-line fix.
-      $|At most 4 findings; an empty list means this slice reads true.
-      $|`claims_checked` is how many distinct claims you actually verified.
-      $|
-      $|Your steps are capped, and a run that never answers is worth
-      $|nothing: read at most \{reads_for(engine)} files, pick the claims
-      $|most likely to have rotted rather than sweeping every one, and
-      $|answer the moment you are running low on steps.
-      $|\{format_hint(engine)}
-    ),
-    kind=engine,
-    label="audit:\{slice.path}#\{slice.index + 1}",
-    max_steps=steps_for(engine),
-    schema=audit_schema,
-  ))
+  let reports = @workflow.fan_out(slices, slice => {
+    let prompt = audit_prompt(slice, engine)
+    let label = "audit:\{slice.path}#\{slice.index + 1}"
+    let first = wf.try_agent(
+      prompt,
+      kind=engine,
+      label~,
+      max_steps=steps_for(engine),
+      schema=audit_schema,
+    )
+    // One retry, at double the ceiling. A slice that ran out of steps and
+    // a slice that answered in prose carrying no object are the same
+    // thing to the report — nothing — and the second pass usually lands.
+    // Its ceiling differs, so it is its own journal entry: a resumed run
+    // replays whichever attempt actually answered.
+    if first is Ok(report) && structured(report) is Some(_) {
+      first
+    } else {
+      let second = wf.try_agent(
+        prompt,
+        kind=engine,
+        label="\{label} (retry)",
+        max_steps=steps_for(engine) * 2,
+        schema=audit_schema,
+      )
+      if second is Ok(report) && structured(report) is Some(_) {
+        second
+      } else if first is Ok(_) {
+        // Neither answered: keep the first, whose text the report quotes.
+        first
+      } else {
+        second
+      }
+    }
+  })
 
   // ---- Reduce: evidence sorts the report ----
   let drifts : Array[Drift] = []
@@ -441,6 +458,50 @@ async fn audit() -> Unit {
     failures,
   }
   write_report(audit, value(args, "out", "doc-audit.md"), wf)
+}
+
+///|
+/// One scout's brief. The document leads and the instructions close: what
+/// an engine is asked for LAST is what it actually returns, and a format
+/// demand buried above nine kilobytes of markdown is a format demand
+/// ignored.
+fn audit_prompt(slice : Slice, engine : String) -> String {
+  (
+      $|You are auditing DOCUMENTATION for drift against the code it
+      $|describes, in the repository at the current directory. Here is
+      $|\{slice.path}\{part_of(slice)}, verbatim:
+      $|
+      $|--- begin \{slice.path} ---
+      $|\{slice.text}
+      $|--- end \{slice.path} ---
+      $|
+      $|Check its CLAIMS against the code: names, signatures, arguments,
+      $|defaults, return values, flags, file paths, commands, invariants,
+      $|and the behaviour of every example. READ THE CODE — never judge
+      $|from the prose alone.
+      $|
+      $|Report a claim ONLY when code you have actually read DISPROVES it,
+      $|and cite that code as `path/to/file:LINE`. A claim you could not
+      $|find support for is NOT drift — leave it out. No style, wording, or
+      $|"this should also document X" findings.
+      $|
+      $|kind: `wrong` — the code contradicts the claim; `stale` — the claim
+      $|described the code before a change (what it names was renamed,
+      $|moved, or removed); `incomplete` — it omits something that makes a
+      $|reader who follows it get the wrong result.
+      $|severity: `high` — a reader following this is broken; `medium` —
+      $|misled; `low` — cosmetic.
+      $|Quote the exact sentence you are challenging, say in one sentence
+      $|why the code disproves it, and give a one-line fix.
+      $|At most 4 findings; an empty list means this slice reads true.
+      $|`claims_checked` is how many distinct claims you actually verified.
+      $|
+      $|Your steps are capped, and a run that never answers is worth
+      $|nothing: read at most \{reads_for(engine)} files, pick the claims
+      $|most likely to have rotted rather than sweeping every one, and
+      $|answer the moment you are running low on steps.
+      $|\{format_hint(engine)}
+  )
 }
 
 // ---- Discovery -------------------------------------------------------

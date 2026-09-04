@@ -19,8 +19,8 @@ Everything else follows from three decisions:
 - **Failure is data, in a typed channel.** An agent that produced no
   usable report raises `WorkflowError::AgentFailed` with a typed
   `AgentFailure` cause; `try_agent` folds it into a `Result` for fan-out
-  sites. Forgetting to choose a failure policy is a compile error, never
-  a silent `null`.
+  sites. A failure is never a silent `null`: it either raises
+  `AgentFailed` or lands in `try_agent`'s `Result`.
 - **Cost is never lost.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
