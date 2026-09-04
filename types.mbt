@@ -76,7 +76,7 @@ pub(all) enum AgentOutcome {
 
 ///|
 /// The typed error channel of the workflow layer. Every call site either
-/// propagates one of these (via `raise`) or catches it into `try_agent`'s
+/// propagates one of these (via `raise`) or catches it into `attempt`'s
 /// `Result` — there is no silent `null` to forget.
 pub suberror WorkflowError {
   /// The named agent call produced no usable report, and why.

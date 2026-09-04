@@ -87,19 +87,23 @@ async fn main {
   let results = if kind == "echo" {
     // Three keyless probes; each is one child process of the engine.
     @workflow.fan_out(["alpha", "beta", "gamma"], probe => {
-      wf.try_agent(prompt="probe \{probe}", kind="echo", label="scout:\{probe}")
+      @workflow.attempt(() => {
+        wf.agent(prompt="probe \{probe}", kind="echo", label="scout:\{probe}")
+      })
     })
   } else {
     // One REAL scout: a model-driven read-only agent over this
     // repository, bounded by a small step ceiling.
     [
-      wf.try_agent(
-        prompt="What kinds does `openseek subrun` dispatch, and where is the dispatch? Answer in one sentence.",
-        kind~,
-        hints="cmd/openseek/subrun.mbt",
-        label="scout:subrun-kinds",
-        max_steps=24,
-      ),
+      @workflow.attempt(() => {
+        wf.agent(
+          prompt="What kinds does `openseek subrun` dispatch, and where is the dispatch? Answer in one sentence.",
+          kind~,
+          hints="cmd/openseek/subrun.mbt",
+          label="scout:subrun-kinds",
+          max_steps=24,
+        )
+      }),
     ]
   }
   // Report per slot: a failed agent is a printed line, not a crash —

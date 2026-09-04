@@ -87,7 +87,7 @@ async fn research() -> Unit {
   let found = @workflow.collect_ok(
     @workflow.fan_out(surveys, survey => {
       let (name, prompt, hints) = survey
-      wf.try_agent(prompt~, kind="explore", hints~, label="survey:\{name}", max_steps=14)
+      @workflow.attempt(() => wf.agent(prompt~, kind="explore", hints~, label="survey:\{name}", max_steps=14))
     }),
     min_ok=2,
   ) catch {
@@ -100,7 +100,7 @@ async fn research() -> Unit {
 
   // ---- Phase 2: probe the open question the survey exposes ----
   wf.phase("Probe")
-  let probe = wf.try_agent(
+  let probe = @workflow.attempt(() => wf.agent(
     prompt=(
       $|Given these findings on \{question}
       $|— \{notes.join(" ||| ")} —
@@ -111,7 +111,7 @@ async fn research() -> Unit {
     hints=".",
     label="probe:hardest",
     max_steps=14,
-  )
+  ))
   let probe_note = match probe {
     Ok(report) => clip(answer_of(report), 550)
     Err(error) => {
@@ -123,7 +123,7 @@ async fn research() -> Unit {
   // ---- Phase 3: synthesis embeds everything above ----
   wf.phase("Synthesize")
   match
-    wf.try_agent(
+    @workflow.attempt(() => wf.agent(
       prompt=(
         $|Write a concrete design proposal for \{question}
         $|Base it ONLY on this research: \{notes.join(" ||| ")} ||| HARDEST: \{probe_note}.
@@ -134,7 +134,7 @@ async fn research() -> Unit {
       hints=".",
       label="synthesis",
       max_steps=28,
-    ) {
+    )) {
     Ok(report) => println("\n━━ PROPOSAL ━━\n\{answer_of(report)}")
     Err(error) => println("synthesis failed: \{error}")
   }
