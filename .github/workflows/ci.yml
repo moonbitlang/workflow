@@ -8,9 +8,12 @@ on:
 jobs:
   moon-gates:
     runs-on: ${{ matrix.os }}
-    # Nightly toolchain breakage is advance warning, not a gate: it must not
-    # block a PR that is green on stable.
-    continue-on-error: ${{ matrix.channel == 'nightly' }}
+    # NIGHTLY IS THE GATE. The module uses the wildcard constructor pattern
+    # (`WorkflowError::_`, `@os_error.OSError::_`), which stable's parser does
+    # not accept yet, so stable cannot build this tree at all. Stable stays in
+    # the matrix as advance warning in the other direction: the day it goes
+    # green, the pattern has landed in stable and this flag flips back.
+    continue-on-error: ${{ matrix.channel == 'stable' }}
     strategy:
       fail-fast: false
       matrix:

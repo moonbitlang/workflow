@@ -32,7 +32,9 @@ fn substitute(token : String, kind~ : String, child~ : String) -> String {
 ///
 /// A sidecar is a view. A run whose work succeeded must not fail because a
 /// progress line could not be written, and the journal — which is the record —
-/// has its own durability.
+/// has its own durability. "Could not be written" is an OS error and nothing
+/// else: cancellation is not a full disk, and swallowing it would keep a
+/// cancelled run walking.
 async fn note(path : String?, line : Json) -> Unit {
   guard path is Some(path) else { return }
   @fs.write_file(
@@ -41,7 +43,8 @@ async fn note(path : String?, line : Json) -> Unit {
     append=true,
     create_mode=OpenOrCreate,
   ) catch {
-    _ => ()
+    @os_error.OSError::_ => ()
+    error => raise error
   }
 }
 

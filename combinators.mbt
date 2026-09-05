@@ -50,9 +50,7 @@ pub async fn[A, B] fan_out(
 /// poison its siblings.
 pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
   Ok(step()) catch {
-    AgentFailed(..) as failure => Err(failure)
-    CallBudgetExhausted(..) as failure => Err(failure)
-    QuorumNotReached(..) as failure => Err(failure)
+    WorkflowError::_ as error => Err(error)
     error => raise error
   }
 }
@@ -93,9 +91,7 @@ pub async fn[T] retry(
     // workflow failure is an engine bug and must not be re-run.
     fatal_error=error => {
       match error {
-        AgentFailed(..) as failure => !retriable(failure)
-        CallBudgetExhausted(..) as failure => !retriable(failure)
-        QuorumNotReached(..) as failure => !retriable(failure)
+        WorkflowError::_ as failure => !retriable(failure)
         _ => true
       }
     },
