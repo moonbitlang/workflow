@@ -363,13 +363,32 @@ pub async fn contract_run(
 /// per-launch execution envelope. Everything a sandbox wrapper or a
 /// deployment would want to rewrite lives HERE, in one immutable value —
 /// never scattered across positional tuples.
-pub(all) struct LaunchSpec {
+///
+/// A `launch` callback BUILDS one through `LaunchSpec(...)` and only this
+/// package reads it, so the envelope can gain a knob without touching a
+/// single engine adapter.
+pub struct LaunchSpec {
   command : String
   args : Array[String]
   cwd : String?
   extra_env : Map[String, String]?
   deadline_ms : Int?
 } derive(Eq)
+
+///|
+/// A launch from its parts: the executable and its argv, which every
+/// launch names. The execution envelope is optional — omit `cwd` and
+/// `extra_env` to inherit the workflow's own, and `deadline_ms` to take
+/// `contract_runner`'s.
+pub fn LaunchSpec::LaunchSpec(
+  command~ : String,
+  args~ : Array[String],
+  cwd? : String,
+  extra_env? : Map[String, String],
+  deadline_ms? : Int,
+) -> LaunchSpec {
+  { command, args, cwd, extra_env, deadline_ms, }
+}
 
 ///|
 /// The dot-callable form of the derived equality methods is a migration
@@ -412,13 +431,13 @@ pub fn contract_runner(
       cwd?,
       extra_env?,
     )
-    let attempt : @workflow.AgentAttempt = {
-      attempt_id: id,
-      steps_used: result.steps_used,
-      prompt_tokens: result.prompt_tokens,
-      completion_tokens: result.completion_tokens,
-      cost_usd: result.cost_usd,
-    }
+    let attempt = @workflow.AgentAttempt(
+      attempt_id=id,
+      steps_used=result.steps_used,
+      prompt_tokens=result.prompt_tokens,
+      completion_tokens=result.completion_tokens,
+      cost_usd?=result.cost_usd,
+    )
     match result.terminal {
       Captured =>
         match result.report {

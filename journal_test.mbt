@@ -19,14 +19,11 @@ async fn recovered(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
 
 ///|
 fn call_for(prompt : String, label? : String) -> @workflow.AgentCall {
-  {
-    kind: "scout",
-    input: { "query": prompt },
-    label: label.unwrap_or(prompt),
-    max_steps: None,
-    scope: "",
-    schema: None,
-  }
+  @workflow.AgentCall(
+    kind="scout",
+    input={ "query": prompt },
+    label=label.unwrap_or(prompt),
+  )
 }
 
 ///|

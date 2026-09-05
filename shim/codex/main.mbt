@@ -130,28 +130,19 @@ fn codex_args(
 
 ///|
 test "argv: read-only sandbox by default, workspace-write for worker" {
-  let request : @shim.Request = {
-    id: None,
-    kind: "explore",
-    max_steps: None,
-    input: Json::null(),
-    prompt: "why?",
-    schema: None,
-  }
-  let options : @shim.Options = {
-    command: "codex",
-    model: Some("gpt-5"),
-    cwd: None,
-    writable: false,
-    schema: Some("out.json"),
-    extra: ["--ephemeral"],
-  }
+  let request = @shim.Request(kind="explore", input=Json::null(), prompt="why?")
+  let options = @shim.Options(
+    command="codex",
+    model="gpt-5",
+    schema="out.json",
+    extra=["--ephemeral"],
+  )
   assert_eq(codex_args(request, options, options.schema), [
     "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-m", "gpt-5",
     "--output-schema", "out.json", "--ephemeral", "why?",
   ])
-  let worker = { ..request, kind: "worker", }
-  let plain = { ..options, model: None, schema: None, extra: [], }
+  let worker = @shim.Request(kind="worker", input=Json::null(), prompt="why?")
+  let plain = @shim.Options(command="codex")
   assert_eq(codex_args(worker, plain, None), [
     "exec", "--json", "--skip-git-repo-check", "-s", "workspace-write", "why?",
   ])

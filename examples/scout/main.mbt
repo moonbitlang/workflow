@@ -63,13 +63,7 @@ async fn main {
         argv.push("--model")
         argv.push(model)
       }
-      {
-        command: exe,
-        args: argv,
-        cwd: None,
-        extra_env: None,
-        deadline_ms: None,
-      }
+      @spawn.LaunchSpec(command=exe, args=argv)
     }),
     max_concurrent=4,
     max_calls=16,

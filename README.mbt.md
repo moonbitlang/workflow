@@ -48,13 +48,15 @@ async fn verdict_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
   } else {
     { "confirmed": true }
   }
-  Finished(value=verdict, attempt={
-    attempt_id: "sr-\{call.label}",
-    steps_used: 3,
-    prompt_tokens: 70,
-    completion_tokens: 30,
-    cost_usd: None,
-  })
+  Finished(
+    value=verdict,
+    attempt=@workflow.AgentAttempt(
+      attempt_id="sr-\{call.label}",
+      steps_used=3,
+      prompt_tokens=70,
+      completion_tokens=30,
+    ),
+  )
 }
 
 ///|
@@ -110,13 +112,15 @@ async test "retry until the engine actually answers" {
       if flaky.val < 3 {
         DidNotFinish(failure=NoReport, attempt=None)
       } else {
-        Finished(value={ "attempt": flaky.val }, attempt={
-          attempt_id: "sr-\{call.label}",
-          steps_used: 1,
-          prompt_tokens: 40,
-          completion_tokens: 10,
-          cost_usd: None,
-        })
+        Finished(
+          value={ "attempt": flaky.val },
+          attempt=@workflow.AgentAttempt(
+            attempt_id="sr-\{call.label}",
+            steps_used=1,
+            prompt_tokens=40,
+            completion_tokens=10,
+          ),
+        )
       }
     }),
   )
@@ -144,13 +148,15 @@ async fn slice_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
   guard call.input is { "task": String(task), .. } else {
     return DidNotFinish(failure=Failed("not a worker input"), attempt=None)
   }
-  Finished(value={ "status": "done", "task": task }, attempt={
-    attempt_id: "sr-\{call.label}",
-    steps_used: 1,
-    prompt_tokens: 10,
-    completion_tokens: 5,
-    cost_usd: None,
-  })
+  Finished(
+    value={ "status": "done", "task": task },
+    attempt=@workflow.AgentAttempt(
+      attempt_id="sr-\{call.label}",
+      steps_used=1,
+      prompt_tokens=10,
+      completion_tokens=5,
+    ),
+  )
 }
 
 ///|
@@ -309,11 +315,7 @@ one implementation:
 ```moonbit nocheck
 ///|
 let runner = @spawn.contract_runner(launch=_ => {
-  command: "my-engine",
-  args: [],
-  cwd: None,
-  extra_env: None,
-  deadline_ms: None,
+  @spawn.LaunchSpec(command="my-engine", args=[])
 })
 ```
 
@@ -387,15 +389,11 @@ library knows they exist:
 ```moonbit nocheck
 ///|
 let runner = @spawn.contract_runner(launch=call => {
-  command: "moonx",
-  // read-only by default; `worker` calls (or --writable) may edit
-  args: [
+  @spawn.LaunchSpec(command="moonx", args=[
+    // read-only by default; `worker` calls (or --writable) may edit
     "moonbitlang/workflow/shim/claude", "--model", "claude-sonnet-5", "--", "--max-budget-usd",
     "2",
-  ],
-  cwd: None,
-  extra_env: None,
-  deadline_ms: None,
+  ])
 })
 ```
 
@@ -446,13 +444,17 @@ wrap it:
 ///|
 let runner = @workflow.Runner(call => {
   // spawn something, await it, and account honestly:
-  Finished(value=report_json, attempt={
-    attempt_id,
-    steps_used,
-    prompt_tokens,
-    completion_tokens,
-    cost_usd: None, // `Double?` has no default: name it, even when unknown
-  })
+  Finished(
+    value=report_json,
+    // `cost_usd` is the only optional figure: omit it when the engine
+    // prices nothing, and it reads back as unknown rather than free.
+    attempt=@workflow.AgentAttempt(
+      attempt_id~,
+      steps_used~,
+      prompt_tokens~,
+      completion_tokens~,
+    ),
+  )
 })
 ```
 

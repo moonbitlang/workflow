@@ -36,7 +36,7 @@ pub enum CliExit {
   Failed(String)
 } derive(Eq)
 
-pub(all) struct Options {
+pub struct Options {
   command : String
   model : String?
   cwd : String?
@@ -44,9 +44,10 @@ pub(all) struct Options {
   schema : String?
   extra : Array[String]
 }
+pub fn Options::Options(command~ : String, model? : String, cwd? : String, writable? : Bool, schema? : String, extra? : Array[String]) -> Self
 pub fn Options::parse(ArrayView[String], default_command~ : String) -> Result[Self, String]
 
-pub(all) struct Request {
+pub struct Request {
   id : String?
   kind : String
   max_steps : Int?
@@ -54,6 +55,7 @@ pub(all) struct Request {
   prompt : String
   schema : Json?
 }
+pub fn Request::Request(kind~ : String, input~ : Json, prompt~ : String, id? : String, max_steps? : Int, schema? : Json) -> Self
 pub fn Request::parse(String) -> Result[Self, String]
 
 pub(all) enum Verdict {

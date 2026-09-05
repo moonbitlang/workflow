@@ -128,13 +128,13 @@ fn outcome_of(
   child : String,
   result : @spawn.ContractResult,
 ) -> @workflow.AgentOutcome {
-  let attempt : @workflow.AgentAttempt = {
-    attempt_id: child,
-    steps_used: result.steps_used,
-    prompt_tokens: result.prompt_tokens,
-    completion_tokens: result.completion_tokens,
-    cost_usd: result.cost_usd,
-  }
+  let attempt = @workflow.AgentAttempt(
+    attempt_id=child,
+    steps_used=result.steps_used,
+    prompt_tokens=result.prompt_tokens,
+    completion_tokens=result.completion_tokens,
+    cost_usd?=result.cost_usd,
+  )
   match result.terminal {
     Captured =>
       match result.report {
