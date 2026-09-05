@@ -9,6 +9,10 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
   Changing anything the `spawn` package reads or writes on the wire is a
   contract change: update that document in the same change, and bump the
   `workflow_contract` major when the change is not additive.
+- Requires a NIGHTLY toolchain (`moon upgrade --dev`): the module catches by
+  error type (`WorkflowError::_`, `@os_error.OSError::_`), a pattern stable's
+  parser does not accept. CI gates on nightly and keeps stable as a
+  non-blocking signal for when that changes.
 - Gates: `just check` and `just test` (both `native` and `wasm` targets).
   Finish with `just tidy` (`moon info && moon fmt`) and review the
   `pkg.generated.mbti` diff — an unchanged interface means an internal

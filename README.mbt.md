@@ -12,6 +12,10 @@ in from the outside — through the `spawn` sub-package's child-contract
 implementation for out-of-process engines, or any in-process function;
 tests plug in fakes, which is why everything below runs hermetically.
 
+Building it needs a **nightly** MoonBit toolchain (`moon upgrade --dev`):
+the failure model catches by error type (`WorkflowError::_`), a pattern
+stable does not accept yet.
+
 ## The failure model
 
 Everything else follows from three decisions:

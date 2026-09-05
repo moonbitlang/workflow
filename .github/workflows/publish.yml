@@ -13,9 +13,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: install moon
+      # Nightly, like the CI gate: the module's wildcard constructor patterns
+      # do not build on stable, so a stable prepublish check would fail every
+      # release.
+      - name: install moon (nightly)
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash -s nightly
           echo "$HOME/.moon/bin" >> $GITHUB_PATH
 
       - name: post install
