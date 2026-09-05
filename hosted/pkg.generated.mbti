@@ -1,0 +1,27 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/workflow/hosted"
+
+import {
+  "moonbitlang/workflow",
+}
+
+// Values
+pub fn context() -> Context?
+
+pub fn parse(Json) -> Context?
+
+// Errors
+
+// Types and methods
+pub struct Context {
+  // private fields
+}
+pub fn Context::child_capacity(Self) -> Int
+pub fn Context::events_path(Self) -> String?
+pub fn Context::journal_path(Self) -> String?
+pub async fn[T] Context::run(Self, async (@workflow.Workflow) -> T, max_concurrent? : Int) -> T
+pub fn Context::runner(Self, emit_line? : async (String?, Json) -> Unit) -> @workflow.Runner
+
+// Type aliases
+
+// Traits
