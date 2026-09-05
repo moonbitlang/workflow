@@ -1,0 +1,545 @@
+import {
+  "moonbitlang/async@0.21.1",
+  "moonbitlang/async@0.21.1/fs",
+  "moonbitlang/workflow@0.7.0",
+  "moonbitlang/workflow@0.7.0/spawn",
+  "moonbitlang/workflow@0.7.0/hosted",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+
+///|
+/// SIMPLIFICATION SWEEP for any MoonBit repository: put one read-only
+/// scout on each slice of packages to propose mechanical simplifications,
+/// then put a SECOND, adversarial scout on every surviving proposal whose
+/// only job is to knock it down. Only a proposal that survives being
+/// attacked reaches the report.
+///
+///   moon run examples/simplify.mbtx -- [OPTIONS] [packages...]
+///   moon run examples/simplify.mbtx -- --repo ~/git/openseek --list
+///
+/// `--list` prints the plan — which packages, sliced into which calls —
+/// and spends NOTHING.
+///
+/// The two phases exist for one reason: a surveyor cannot compile. It is
+/// reading code and proposing a rewrite, and the failure mode that costs
+/// real money is a confident proposal that does not build or that quietly
+/// changes behaviour. So nothing the surveyor says is trusted. Triage
+/// throws away, for free, every finding whose evidence field is empty or
+/// that names the same line twice; then a fresh scout is told to REFUTE
+/// what is left, with the burden of proof inverted — it must show the
+/// replacement API exists with that signature and that old and new agree,
+/// or the finding is dropped.
+///
+/// The six categories are the ones worth sweeping mechanically:
+/// pattern-match, comprehension, functional-loop, stdlib-reuse,
+/// dedupe-code, dedupe-test. Anything needing design judgement is out of
+/// scope by construction — this workflow proposes rewrites a reviewer can
+/// confirm by reading, not refactors.
+///
+/// Runs either way round. Inside a host (an `mbtx` snippet launched with
+/// `subrun: true`, see docs/host-handoff.md) it takes the host's runner,
+/// so its children get durable transcripts and show up in the host's UI;
+/// standalone it spawns `openseek subrun explore` itself. The workflow
+/// body is identical — only the runner differs.
+///
+/// Journal: simplify.jsonl (`moon run viz -- simplify.jsonl` draws it).
+async fn main {
+  sweep() catch {
+    error => println("workflow failed: \{error}")
+  }
+}
+
+///|
+/// Packages per scout. A slice has to be small enough that one call can
+/// actually read it, and big enough that a duplicated helper spanning two
+/// sibling packages is visible to the same scout — that is where
+/// `dedupe-code` findings come from.
+let slice_size : Int = 6
+
+///|
+/// Findings kept after triage. The tail of a ranked list is where the
+/// speculative proposals collect, and each one costs a verification call.
+let verify_budget : Int = 24
+
+///|
+let survey_schema : Json = {
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "category": {
+            "type": "string",
+            "enum": [
+              "pattern-match", "comprehension", "functional-loop", "stdlib-reuse",
+              "dedupe-code", "dedupe-test",
+            ],
+          },
+          "title": { "type": "string" },
+          "current": { "type": "string" },
+          "proposed": { "type": "string" },
+          "lines_saved": { "type": "integer" },
+          "evidence": { "type": "string" },
+        },
+        "required": [
+          "file", "line", "category", "title", "current", "proposed",
+          "lines_saved", "evidence",
+        ],
+        "additionalProperties": false,
+      },
+    },
+  },
+  "required": ["findings"],
+  "additionalProperties": false,
+}
+
+///|
+let verdict_schema : Json = {
+  "type": "object",
+  "properties": {
+    "refuted": { "type": "boolean" },
+    "why": { "type": "string" },
+  },
+  "required": ["refuted", "why"],
+  "additionalProperties": false,
+}
+
+///|
+/// One proposal, as it travels from survey through triage to verification.
+struct Finding {
+  file : String
+  line : Int
+  category : String
+  title : String
+  lines_saved : Int
+  evidence : String
+}
+
+///|
+async fn sweep() -> Unit {
+  let spec = @argparse.Command(
+    "simplify",
+    about="Propose mechanical simplifications for a MoonBit repository, then try to refute each one.",
+    options=[
+      @argparse.OptionArg(
+        "repo",
+        short='C',
+        long="repo",
+        about="the repository to sweep",
+        default_values=["."],
+      ),
+      @argparse.OptionArg(
+        "journal",
+        long="journal",
+        about="journal file, for replay and resume",
+        default_values=["simplify.jsonl"],
+      ),
+      @argparse.OptionArg(
+        "jobs",
+        short='j',
+        long="jobs",
+        about="scouts to run at once",
+        default_values=["4"],
+      ),
+    ],
+    flags=[
+      @argparse.FlagArg(
+        "list",
+        long="list",
+        about="print the plan and stop, spending nothing",
+      ),
+    ],
+    positionals=[
+      @argparse.PositionArg(
+        "packages",
+        about="packages to restrict the sweep to (default: every package found)",
+        num_args=@argparse.ValueRange(lower=0),
+      ),
+    ],
+  )
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
+    }
+  }
+  let repo = @fs.realpath(value(args, "repo", ".")) catch {
+    error => {
+      println("cannot resolve --repo: \{error}")
+      return
+    }
+  }
+  let explicit = args.values.get("packages").unwrap_or([])
+  let packages = if explicit.is_empty() {
+    discover_packages(repo)
+  } else {
+    explicit
+  }
+  if packages.is_empty() {
+    println("no MoonBit packages under \{repo}")
+    return
+  }
+  let jobs = count(args, "jobs", 4)
+  let slices = slice(packages, slice_size)
+  println(
+    "\{packages.length()} packages under \{repo}, \{slices.length()} survey calls",
+  )
+  if args.flags.get("list") is Some(true) {
+    for index, group in slices {
+      println("  \{index + 1}. \{group.join(" ")}")
+    }
+    println("\n--list: nothing spent.")
+    return
+  }
+  async fn body(wf : @workflow.Workflow) -> Unit {
+    // PHASE 1 — survey. Slices are independent, so they all go at once and
+    // a slice that fails costs only itself: `attempt` turns its error into
+    // an `Err` the collector drops, instead of tearing down the sweep.
+    wf.phase("survey")
+    let surveyed = @workflow.parallel(
+      slices.map(group => () => @workflow.attempt(() => wf.agent(
+          prompt=survey_prompt(repo, group),
+          kind="explore",
+          label="survey \{group[0]}",
+          max_steps=30,
+          schema=survey_schema,
+        ))),
+    )
+    let raw : Array[Finding] = []
+    for outcome in surveyed {
+      if outcome is Ok(report) {
+        for finding in decode_findings(report) {
+          raw.push(finding)
+        }
+      }
+    }
+    // PHASE 2 — triage. Pure code, no calls, no tokens. Everything that can
+    // be rejected by inspection is rejected here, because the cheapest
+    // verification is the one never made.
+    let kept = triage(raw)
+    println(
+      "survey: \{raw.length()} proposed, \{kept.length()} survive triage, \{wf.tokens_spent()} tokens so far",
+    )
+    if kept.is_empty() {
+      return
+    }
+    // PHASE 3 — refute. The burden of proof is inverted: a finding is
+    // dropped unless a scout that TRIED to break it failed to.
+    wf.phase("refute")
+    let judged = @workflow.parallel(
+      kept.map(finding => () => @workflow.attempt(() => wf.agent(
+          prompt=refute_prompt(repo, finding),
+          kind="explore",
+          label="refute \{finding.file}:\{finding.line}",
+          max_steps=20,
+          schema=verdict_schema,
+        ))),
+    )
+    let confirmed : Array[Finding] = []
+    for index, outcome in judged {
+      // An unsettled verdict is a rejection. A verification call that
+      // errored, timed out, or came back malformed has not cleared the
+      // finding, and treating "no answer" as "fine" is how an unverified
+      // rewrite reaches a branch.
+      if outcome is Ok({ "refuted": False, .. }) {
+        confirmed.push(kept[index])
+      }
+    }
+    report(confirmed)
+    println(
+      "\n\{wf.calls_made()} live calls, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
+    )
+  }
+  // The host owns the children when there is one: its runner mints their
+  // session ids, so they get durable transcripts and appear in its UI.
+  // Standalone, the workflow spawns them itself and keeps its own journal.
+  match @hosted.context() {
+    Some(ctx) => ctx.run(body, max_concurrent=jobs)
+    None => {
+      let wf = @workflow.Workflow(
+        runner=@spawn.contract_runner(launch=_ => {
+          command: "openseek",
+          args: ["subrun", "explore"],
+          cwd: None,
+          extra_env: None,
+          deadline_ms: None,
+        }),
+        journal=@workflow.Journal::load(value(args, "journal", "simplify.jsonl")),
+        replay_scope=repo,
+        max_concurrent=jobs,
+      )
+      body(wf)
+    }
+  }
+}
+
+///|
+/// Drop what can be rejected without spending anything: a finding with no
+/// evidence (the surveyor was asked for the signature it found and did not
+/// have one), a second finding on a line already claimed, and everything
+/// past the budget once the rest is ranked by what it saves.
+fn triage(raw : Array[Finding]) -> Array[Finding] {
+  let seen : Set[String] = Set::new()
+  let kept : Array[Finding] = []
+  let ranked = raw.filter(f => !f.evidence.is_blank() && f.lines_saved > 0)
+  ranked.sort_by((a, b) => b.lines_saved - a.lines_saved)
+  for finding in ranked {
+    let key = "\{finding.file}:\{finding.line}"
+    if seen.contains(key) {
+      continue
+    }
+    seen.add(key)
+    kept.push(finding)
+    if kept.length() >= verify_budget {
+      break
+    }
+  }
+  kept
+}
+
+///|
+fn report(confirmed : Array[Finding]) -> Unit {
+  if confirmed.is_empty() {
+    println("\nnothing survived refutation.")
+    return
+  }
+  let saved = confirmed.fold(init=0, (sum, f) => sum + f.lines_saved)
+  println("\n\{confirmed.length()} confirmed, ~\{saved} lines:\n")
+  for finding in confirmed {
+    println(
+      "  [\{finding.category}] \{finding.file}:\{finding.line}  -\{finding.lines_saved}",
+    )
+    println("      \{finding.title}")
+  }
+}
+
+///|
+fn survey_prompt(repo : String, group : Array[String]) -> String {
+  (
+    $|Survey these MoonBit packages in \{repo} for SIMPLIFICATIONS:
+    $|\{group.join(" ")}
+    $|
+    $|Report only these six kinds, and only where the rewrite is
+    $|MECHANICAL — the same behaviour in a shape a reader recognises:
+    $|  pattern-match   an if/else-if chain or manual unwrapping that is
+    $|                  one `match`, a `guard ... is ... else`, or a
+    $|                  destructuring pattern.
+    $|  comprehension   `let acc = []` + `for` + `push` that is exactly
+    $|                  `[for x in xs { ... }]`, `.map`, or `.filter`.
+    $|  functional-loop a mutable accumulator that is `fold`, `.any`,
+    $|                  `.all`, `.find`, `.count`, or a `for ... nobreak`.
+    $|  stdlib-reuse    a hand-rolled helper the standard library already
+    $|                  has. The highest-value category, and the one most
+    $|                  often wrong: CHECK THE SIGNATURE.
+    $|  dedupe-code     the same non-trivial logic written twice.
+    $|  dedupe-test     near-identical test bodies differing only in
+    $|                  inputs, collapsible into a table.
+    $|
+    $|EVIDENCE IS THE POINT. For every finding, `evidence` must name where
+    $|you confirmed the replacement exists and behaves the same — a
+    $|signature you read in a `.mbti`, a `moon ide doc` result, a
+    $|`file:line`. A finding whose evidence you cannot state is a finding
+    $|you have not made; leave it out. `current` must be copied verbatim
+    $|from the file.
+    $|
+    $|Out of scope: generated files, prompt text, anything that changes
+    $|behaviour or a public signature, and deleting an explanatory
+    $|comment. A `match` written out to make a future enum variant a
+    $|compile error is deliberate — collapsing it to `_` is a regression.
+    $|
+    $|Prefer five findings you are certain of to twenty you are not.
+  )
+}
+
+///|
+fn refute_prompt(repo : String, finding : Finding) -> String {
+  (
+    $|In \{repo}, a previous pass proposed this simplification:
+    $|
+    $|  \{finding.file}:\{finding.line}  [\{finding.category}]
+    $|  \{finding.title}
+    $|  It claimed as evidence: \{finding.evidence}
+    $|
+    $|Your job is to REFUTE it. Read the actual code and answer one
+    $|question: is there ANY input on which the old and new forms differ?
+    $|
+    $|Look where they usually differ: empty and single-element
+    $|collections; a loop that stopped early where the replacement does
+    $|not; evaluation order in a collapsed boolean chain, when one arm
+    $|guarded the next; a stdlib function whose DOMAIN is wider or
+    $|narrower than the code it replaces (trailing separators, negative
+    $|numbers, unicode, overflow); a `match` arm that stops being
+    $|reachable. For a test collapse: is every case still present, and can
+    $|a failure still be identified?
+    $|
+    $|Then check the replacement actually EXISTS with that exact
+    $|signature — read the `.mbti` or ask `moon ide doc`. A hallucinated
+    $|stdlib function is the most common way one of these is wrong.
+    $|
+    $|Return refuted=true if you found a difference, if the API is not
+    $|what was claimed, or if you could not settle it. Return
+    $|refuted=false ONLY if you checked and they agree. Say which in
+    $|`why`, with the evidence you read.
+  )
+}
+
+///|
+/// Every package under `root`, found by looking for `moon.pkg`. Build,
+/// vendor and worktree trees are skipped: they hold thousands of packages
+/// nobody in this repository can edit, and a scout sent into one spends a
+/// call reading someone else's code.
+async fn discover_packages(root : String) -> Array[String] {
+  let found : Array[String] = []
+  walk(root, root, found, 0)
+  found.sort_by(lexicographic)
+  found
+}
+
+///|
+/// Lexicographic order over characters, which `Array::sort` on `String`
+/// does NOT give you: MoonBit's default string ordering compares LENGTH
+/// first, so "cli" sorts before "agent" and a package family ends up
+/// scattered across slices. Slicing wants "agent_tool/edit" next to
+/// "agent_tool/read", which is what makes a helper duplicated between two
+/// siblings visible to one scout.
+fn lexicographic(a : String, b : String) -> Int {
+  let left = a.to_array()
+  let right = b.to_array()
+  let limit = if left.length() < right.length() {
+    left.length()
+  } else {
+    right.length()
+  }
+  for index in 0..<limit {
+    if left[index] != right[index] {
+      return if left[index] < right[index] { -1 } else { 1 }
+    }
+  }
+  left.length() - right.length()
+}
+
+///|
+async fn walk(
+  root : String,
+  dir : String,
+  found : Array[String],
+  depth : Int,
+) -> Unit {
+  if depth > 8 {
+    return
+  }
+  let entries = @fs.readdir(dir) catch {
+    _ => return
+  }
+  if entries.contains("moon.pkg") || entries.contains("moon.pkg.json") {
+    let relative = if dir == root {
+      "."
+    } else {
+      dir[root.length() + 1:].to_string()
+    }
+    found.push(relative)
+  }
+  for entry in entries {
+    if skip_dir(entry) {
+      continue
+    }
+    let child = "\{dir}/\{entry}"
+    let kind = @fs.kind(child, follow_symlink=false) catch { _ => continue }
+    if kind is Directory {
+      walk(root, child, found, depth + 1)
+    }
+  }
+}
+
+///|
+fn skip_dir(name : String) -> Bool {
+  name is ("_build"
+  | ".mooncakes"
+  | "target"
+  | ".git"
+  | ".worktrees"
+  | ".repos"
+  | "node_modules"
+  | ".moonagent"
+  | ".claude") ||
+  name.has_prefix(".")
+}
+
+///|
+/// Cut the package list into slices of at most `size`. Consecutive
+/// packages stay together: `moon.pkg` paths sort into families, so a
+/// slice is usually one subtree, which is what makes a duplicated helper
+/// spanning two siblings visible to one scout.
+fn slice(packages : Array[String], size : Int) -> Array[Array[String]] {
+  let slices : Array[Array[String]] = []
+  let mut current : Array[String] = []
+  for name in packages {
+    current.push(name)
+    if current.length() >= size {
+      slices.push(current)
+      current = []
+    }
+  }
+  if !current.is_empty() {
+    slices.push(current)
+  }
+  slices
+}
+
+///|
+/// The survey report as findings. A malformed entry is skipped rather
+/// than failing the slice: one bad object should not cost the other
+/// findings in the same reply.
+fn decode_findings(report : Json) -> Array[Finding] {
+  guard report is { "findings": Array(entries), .. } else { return [] }
+  let findings : Array[Finding] = []
+  for entry in entries {
+    guard entry
+      is {
+        "file": String(file),
+        "line": Number(line, ..),
+        "category": String(category),
+        "title": String(title),
+        "lines_saved": Number(lines_saved, ..),
+        "evidence": String(evidence),
+        ..
+      } else {
+      continue
+    }
+    findings.push({
+      file,
+      line: line.to_int(),
+      category,
+      title,
+      lines_saved: lines_saved.to_int(),
+      evidence,
+    })
+  }
+  findings
+}
+
+///|
+fn value(args : @argparse.Matches, name : String, fallback : String) -> String {
+  match args.values.get(name) {
+    Some([value, ..]) => value
+    _ => fallback
+  }
+}
+
+///|
+/// A positive count from the argv, or the default — a garbage or
+/// non-positive value must not silently turn the sweep into nothing.
+fn count(args : @argparse.Matches, name : String, fallback : Int) -> Int {
+  let parsed = @string.parse_int(value(args, name, "")) catch { _ => 0 }
+  if parsed > 0 {
+    parsed
+  } else {
+    fallback
+  }
+}

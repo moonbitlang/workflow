@@ -377,6 +377,13 @@ ledger IS the child id, which is what lets a reader follow a row to whatever
 that child wrote. The handoff document, in full, is
 [docs/host-handoff.md](docs/host-handoff.md).
 
+[examples/simplify.mbtx](examples/simplify.mbtx) is a worked one: a
+simplification sweep over any MoonBit repository that runs EITHER way round.
+Inside a host it takes the host's runner, so its scouts get durable
+transcripts and appear in that host's UI; standalone it spawns
+`openseek subrun explore` itself. Only the runner differs — the workflow body
+is the same text, which is the property the two seams exist to give you.
+
 ## Claude Code and Codex as engines
 
 Two PROCESS SHIMS ship with this module: executables that speak the child
