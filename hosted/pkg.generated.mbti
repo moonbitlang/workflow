@@ -13,9 +13,7 @@ pub fn parse(Json) -> Context?
 // Errors
 
 // Types and methods
-pub struct Context {
-  // private fields
-}
+type Context
 pub fn Context::child_capacity(Self) -> Int
 pub fn Context::events_path(Self) -> String?
 pub fn Context::journal_path(Self) -> String?
