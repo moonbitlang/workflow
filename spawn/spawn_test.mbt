@@ -119,11 +119,7 @@ async test "a foreign contract engine gets workflows and replay for free" {
     #|printf '{"subrun_report": %s}\n' "$line"
   let wf1 = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      command: "sh",
-      args: ["-c", live],
-      cwd: None,
-      extra_env: None,
-      deadline_ms: None,
+      @spawn.LaunchSpec(command="sh", args=["-c", live])
     }),
     journal=@workflow.Journal::load(path),
   )
@@ -147,11 +143,7 @@ async test "a foreign contract engine gets workflows and replay for free" {
     #|printf '{"subrun_report": {"wrong": true}}\n'
   let wf2 = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      command: "sh",
-      args: ["-c", poisoned],
-      cwd: None,
-      extra_env: None,
-      deadline_ms: None,
+      @spawn.LaunchSpec(command="sh", args=["-c", poisoned])
     }),
     journal=@workflow.Journal::load(path),
   )

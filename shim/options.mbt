@@ -10,13 +10,33 @@
 ///   --writable        write-capable run (default: read-only unless kind = worker)
 ///   --schema <file>   JSON Schema the final answer must match
 ///   -- <args...>      passed through to the CLI unchanged
-pub(all) struct Options {
+///
+/// A dialect READS one; `parse` is how a shim gets it, off argv. A caller
+/// fabricating one (a dialect's own tests) goes through `Options(...)`,
+/// so a later setting costs no dialect anything.
+pub struct Options {
   command : String
   model : String?
   cwd : String?
   writable : Bool
   schema : String?
   extra : Array[String]
+}
+
+///|
+/// Options from their parts, for a caller that FABRICATES them instead of
+/// parsing argv. Only the binary is required — every other setting is a
+/// flag the operator did not pass, and `writable` defaults to the
+/// read-only run that argv defaults to.
+pub fn Options::Options(
+  command~ : String,
+  model? : String,
+  cwd? : String,
+  writable? : Bool = false,
+  schema? : String,
+  extra? : Array[String] = [],
+) -> Options {
+  { command, model, cwd, writable, schema, extra, }
 }
 
 ///|

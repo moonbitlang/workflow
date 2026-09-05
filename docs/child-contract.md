@@ -199,7 +199,7 @@ let runner = @spawn.contract_runner(launch=call => {
     argv.push("--max-steps")
     argv.push("\{steps}")
   }
-  { command: "openseek", args: argv, cwd: None, extra_env: None, deadline_ms: None }
+  @spawn.LaunchSpec(command="openseek", args=argv)
 })
 ```
 

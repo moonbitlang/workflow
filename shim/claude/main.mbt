@@ -141,29 +141,17 @@ fn claude_args(
 
 ///|
 test "argv: read-only by default, writable for worker, extras before the tool list" {
-  let request : @shim.Request = {
-    id: None,
-    kind: "explore",
-    max_steps: None,
-    input: Json::null(),
-    prompt: "why?",
-    schema: None,
-  }
-  let options : @shim.Options = {
-    command: "claude",
-    model: Some("opus"),
-    cwd: None,
-    writable: false,
-    schema: None,
-    extra: ["--max-budget-usd", "1"],
-  }
+  let request = @shim.Request(kind="explore", input=Json::null(), prompt="why?")
+  let options = @shim.Options(command="claude", model="opus", extra=[
+    "--max-budget-usd", "1",
+  ])
   assert_eq(claude_args(request, options, None), [
     "-p", "why?", "--output-format", "stream-json", "--verbose", "--model", "opus",
     "--max-budget-usd", "1", "--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit",
     "Bash",
   ])
-  let worker = { ..request, kind: "worker", }
-  let plain = { ..options, model: None, extra: [], }
+  let worker = @shim.Request(kind="worker", input=Json::null(), prompt="why?")
+  let plain = @shim.Options(command="claude")
   assert_eq(claude_args(worker, plain, Some("{}")), [
     "-p", "why?", "--output-format", "stream-json", "--verbose", "--json-schema",
     "{}", "--permission-mode", "acceptEdits", "--allowedTools", "Edit", "Write",
@@ -179,14 +167,17 @@ fn envelope_schema(request : @shim.Request) -> String? {
 
 ///|
 test "the envelope's schema becomes the inline --json-schema text" {
-  let request : @shim.Request = {
-    id: None,
-    kind: "explore",
-    max_steps: None,
-    input: Json::null(),
-    prompt: "why?",
-    schema: Some({ "type": "object" }),
-  }
+  let request = @shim.Request(
+    kind="explore",
+    input=Json::null(),
+    prompt="why?",
+    schema={ "type": "object" },
+  )
   assert_eq(envelope_schema(request), Some("{\"type\":\"object\"}"))
-  assert_eq(envelope_schema({ ..request, schema: None, }), None)
+  let unshaped = @shim.Request(
+    kind="explore",
+    input=Json::null(),
+    prompt="why?",
+  )
+  assert_eq(envelope_schema(unshaped), None)
 }
