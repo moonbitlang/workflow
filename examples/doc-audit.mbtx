@@ -1,9 +1,9 @@
 import {
-  "moonbitlang/async@0.21.1",
-  "moonbitlang/async@0.21.1/fs",
-  "moonbitlang/async@0.21.1/process",
-  "moonbitlang/workflow@0.6.0",
-  "moonbitlang/workflow@0.6.0/spawn",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/process",
+  "moonbitlang/workflow",
+  "moonbitlang/workflow/spawn",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/argparse",
   "moonbitlang/core/env",
@@ -315,8 +315,8 @@ async fn audit() -> Unit {
 
   // ---- Routing: KIND picks the engine, and every scout runs in the repo ----
   // The PUBLISHED shims, run by coordinate: no build step and no path to
-  // hard-code. Pinned to the version this script imports, so one run is
-  // one coherent set of published artifacts.
+  // hard-code. Unversioned, like this script's own imports, so a run takes
+  // the latest release of both — one coherent set of published artifacts.
   let shim = "moonbitlang/workflow/shim"
   let claude_model = model.unwrap_or(
     @env.get_env_var("DOC_AUDIT_CLAUDE").unwrap_or("claude-sonnet-5"),
@@ -334,7 +334,7 @@ async fn audit() -> Unit {
         "claude" =>
           {
             command: "moonx",
-            args: ["\{shim}/claude@0.6.0", "--model", claude_model, "--cwd", repo],
+            args: ["\{shim}/claude", "--model", claude_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),
@@ -342,7 +342,7 @@ async fn audit() -> Unit {
         "codex" =>
           {
             command: "moonx",
-            args: ["\{shim}/codex@0.6.0", "--model", codex_model, "--cwd", repo],
+            args: ["\{shim}/codex", "--model", codex_model, "--cwd", repo],
             cwd: Some(repo),
             extra_env: None,
             deadline_ms: Some(600_000),

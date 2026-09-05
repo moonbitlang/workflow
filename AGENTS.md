@@ -27,5 +27,9 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
   JSONL lines: when a CLI changes its output format, update the fixture
   AND the classifier together, never one of them.
 - The `.mbtx` scripts under `examples/` are not part of `moon test`: they
-  bind the PUBLISHED module by version in their import header, so bump
-  those pins when releasing.
+  bind the PUBLISHED module UNVERSIONED, so every run takes the latest
+  release. An interface change therefore reaches them the moment it is
+  published, not when someone remembers a pin — a release that breaks an
+  example must fix it in the same change. `moon run <script>` is the only
+  thing that compiles one: `moon check` takes the path as a directory
+  filter and silently checks nothing.

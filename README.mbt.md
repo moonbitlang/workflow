@@ -401,8 +401,9 @@ let runner = @spawn.contract_runner(launch=call => {
 the CLI, holding the parent's stdin-EOF cancel channel open, and framing
 stdout identically to the native build. It prints nothing of its own, so
 the child's JSONL reaches the runner unpolluted, and a warm start costs
-about 0.15s against an agent deadline measured in minutes. Pin the
-version (`…/shim/claude@0.6.0`) when a run must be reproducible.
+about 0.15s against an agent deadline measured in minutes. A bare
+coordinate takes the latest release, as `examples/` do; pin the version
+(`…/shim/claude@<version>`) when a run must be reproducible.
 
 Building locally is for developing the shims themselves, where the
 published version is not what you want to run:

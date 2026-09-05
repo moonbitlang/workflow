@@ -1,7 +1,7 @@
 import {
-  "moonbitlang/async@0.21.1",
-  "moonbitlang/workflow@0.6.0",
-  "moonbitlang/workflow@0.6.0/spawn",
+  "moonbitlang/async",
+  "moonbitlang/workflow",
+  "moonbitlang/workflow/spawn",
   "moonbitlang/core/env",
 }
 
@@ -29,15 +29,15 @@ async fn compose() -> Unit {
   let claude_model = args.get(1).unwrap_or("claude-haiku-4-5-20251001")
   let codex_model = args.get(2).unwrap_or("gpt-5.3-codex-spark")
   // The PUBLISHED shims, run by coordinate: no build step and no path to
-  // hard-code. Pinned to the version this script imports, so one run is
-  // one coherent set of published artifacts.
+  // hard-code. Unversioned, like this script's own imports, so a run takes
+  // the latest release of both — one coherent set of published artifacts.
   let shim = "moonbitlang/workflow/shim"
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => match call.kind {
       "claude" =>
         {
           command: "moonx",
-          args: ["\{shim}/claude@0.6.0", "--model", claude_model],
+          args: ["\{shim}/claude", "--model", claude_model],
           cwd: None,
           extra_env: None,
           deadline_ms: Some(180_000),
@@ -45,7 +45,7 @@ async fn compose() -> Unit {
       "codex" =>
         {
           command: "moonx",
-          args: ["\{shim}/codex@0.6.0", "--model", codex_model],
+          args: ["\{shim}/codex", "--model", codex_model],
           cwd: None,
           extra_env: None,
           deadline_ms: Some(180_000),
