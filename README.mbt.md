@@ -326,6 +326,55 @@ The wire contract in full — framing, cost accounting, terminal precedence,
 and what the reference engine reads from the envelope versus argv — is
 [docs/child-contract.md](docs/child-contract.md).
 
+## Running inside a host
+
+`contract_runner` is the outward seam: how a workflow starts a child. The
+`hosted` sub-package is the inward one: how a workflow that is ITSELF running
+inside a sandbox — an agent's scripting tool, a CI step, anything that runs
+code it did not write — learns what it may launch.
+
+Such a script must not choose the things that make its children
+accountable: which child ids it may use, where its ledger goes, how many
+children it may start. Those belong to the host that launched it, and the
+host knows them before the script begins. So the host writes them into one
+environment variable, `WORKFLOW_HOST`, and the script reads them here:
+
+```moonbit nocheck
+///|
+async fn main {
+  guard @hosted.context() is Some(ctx) else { return }
+  ctx.run(wf => {
+    wf.phase("survey")
+    let found = @workflow.parallel([
+      () => {
+        @workflow.attempt(() => wf.agent(prompt="where is X?", kind="explore"))
+      },
+      () => {
+        @workflow.attempt(() => wf.agent(prompt="who calls Y?", kind="explore"))
+      },
+    ])
+    for answer in @workflow.collect_ok(found) {
+      println(answer.stringify())
+    }
+  })
+}
+```
+
+The script names no id, no path, and no ceiling. Three things are enforced
+for it: child ids come from the block the host reserved (allocated from the
+same counter the host uses for children of its own, so the two cannot
+collide); the block is the launch ceiling, so a call past its end is refused
+rather than launched unnamed; and every launch is bracketed in a sidecar the
+host can tail, because a `JournalEntry` carries an outcome and so lands only
+when a call resolves — a watcher with only the ledger would learn of a child
+no earlier than its completion.
+
+The library learns no engine's command line. The child argv arrives as data
+with `{kind}` and `{child}` substituted per call, and `attempt_id` in the
+ledger IS the child id, which is what lets a reader follow a row to whatever
+that child wrote. The handoff document, in full, is
+[docs/host-handoff.md](docs/host-handoff.md).
+
 ## Claude Code and Codex as engines
 
 Two PROCESS SHIMS ship with this module: executables that speak the child
