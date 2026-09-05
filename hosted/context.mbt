@@ -25,20 +25,20 @@ const HostVar = "WORKFLOW_HOST"
 ///|
 /// The handoff a host wrote for one run.
 ///
-/// Opaque on purpose. A script passes this value along; every field is a
-/// coordinate whose only correct value is the one that arrived, and a script
-/// with the standing to rewrite one would have the standing to make its own
-/// children unaccountable.
-pub struct Context {
-  priv exe : String
-  priv child_args : Array[String]
-  priv child_id : String
-  priv first_child : Int
-  priv child_count : Int
-  priv journal_path : String?
-  priv events_path : String?
-  priv cwd : String?
-  priv deadline_ms : Int?
+/// ABSTRACT, like `Runner` and `Journal`: the layout is not the contract. A
+/// script passes this value along; every field is a coordinate whose only
+/// correct value is the one that arrived, and a script with the standing to
+/// rewrite one would have the standing to make its own children unaccountable.
+struct Context {
+  exe : String
+  child_args : Array[String]
+  child_id : String
+  first_child : Int
+  child_count : Int
+  journal_path : String?
+  events_path : String?
+  cwd : String?
+  deadline_ms : Int?
 }
 
 ///|
