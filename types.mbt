@@ -10,7 +10,11 @@
 /// label reads `stage:instance` (`verify:claude:3`, `survey:journal`), so
 /// a reader can group the instances of one stage by the prefix before the
 /// first colon.
-pub(all) struct AgentCall {
+///
+/// The workflow BUILDS one and engines READ it; a caller seeding a journal
+/// by hand goes through `AgentCall(...)`, so the replay identity can grow
+/// a field without invalidating every hand-written call.
+pub struct AgentCall {
   kind : String
   input : Json
   label : String
@@ -28,10 +32,31 @@ pub(all) struct AgentCall {
 } derive(Eq, ToJson, FromJson)
 
 ///|
+/// A call from its parts: the work (`kind`, `input`) and how a reader
+/// names it (`label`). The rest is optional because the common call has
+/// no ceiling, no shape, and no namespace — `scope` defaults to unscoped,
+/// which is what `""` means on the field.
+pub fn AgentCall::AgentCall(
+  kind~ : String,
+  input~ : Json,
+  label~ : String,
+  max_steps? : Int,
+  scope? : String = "",
+  schema? : Json,
+) -> AgentCall {
+  { kind, input, label, max_steps, scope, schema, }
+}
+
+///|
 /// The cost accounting of one attempt to run an agent, captured whether or
 /// not the attempt produced a report: a timed-out child spent real tokens,
 /// and losing that spend would understate every budget built on top.
-pub(all) struct AgentAttempt {
+///
+/// Engines BUILD one through `AgentAttempt(...)`; everyone else READS the
+/// fields. That split is what lets a later accounting figure arrive as one
+/// more optional argument instead of breaking every engine that ever
+/// wrote the record out by hand.
+pub struct AgentAttempt {
   attempt_id : String
   steps_used : Int
   prompt_tokens : Int
@@ -42,6 +67,21 @@ pub(all) struct AgentAttempt {
   /// journal line when `None`, so earlier journals load unchanged.
   cost_usd : Double?
 } derive(Eq, ToJson, FromJson)
+
+///|
+/// An attempt's accounting from its parts. Everything an engine always
+/// knows is named; `cost_usd` is optional because an engine that prices
+/// nothing simply leaves it out — which is what `None` means on the field:
+/// unknown, never free.
+pub fn AgentAttempt::AgentAttempt(
+  attempt_id~ : String,
+  steps_used~ : Int,
+  prompt_tokens~ : Int,
+  completion_tokens~ : Int,
+  cost_usd? : Double,
+) -> AgentAttempt {
+  { attempt_id, steps_used, prompt_tokens, completion_tokens, cost_usd, }
+}
 
 ///|
 /// Why an agent produced no usable report — the workflow-facing vocabulary

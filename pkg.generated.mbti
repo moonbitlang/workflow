@@ -39,15 +39,16 @@ pub suberror WorkflowError {
 pub impl Show for WorkflowError
 
 // Types and methods
-pub(all) struct AgentAttempt {
+pub struct AgentAttempt {
   attempt_id : String
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
   cost_usd : Double?
 } derive(Eq, ToJson, @json.FromJson)
+pub fn AgentAttempt::AgentAttempt(attempt_id~ : String, steps_used~ : Int, prompt_tokens~ : Int, completion_tokens~ : Int, cost_usd? : Double) -> Self
 
-pub(all) struct AgentCall {
+pub struct AgentCall {
   kind : String
   input : Json
   label : String
@@ -55,6 +56,7 @@ pub(all) struct AgentCall {
   scope : String
   schema : Json?
 } derive(Eq, ToJson, @json.FromJson)
+pub fn AgentCall::AgentCall(kind~ : String, input~ : Json, label~ : String, max_steps? : Int, scope? : String, schema? : Json) -> Self
 
 pub enum AgentDisposition {
   Succeeded

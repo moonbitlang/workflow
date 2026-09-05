@@ -9,7 +9,11 @@
 /// One request as the runner sent it (`docs/child-contract.md` §2), or a
 /// bare input line for hand-driven runs. `prompt` is derived from `input`
 /// the way `Workflow::agent` builds it: a `query` plus optional `hints`.
-pub(all) struct Request {
+///
+/// A shim READS one; `parse` is how a real shim gets it, off the wire.
+/// A caller fabricating one (a dialect's own tests) goes through
+/// `Request(...)`, so a later envelope field costs no dialect anything.
+pub struct Request {
   id : String?
   kind : String
   max_steps : Int?
@@ -19,6 +23,21 @@ pub(all) struct Request {
   /// (envelope `schema`); the shims hand it to the CLI's structured-output
   /// flag, and it takes precedence over a `--schema` file on argv.
   schema : Json?
+}
+
+///|
+/// A request from its parts, for a caller that FABRICATES one instead of
+/// reading it off the wire. Only the work is required: the id, the step
+/// ceiling and the schema are absent on a hand-driven line too.
+pub fn Request::Request(
+  kind~ : String,
+  input~ : Json,
+  prompt~ : String,
+  id? : String,
+  max_steps? : Int,
+  schema? : Json,
+) -> Request {
+  { id, kind, max_steps, input, prompt, schema, }
 }
 
 ///|

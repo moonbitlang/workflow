@@ -13,13 +13,12 @@ priv suberror EngineBoom {
 
 ///|
 fn attempt_for(call : @workflow.AgentCall) -> @workflow.AgentAttempt {
-  {
-    attempt_id: "sr-\{call.label}",
-    steps_used: 1,
-    prompt_tokens: 7,
-    completion_tokens: 3,
-    cost_usd: None,
-  }
+  @workflow.AgentAttempt(
+    attempt_id="sr-\{call.label}",
+    steps_used=1,
+    prompt_tokens=7,
+    completion_tokens=3,
+  )
 }
 
 ///|
@@ -478,13 +477,12 @@ async test "the default label is the prompt's first line, cut well-formed" {
 
 ///|
 async test "outcomes and failures survive the JSON round trip" {
-  let attempt : @workflow.AgentAttempt = {
-    attempt_id: "sr-1",
-    steps_used: 4,
-    prompt_tokens: 11,
-    completion_tokens: 5,
-    cost_usd: None,
-  }
+  let attempt = @workflow.AgentAttempt(
+    attempt_id="sr-1",
+    steps_used=4,
+    prompt_tokens=11,
+    completion_tokens=5,
+  )
   let outcomes : Array[@workflow.AgentOutcome] = [
     Finished(value={ "answer": 42 }, attempt~),
     DidNotFinish(
@@ -557,13 +555,15 @@ async fn shaped_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
   } else {
     { "verdict": "real", "schema_seen": call.schema is Some(_) }
   }
-  Finished(value~, attempt={
-    attempt_id: "sr-\{call.label}",
-    steps_used: 1,
-    prompt_tokens: 10,
-    completion_tokens: 5,
-    cost_usd: None,
-  })
+  Finished(
+    value~,
+    attempt=@workflow.AgentAttempt(
+      attempt_id="sr-\{call.label}",
+      steps_used=1,
+      prompt_tokens=10,
+      completion_tokens=5,
+    ),
+  )
 }
 
 ///|
@@ -623,17 +623,16 @@ async test "the schema is part of the work identity and reaches the runner" {
 async fn priced_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
   @async.pause()
   let priced = call.label.has_prefix("priced")
-  Finished(value="ok", attempt={
-    attempt_id: "sr-\{call.label}",
-    steps_used: 1,
-    prompt_tokens: 1,
-    completion_tokens: 1,
-    cost_usd: if priced {
-      Some(0.25)
-    } else {
-      None
-    },
-  })
+  Finished(
+    value="ok",
+    attempt=@workflow.AgentAttempt(
+      attempt_id="sr-\{call.label}",
+      steps_used=1,
+      prompt_tokens=1,
+      completion_tokens=1,
+      cost_usd?=if priced { Some(0.25) } else { None },
+    ),
+  )
 }
 
 ///|
@@ -657,13 +656,13 @@ async test "cost_usd sums the engines' own figures and ignores unknowns" {
 
 ///|
 test "a priced attempt survives the JSON round trip on both arms" {
-  let priced : @workflow.AgentAttempt = {
-    attempt_id: "sr-9",
-    steps_used: 2,
-    prompt_tokens: 7,
-    completion_tokens: 3,
-    cost_usd: Some(0.25),
-  }
+  let priced = @workflow.AgentAttempt(
+    attempt_id="sr-9",
+    steps_used=2,
+    prompt_tokens=7,
+    completion_tokens=3,
+    cost_usd=0.25,
+  )
   for
     outcome in [
       @workflow.Finished(value="ok", attempt=priced),

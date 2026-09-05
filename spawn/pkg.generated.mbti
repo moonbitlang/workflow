@@ -39,13 +39,14 @@ pub enum ContractTerminal {
   Failed(String)
 } derive(Eq)
 
-pub(all) struct LaunchSpec {
+pub struct LaunchSpec {
   command : String
   args : Array[String]
   cwd : String?
   extra_env : Map[String, String]?
   deadline_ms : Int?
 } derive(Eq)
+pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int) -> Self
 
 // Type aliases
 
