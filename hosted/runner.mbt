@@ -90,6 +90,26 @@ pub fn Context::runner(
       "kind": call.kind,
       "label": call.label,
     })
+    let progress = @spawn.ContractProgress()
+    // Cancellation unwinds past the result, but the live counters survive.
+    // Close the launch bracket after child teardown without turning the error
+    // into an outcome that the workflow could journal.
+    errdefer {
+      let status = if @async.is_being_cancelled() {
+        "cancelled"
+      } else {
+        "failed"
+      }
+      @async.protect_from_cancel(() => {
+        emit_line(self.events_path, {
+          "event": "agent_finished",
+          "child": child,
+          "status": status,
+          "steps": progress.steps,
+          "tokens": progress.prompt_tokens + progress.completion_tokens,
+        })
+      })
+    }
     let result = @spawn.contract_run(
       command=self.exe,
       args=self.child_args.map(token => {
@@ -102,6 +122,7 @@ pub fn Context::runner(
       schema?=call.schema,
       wall_deadline_ms=self.deadline_ms.unwrap_or(DefaultDeadlineMs),
       cwd?=self.cwd,
+      progress~,
     )
     let outcome = outcome_of(child, result)
     emit_line(self.events_path, {

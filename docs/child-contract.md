@@ -164,8 +164,8 @@ attempt.
 ## 7. The reference engine: what `openseek subrun` honours
 
 `openseek subrun <kind>` (source: `cmd/openseek/subrun.mbt` in the openseek
-repository; parent-side wrapper `agent_subrun.run_subrun`; workflow
-adapter `agent_workflow.subrun_runner`) speaks this contract natively. It
+repository; parent-side wrapper `agent_subrun.run_subrun`) speaks this
+contract natively. It
 also has behaviour the contract text above leaves open. This section makes
 that behaviour explicit so that a script driving `openseek` directly through
 `contract_runner` gets the run it asked for.
@@ -188,8 +188,7 @@ children. Sending the v1 envelope is the supported form.
 **The consequence that bites:** a launch spec must MIRROR the call's kind
 and step ceiling onto argv, or the journal will record a `max_steps` the
 child never enforced (its scouts run to the kind default of 100 steps).
-`agent_workflow.subrun_runner` does this for you; a script that builds the
-`LaunchSpec` itself must do the same:
+A script that builds the `LaunchSpec` must supply both:
 
 ```moonbit nocheck
 ///|
@@ -227,20 +226,21 @@ transcripts passes those flags itself.
 
 ### 7.3 Kinds
 
-| Kind | Needs a key | `input` schema | Report (`subrun_report`) | Default steps | Adapter deadline |
-| --- | --- | --- | --- | --- | --- |
-| `echo` | no | any JSON | the input, echoed back verbatim; the child first emits one `agent_step` (step 1) and one `usage` (7 prompt / 3 completion / 10 total tokens) | — | 600 s |
-| `explore` | yes | `{"query": string, "hints"?: string}` — `query` non-blank | `{"schema_version": 1, "answer": string ≤ 8 000 chars, "citations": [{"file", "line"?, "note"?}] ≤ 20, "unresolved"?: string}` | 100 | 600 s |
-| `review` | yes | `{"goal": string, "sha"?: string, "dirty"?: bool}` — `goal` non-blank; `sha`+`dirty` describe the baseline the goal was set against | `{"schema_version", "scope": {"base", "head", "files"}, "findings": [{"file", "line"?, "severity", "category", "title", "detail", "suggestion"?}], "summary", "stats": {"files_reviewed", "findings", "build", "tests"}}` | 100 | 900 s |
-| `worker` | yes | `{"task", "context"?, "worker_root", "worker_admin_dir", "deny_roots": [abs paths], "allowed_paths": [non-empty], "base_oid"}` — all paths absolute, arrays non-empty | `{"schema_version", "status", "summary", "verification"}` | 300 | 2 700 s |
+| Kind | Needs a key | `input` schema | Report (`subrun_report`) | Default steps |
+| --- | --- | --- | --- | --- |
+| `echo` | no | any JSON | the input, echoed back verbatim; the child first emits one `agent_step` (step 1) and one `usage` (7 prompt / 3 completion / 10 total tokens) | — |
+| `explore` | yes | `{"query": string, "hints"?: string}` — `query` non-blank | `{"schema_version": 1, "answer": string ≤ 8 000 chars, "citations": [{"file", "line"?, "note"?}] ≤ 20, "unresolved"?: string}` | 100 |
+| `review` | yes | `{"goal": string, "sha"?: string, "dirty"?: bool}` — `goal` non-blank; `sha`+`dirty` describe the baseline the goal was set against | `{"schema_version", "scope": {"base", "head", "files"}, "findings": [{"file", "line"?, "severity", "category", "title", "detail", "suggestion"?}], "summary", "stats": {"files_reviewed", "findings", "build", "tests"}}` | 100 |
+| `worker` | yes | `{"task", "context"?, "worker_root", "worker_admin_dir", "deny_roots": [abs paths], "allowed_paths": [non-empty], "base_oid"}` — all paths absolute, arrays non-empty | `{"schema_version", "status", "summary", "verification"}` | 300 |
 
-"Adapter deadline" is the wall deadline `agent_workflow.subrun_runner`
-applies per kind when the caller sets none; `contract_runner` on its own
-uses its flat default. `worker` is write-capable and expects a provisioned
-git worktree described by its input: drive it through
-`agent_workflow.worker`, which provisions the worktree, confines it, and
-captures the outcome from git evidence, rather than through a raw
-`contract_runner` call.
+Wall deadlines belong to the runner configuration: `contract_runner` and
+`hosted` default to 600 s, regardless of kind. The former OpenSeek
+`agent_workflow` adapter supplied per-kind defaults but has been removed.
+`worker` remains write-capable and expects a provisioned git worktree
+described by its input. A host-side controller must provision that worktree,
+validate the changed paths, capture git evidence, and handle integration.
+Neither `contract_runner` nor `hosted` supplies that controller, and the
+bundled OpenSeek agent workflows currently use read-only children.
 
 Input validation: `worker` geometry and a blank `review` goal are reported
 as a `command_error` event BEFORE any key is required, so a miswired script
