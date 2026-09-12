@@ -2,6 +2,7 @@ _build/
 target/
 .mooncakes/
 .DS_Store
+.claude/
 # Journals and HTML the example workflows write next to where they run.
 *.jsonl
 *.jsonl.html

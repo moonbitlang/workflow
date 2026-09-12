@@ -84,6 +84,13 @@ The `started` line exists because the journal cannot report a launch: a
 It carries the child id so a watcher can begin following that child's own
 record immediately.
 
+If the caller cancels a running child, the runner tears down the child, writes
+`agent_finished` with `status="cancelled"` and the usage observed so far, then
+re-raises cancellation. The sidecar write is protected from cancellation so
+cooperative teardown can close the launch bracket. It does not turn a cancelled
+call into a journalled outcome. Sidecar writes remain best effort; a process
+that is hard-killed cannot guarantee a final event.
+
 ## The join
 
 In every journal entry this runner writes, `attempt_id` **is the child id** —

@@ -100,3 +100,51 @@ async test "a run with no handoff still works, and writes no ledger" {
   // not an error: `context()` returns None and the script does its own work.
   assert_true(@hosted.context() is None)
 }
+
+///|
+async test "cancellation closes the sidecar bracket and still re-raises" {
+  let dir = @fs.tmpdir(prefix="hosted-cancel-")
+  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  let document = handoff(dir)
+  guard document is Object(fields) else { fail("expected an object") }
+  // No tool subprocesses: the shell blocks on the open cancellation pipe.
+  fields["child_args"] = ["-c", "read line; while read line; do :; done"]
+  guard @hosted.parse(document) is Some(ctx) else {
+    fail("the handoff must read")
+  }
+  @async.with_task_group() <| group => {
+    let task = group.spawn(() => {
+      ctx.run(wf => wf.agent(prompt="q", kind="explore"))
+    })
+    // Wait for the actual sidecar rather than assuming the runner started
+    // within a fixed delay. Only absence means it has not written yet.
+    let started = @async.with_timeout_opt(5_000, () => {
+      while !@fs.exists("\{dir}/events.jsonl") {
+        @async.sleep(10)
+      }
+      while !@fs.read_file("\{dir}/events.jsonl")
+            .text()
+            .contains("agent_started") {
+        @async.sleep(10)
+      }
+    })
+    assert_true(started is Some(_))
+    task.cancel()
+    try task.wait() catch {
+      error => assert_true(@async.is_cancellation_error(error))
+    } noraise {
+      _ => fail("cancellation must re-raise, not return an outcome")
+    }
+  }
+  let events = @fs.read_file("\{dir}/events.jsonl").text()
+  let lines = events.trim().split("\n").collect()
+  assert_eq(lines.length(), 2)
+  assert_true(lines[0].contains("\"event\":\"agent_started\""))
+  assert_true(lines[1].contains("\"event\":\"agent_finished\""))
+  assert_true(lines[1].contains("\"child\":\"run7-sr-5\""))
+  assert_true(lines[1].contains("\"status\":\"cancelled\""))
+  assert_true(lines[1].contains("\"steps\":0"))
+  assert_true(lines[1].contains("\"tokens\":0"))
+  let journal = @workflow.Journal::load("\{dir}/journal.jsonl")
+  assert_eq(journal.prior().length(), 0)
+}
