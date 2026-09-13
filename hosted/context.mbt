@@ -62,76 +62,79 @@ pub fn context() -> Context? {
 /// context — a half-read handoff would name child ids the host never reserved,
 /// or a ledger path nothing is watching.
 pub fn parse(json : Json) -> Context? {
-  guard json is Object(fields) else { return None }
-  guard fields.get("v") is Some(Number(1, ..)) else { return None }
-  guard string_at(fields, "exe") is Some(exe) &&
-    string_at(fields, "child_id") is Some(child_id) &&
-    strings_at(fields, "child_args") is Some(child_args) &&
-    ids_at(fields) is Some((first_child, child_count)) else {
+  guard json
+    is {
+      "v": 1,
+      "exe": String(exe),
+      "child_args": Array(child_args),
+      "child_id": String(child_id),
+      "ids": Array([Number(first, ..), Number(count, ..)]),
+      "journal"? : journal,
+      "events"? : events,
+      "cwd"? : cwd,
+      "deadline_ms"? : deadline_ms,
+      ..
+    } else {
     return None
   }
-  // A child id template that consumes no ordinal would name every child alike,
-  // and the second to write its transcript would land on the first's.
+  // A coordinate that arrived but is unusable is as good as missing: an empty
+  // `exe` names no engine, an empty template runs nothing, and a child-id
+  // template that consumes no ordinal would name every child alike, so the
+  // second to write its transcript would land on the first's.
+  guard !exe.is_empty() else { return None }
   guard child_id.contains(OrdinalPlaceholder) else { return None }
+  guard child_argv(child_args) is Some(argv) else { return None }
+  // A block of unknown size is not a block: both bounds must be present and
+  // positive, and a script that assumed one would be inventing the ceiling it
+  // is supposed to be under.
+  let first_ordinal = first.to_int()
+  let ordinal_count = count.to_int()
+  guard first_ordinal > 0 && ordinal_count > 0 else { return None }
   Some({
     exe,
-    child_args,
+    child_args: argv,
     child_id,
-    first_child,
-    child_count,
-    journal_path: string_at(fields, "journal"),
-    events_path: string_at(fields, "events"),
-    cwd: string_at(fields, "cwd"),
-    deadline_ms: int_at(fields, "deadline_ms"),
+    first_child: first_ordinal,
+    child_count: ordinal_count,
+    journal_path: optional_string(journal),
+    events_path: optional_string(events),
+    cwd: optional_string(cwd),
+    deadline_ms: optional_int(deadline_ms),
   })
 }
 
 ///|
-/// The reserved ordinals, as `[first, count]`. Both must be present together
-/// and positive: a block of unknown size is not a block, and a script that
-/// assumed one would be inventing the ceiling it is supposed to be under.
-fn ids_at(fields : Map[String, Json]) -> (Int, Int)? {
-  guard fields.get("ids") is Some(Array([first, count])) else { return None }
-  guard first is Number(first, ..) && count is Number(count, ..) else {
-    return None
-  }
-  let first = first.to_int()
-  let count = count.to_int()
-  if first > 0 && count > 0 {
-    Some((first, count))
-  } else {
-    None
-  }
-}
-
-///|
-fn string_at(fields : Map[String, Json], name : String) -> String? {
-  match fields.get(name) {
-    Some(String(value)) if !value.is_empty() => Some(value)
-    _ => None
-  }
-}
-
-///|
-fn int_at(fields : Map[String, Json], name : String) -> Int? {
-  match fields.get(name) {
-    Some(Number(value, ..)) => Some(value.to_int())
-    _ => None
-  }
-}
-
-///|
-fn strings_at(fields : Map[String, Json], name : String) -> Array[String]? {
-  guard fields.get(name) is Some(Array(items)) else { return None }
+/// The child argv template: a non-empty list of strings, or nothing. An empty
+/// template names no program to run.
+fn child_argv(items : Array[Json]) -> Array[String]? {
   let out : Array[String] = []
   for item in items {
-    guard item is String(value) else { return None }
-    out.push(value)
+    guard item is String(token) else { return None }
+    out.push(token)
   }
   if out.is_empty() {
     None
   } else {
     Some(out)
+  }
+}
+
+///|
+/// A coordinate the host may omit. Absent, of the wrong type, and empty all
+/// mean "unset": a host that named no ledger is the same as one that wrote a
+/// blank path.
+fn optional_string(value : Json?) -> String? {
+  match value {
+    Some(String(text)) if !text.is_empty() => Some(text)
+    _ => None
+  }
+}
+
+///|
+fn optional_int(value : Json?) -> Int? {
+  match value {
+    Some(Number(number, ..)) => Some(number.to_int())
+    _ => None
   }
 }
 
