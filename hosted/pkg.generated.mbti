@@ -8,8 +8,6 @@ import {
 // Values
 pub fn context() -> Context?
 
-pub fn parse(Json) -> Context?
-
 // Errors
 
 // Types and methods
