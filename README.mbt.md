@@ -1,16 +1,91 @@
 # moonbitlang/workflow
 
-Engine-agnostic multi-agent workflow orchestration with journaled
-replay/resume — a MoonBit take on the workflow-as-code model: a workflow
-is an ordinary async program, the "graph" unfolds as it runs, and
-durability comes from replaying a journal of typed outcomes rather than
-from a static DAG.
+Write a multi-agent workflow as an ordinary async MoonBit program. Share
+concurrency and call limits across its agents, choose how failures affect
+each stage, and resume completed work from a journal. The program's loops
+and branches determine what runs; there is no separate graph to declare.
 
 The core package never spawns anything. Its one seam is `Runner`: a
 single async function from `AgentCall` to `AgentOutcome`. Engines plug
 in from the outside — through the `spawn` sub-package's child-contract
 implementation for out-of-process engines, or any in-process function;
 tests plug in fakes, which is why everything below runs hermetically.
+
+## Setup and package map
+
+Add the module to a consuming project:
+
+```sh
+moon add moonbitlang/workflow
+```
+
+Import the packages you use in that project's `moon.pkg`. For the examples
+below, which also use the async runtime:
+
+```moonbit nocheck
+import {
+  "moonbitlang/workflow",
+  "moonbitlang/async",
+}
+
+supported_targets = "native+wasm"
+```
+
+Run with `moon run --target native <package>` or `--target wasm`. Every
+package in this module supports these two targets. Blocks marked `mbt check`
+in these READMEs are compiled and run by `moon test`; shell commands and
+`nocheck` snippets are usage instructions, not automatic agent launches.
+
+| Package | Use it for |
+| --- | --- |
+| [`workflow`](README.mbt.md) | Calls, typed outcomes, concurrency, retries, replay, and accounting. |
+| [`workflow/spawn`](spawn/README.mbt.md) | Running a process that speaks the child contract. |
+| [`workflow/hosted`](hosted/README.mbt.md) | Running under a host that supplies child ids, launch limits, and journal paths. |
+| [`workflow/shim`](shim/README.mbt.md) | Building adapters from a foreign CLI's output to the child contract. |
+| [`workflow/shim/claude`](shim/claude/README.mbt.md) | Executable adapter for Claude Code. |
+| [`workflow/shim/codex`](shim/codex/README.mbt.md) | Executable adapter for Codex. |
+| [`workflow/viz`](viz/README.mbt.md) | Rendering a journal as a standalone HTML report. |
+| [`workflow/examples/scout`](examples/scout/README.mbt.md) | A small executable demonstrating process calls and journal replay. |
+
+```mermaid
+flowchart TD
+  Program["Your async program"] --> Core["workflow<br/>calls and policies"]
+  Core <--> Journal["Journal<br/>resolved outcomes"]
+  Core --> Runner["Runner"]
+  Runner --> Fake["In-process engine<br/>or test fake"]
+  Runner --> Spawn["spawn<br/>child contract"]
+  Host["Host handoff"] --> Hosted["hosted<br/>ids and sidecar"]
+  Hosted --> Runner
+  Spawn --> Engine["Contract-speaking<br/>engine"]
+  Spawn --> Shim["shim/claude<br/>or shim/codex"]
+  Shim --> CLI["Agent CLI"]
+  Journal --> Viz["viz: HTML report"]
+```
+
+The arrows show runtime handoffs, not package imports. `hosted` and `spawn`
+depend on the core; the core has no dependency on a particular engine.
+
+## Calls and limits
+
+Construct `Workflow(runner=...)` once and share it across concurrent tasks.
+
+| Setting or method | Meaning |
+| --- | --- |
+| `max_concurrent` | Maximum simultaneous runner invocations; default 8, minimum 1. |
+| `max_calls` | Maximum live runner invocations in this workflow; omitted means unlimited, 0 allows replay only. |
+| `replay_scope` | Extra identity string, default empty. Set it when work depends on a repository revision or configuration absent from the input. |
+| `agent(prompt~, kind~)` | Sends `{query, hints?}`; the label defaults to a shortened prompt. |
+| `agent_call(kind~, input~, label~)` | Sends the exact JSON shape a kind requires. |
+| `agent_as[T : FromJson](...)` | Calls `agent`, then decodes the complete report as `T`. |
+| `calls_made()` / `calls_replayed()` | Live runner invocations / outcomes served from prior journal entries. |
+| `tokens_spent()` / `cost_usd()` | Usage from resolved live outcomes in this run. Historical replay usage is excluded. |
+
+The call allowance counts entry into the runner, even if it refuses work or
+cannot spawn a process. Queue cancellation and replay consume no allowance.
+`max_steps` and `schema` are requests to the runner; the core does not enforce
+an engine's step limit or JSON Schema. `agent_as` independently decodes the
+returned value. There is no core token budget or wall deadline; process
+deadlines belong to `spawn` and `hosted`.
 
 ## The failure model
 
@@ -21,15 +96,15 @@ Everything else follows from three decisions:
   `AgentFailure` cause; `attempt` folds it into a `Result` for fan-out
   sites. A failure is never a silent `null`: it either raises
   `AgentFailed` or lands in `attempt`'s `Result`.
-- **Cost is never lost.** `AgentOutcome` carries the attempt's spend on
+- **Resolved failures retain their usage.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
   Engines that price their work report it too: `cost_usd()` sums their
   figures, and stays a floor when an engine in the mix prices nothing.
-- **Cancellation is not failure.** Engine bugs and cancellation `raise`
-  through and cancel the task group; the launch allowance only counts
-  agents that actually launched — a call cancelled while queued costs
-  nothing.
+- **Cancellation propagates.** Engine bugs and cancellation `raise`
+  through and cancel the task group. They do not produce a journalled
+  outcome. Usage from an interrupted call is not added to the core counters;
+  adapters that need it during teardown can use `spawn.ContractProgress`.
 
 ## A workflow, end to end
 
@@ -93,13 +168,29 @@ policies are one identifier each: `all_ok`, `collect_ok(min_ok?)`,
 `quorum(need~)`. Both fan-outs are one task group: a raise inside one
 cancels the rest and unwinds the whole stage, so nothing outlives it.
 
-A model that answered off-schema or ran out of steps is often worth
-asking again. `retry` wraps a RAISING step in the runtime's own retry
-loop — `max_retry` extra attempts, spaced by `backoff` — and stops at
-anything re-running cannot fix: a human's `Skipped` refusal, a spent
-launch allowance, an engine bug, cancellation. Each attempt is a real
-launch (its own slot, allowance, and tokens), and the journal records
-each one, so a resumed run replays the attempt that finally answered:
+| Policy | When to use it |
+| --- | --- |
+| `parallel` / `fan_out` with `attempt` | Keep a `Result` for each input, in input order. Typed workflow failures stay in their own slots. |
+| `parallel_all` | Every branch is required; a raise cancels siblings still running. |
+| `all_ok` | Require all already-collected results to succeed; raises the first error in array order. |
+| `collect_ok(min_ok=0)` | Keep successes, optionally requiring a minimum count. |
+| `quorum(need~)` | Require a count of successful calls; it does not compare answers for agreement. |
+
+`all_ok`, `collect_ok`, and `quorum` inspect completed results; they do not
+cancel work early. `attempt` captures only `WorkflowError`, including
+`AgentFailed`, `CallBudgetExhausted`, and `QuorumNotReached`.
+
+A model that answered off-schema or ran out of steps can be worth asking
+again. `retry` wraps a raising step with `max_retry` extra attempts (default
+1), spaced by `backoff` (default `Immediate`). Its default `worth_retrying`
+policy retries `AgentFailed` except `Skipped`; it does not retry a spent
+call budget or unmet quorum. A custom `retriable` callback can change that
+typed-error policy. Engine bugs and cancellation always propagate.
+
+Put `attempt` around `retry`, rather than passing `retry` a step that already
+returns `Result`. Each live retry uses a slot and call allowance, and its
+resolved outcome is journalled. On resume, an earlier successful report can
+be replayed:
 
 ```mbt check
 ///|
@@ -281,12 +372,45 @@ async test "the second generation replays instead of re-paying" {
 ```
 
 File-backed journals (`@workflow.Journal::load(path)`) are append-only JSONL,
-accumulated across generations. A torn final line — the signature of
-crashing mid-append — is dropped AND repaired on disk; corruption
-anywhere else raises `JournalCorrupted`; the repair truncates to the last
-healthy line and never re-encodes what it read. Identical concurrent
-calls are intentional samples (three identical verifiers) and consume
-entries as a multiset.
+accumulated across generations. A malformed final line is dropped and the
+file repaired; corruption anywhere else raises `JournalCorrupted`. Repair
+preserves the healthy bytes without re-encoding them. Identical concurrent
+calls are treated as intentional samples, such as three identical
+verifiers, and consume separate prior entries.
+
+```mermaid
+flowchart TD
+  Call["Call identity: kind, input, max_steps, scope, schema"] --> Candidate{"Prior replay candidate?"}
+  Candidate -->|Success first, then Skipped| Validate{"Runner accepts candidate?"}
+  Validate -->|Serve| Replay["Return or raise without a launch"]
+  Validate -->|Rerun| Candidate
+  Candidate -->|None left| Slot["Acquire concurrency slot and check call budget"]
+  Slot --> Live["Invoke runner"]
+  Live -->|Resolved outcome| Record["Account usage and append journal entry"]
+  Live -->|Cancellation or infrastructure error| Raise["Re-raise; no outcome entry"]
+  Record --> Result["Return report or raise AgentFailed"]
+```
+
+Replay is from prior entries only: two identical calls in the same live run
+still execute twice. Among matching prior entries, successes are considered
+in file order before recorded `Skipped` refusals. Other failures are not
+replay candidates. Labels, phases, and timestamps do not affect identity.
+
+Use one writing workflow process per journal path. Appends are serialized
+within a journal instance, not across processes. `Journal::load` is suitable
+for resuming a stopped writer, not watching an active one; use
+[`viz`](viz/README.mbt.md) for a reader that never repairs the source file.
+A complete final entry missing only its newline is retained and the newline
+is restored. A malformed tail is removed. Each stored entry has the
+versioned envelope `{"v":1,"e":...}`. `prior()` and `recorded()` return copies
+of the loaded entries and this instance's new outcomes respectively.
+
+`agent_as` decodes after the raw report has been recorded. If decoding fails,
+the journal still holds a `Finished` raw report, and resume can reproduce
+the same decode error. Change the input, schema, or scope when the task's
+meaning changes, or reject an unsuitable candidate in `validate_replay`.
+The journal does not make arbitrary side effects exactly once: a process
+can finish work and crash before its outcome is durably recorded.
 
 A v1 line that carries no entry is metadata: replay skips it and repair
 preserves it, so a tool can annotate a journal, and a declared plan has a
@@ -304,172 +428,87 @@ observational: no control flow rides on events.
 
 ## Plugging in an engine
 
-Any process that speaks the CHILD CONTRACT is already an engine: one
-JSON line on stdin — the VERSIONED request envelope
-`{"workflow_contract": 1, id, kind, max_steps?, schema?, input}`, with the pipe
-held open (EOF is graceful cancel) — JSONL events on stdout
-(`usage`/`agent_step` are accounted exactly), and one final
-`{"subrun_report": ...}` line. The `spawn` sub-package is the contract's
-one implementation:
+A `Runner` wraps one async `AgentCall -> AgentOutcome` function. Return
+`Finished(value~, attempt~)` for a report or
+`DidNotFinish(failure~, attempt~)` for an expected unsuccessful call.
+Use `attempt=None` when there is no attempt to account for. Propagate
+cancellation and unexpected infrastructure errors.
 
-```moonbit nocheck
-///|
-let runner = @spawn.contract_runner(launch=_ => {
-  @spawn.LaunchSpec(command="my-engine", args=[])
-})
-```
+The checked examples above use in-process runners. To run a process, use
+[`spawn.contract_runner`](spawn/README.mbt.md): its `launch` callback returns
+an executable and argv, and the package handles the child contract,
+accounting, deadlines, and teardown. A `Runner::invoke` call is useful for
+routing one runner to another; it does not itself add workflow limits,
+journalling, or replay.
 
-For an engine whose reports are pure values, that is the whole adapter —
-a shim around a Rust CLI needs only to translate framing, and gets
-journal replay, budgets, and cancellation for free. An engine whose
-reports name stateful resources should also pass `validate_replay`.
+For reports that name mutable resources, supply `validate_replay` when
+constructing the runner. The validator receives the current call and a
+candidate outcome. `Serve(outcome)` accepts it, possibly with refreshed
+resource handles. `Rerun` consumes that candidate and tries the next match;
+if none is acceptable, the workflow runs live. A validation error rolls
+back the candidate claim and propagates. Set `replay_scope` to distinguish
+work whose meaning depends on a revision, model, or configuration outside
+its input; the workflow does not add those coordinates automatically.
 
-The wire contract in full — framing, cost accounting, terminal precedence,
-and what the reference engine reads from the envelope versus argv — is
-[docs/child-contract.md](docs/child-contract.md).
+## Hosting and CLI adapters
 
-## Running inside a host
+Choose [`hosted`](hosted/README.mbt.md) when a parent supplies the executable,
+reserved child ids, and output paths in `WORKFLOW_HOST`. `ctx.run` creates
+the workflow and attaches its journal and launch sidecar. The host owns
+reservation allocation; this handoff does not implement a sandbox.
+[Host handoff](docs/host-handoff.md) defines the configuration protocol.
 
-`contract_runner` is the outward seam: how a workflow starts a child. The
-`hosted` sub-package is the inward one: how a workflow that is ITSELF running
-inside a sandbox — an agent's scripting tool, a CI step, anything that runs
-code it did not write — learns what it may launch.
+The two executable adapters make existing agent CLIs speak the
+[child contract](docs/child-contract.md):
 
-Such a script must not choose the things that make its children
-accountable: which child ids it may use, where its ledger goes, how many
-children it may start. Those belong to the host that launched it, and the
-host knows them before the script begins. So the host writes them into one
-environment variable, `WORKFLOW_HOST`, and the script reads them here:
+| Adapter | Default tool policy | Step definition | Report |
+| --- | --- | --- | --- |
+| [`shim/claude`](shim/claude/README.mbt.md) | Disallows listed editing and shell tools. | Distinct assistant message ids. | `{answer, engine, session_id?, num_turns?, cost_usd?}` |
+| [`shim/codex`](shim/codex/README.mbt.md) | Requests the `read-only` sandbox. | Completed items excluding reasoning and notices. | `{answer, engine, thread_id?, notices?}` |
 
-```moonbit nocheck
-///|
-async fn main {
-  guard @hosted.context() is Some(ctx) else { return }
-  ctx.run(wf => {
-    wf.phase("survey")
-    let found = @workflow.parallel([
-      () => {
-        @workflow.attempt(() => wf.agent(prompt="where is X?", kind="explore"))
-      },
-      () => {
-        @workflow.attempt(() => wf.agent(prompt="who calls Y?", kind="explore"))
-      },
-    ])
-    for answer in @workflow.collect_ok(found) {
-      println(answer.stringify())
-    }
-  })
-}
-```
+Both select their write-capable policy for `kind="worker"` or `--writable`.
+Their `max_steps` enforcement is reactive: an observed step over the limit
+is counted before the CLI is stopped. Both accept a schema for the inner
+`answer`; `agent_as` decodes the complete report wrapper, so its result type
+must include that wrapper. The adapter READMEs describe the exact options,
+usage limitations, and recorded CLI versions.
 
-The script names no id, no path, and no ceiling. Three things are enforced
-for it: child ids come from the block the host reserved (allocated from the
-same counter the host uses for children of its own, so the two cannot
-collide); the block is the launch ceiling, so a call past its end is refused
-rather than launched unnamed; and every launch is bracketed in a sidecar the
-host can tail, because a `JournalEntry` carries an outcome and so lands only
-when a call resolves — a watcher with only the ledger would learn of a child
-no earlier than its completion.
+The [`shim`](shim/README.mbt.md) library provides shared framing and process
+lifetime helpers for adding another CLI dialect. No framework package
+provisions worktrees or integrates worker edits; a controller that needs
+those operations must implement them.
 
-The library learns no engine's command line. The child argv arrives as data
-with `{kind}` and `{child}` substituted per call, and `attempt_id` in the
-ledger IS the child id, which is what lets a reader follow a row to whatever
-that child wrote. The handoff document, in full, is
-[docs/host-handoff.md](docs/host-handoff.md).
+## Examples and development
 
-[examples/simplify.mbtx](examples/simplify.mbtx) is a worked one: a
-simplification sweep over any MoonBit repository that runs EITHER way round.
-Inside a host it takes the host's runner, so its scouts get durable
-transcripts and appear in that host's UI; standalone it spawns
-`openseek subrun explore` itself. Only the runner differs — the workflow body
-is the same text, which is the property the two seams exist to give you.
+[`examples/scout`](examples/scout/README.mbt.md) is a small local executable
+for keyless probes and journal replay. The `.mbtx` scripts in `examples/`
+are larger standalone programs:
 
-## Claude Code and Codex as engines
+- [`simplify.mbtx`](examples/simplify.mbtx) runs a simplification sweep,
+  choosing a hosted runner when configured or a standalone OpenSeek runner.
+- [`compose.mbtx`](examples/compose.mbtx) routes calls across multiple engines.
 
-Two PROCESS SHIMS ship with this module: executables that speak the child
-contract on their own stdin/stdout and drive `claude -p --output-format
-stream-json` or `codex exec --json` underneath, translating framing both
-ways. They are PUBLISHED, so a `LaunchSpec` points at a coordinate rather
-than a path — no build step and nothing to hard-code, and nothing in the
-library knows they exist:
+Those scripts use the published module without a version pin. They are not
+part of `moon test`; only `moon run <script.mbtx>` compiles and executes one.
+Running a model-backed example requires its engines and credentials.
 
-```moonbit nocheck
-///|
-let runner = @spawn.contract_runner(launch=call => {
-  @spawn.LaunchSpec(command="moonx", args=[
-    // read-only by default; `worker` calls (or --writable) may edit
-    "moonbitlang/workflow/shim/claude", "--model", "claude-sonnet-5", "--", "--max-budget-usd",
-    "2",
-  ])
-})
-```
-
-`moonx` runs the WASM build, which both shims fully support — spawning
-the CLI, holding the parent's stdin-EOF cancel channel open, and framing
-stdout identically to the native build. It prints nothing of its own, so
-the child's JSONL reaches the runner unpolluted, and a warm start costs
-about 0.15s against an agent deadline measured in minutes. A bare
-coordinate takes the latest release, as `examples/` do; pin the version
-(`…/shim/claude@<version>`) when a run must be reproducible.
-
-Building locally is for developing the shims themselves, where the
-published version is not what you want to run:
+From the repository root, the normal validation sequence is:
 
 ```sh
-just shims   # _build/native/debug/build/shim/{claude,codex}/*.exe
+just check
+just test
+just tidy
 ```
 
-Both shims take the same options — `--command <exe>`, `--model <name>`,
-`--cwd <dir>`, `--writable`, `--schema <file>`, and `-- <args…>` passed to
-the CLI verbatim (the escape hatch for a flag the shim does not know
-yet); `--help` renders them, and an unknown option is refused rather than
-guessed at. The request's `max_steps` IS enforced by the shim, since neither CLI
-has a turn cap of its own: each model call (Claude) or completed
-non-reasoning item (Codex) is a step, and the CLI is torn down the moment
-the ceiling is exceeded, surfacing as `AgentFailure::MaxSteps` with the
-cost observed so far. The stop is graceful (SIGINT, then a grace to
-flush): Claude's per-message snapshots are settled on that path; Codex
-reports usage only when a turn completes and does not flush on SIGINT,
-so a capped Codex run records zero cost rather than an estimate. Reports are `{"answer": …, "engine": …}` plus the
-session or thread id for resume; `--schema` makes `answer` structured.
-Provider credentials ride the inherited environment, exactly as the
-contract prescribes. The dialects are recorded-line tests
-(`shim/claude/dialect.mbt`, `shim/codex/dialect.mbt`); the fixtures pin
-what each CLI emits today, so an upstream format change fails a test
-rather than a workflow.
+`check` type-checks native and wasm with warnings denied and checks formatting.
+`test` runs unit, process-contract, and checked README examples on both
+targets. `tidy` regenerates package interfaces and formats source; review the
+`pkg.generated.mbti` diff when changing APIs.
 
-Composing engines is routing by kind: `contract_runner`'s `launch` sees
-every call's `kind`, so one `match` sends `claude` calls to one shim,
-`codex` calls to the other, and everything else to `openseek subrun
-<kind>`. `examples/compose.mbtx` does exactly that — a keyless openseek
-probe, Claude and Codex answering the same question in parallel, and
-Claude judging both — in one workflow with one journal, so a second run
-replays all four calls.
-For in-process engines (and tests), implement one async function and
-wrap it:
-
-```moonbit nocheck
-///|
-let runner = @workflow.Runner(call => {
-  // spawn something, await it, and account honestly:
-  Finished(
-    value=report_json,
-    // `cost_usd` is the only optional figure: omit it when the engine
-    // prices nothing, and it reads back as unknown rather than free.
-    attempt=@workflow.AgentAttempt(
-      attempt_id~,
-      steps_used~,
-      prompt_tokens~,
-      completion_tokens~,
-    ),
-  )
-})
-```
-
-[openseek](https://github.com/moonbitlang/openseek)'s production adapter (its `agent_workflow` package)
-maps `explore`/`review`/`echo` kinds onto `openseek subrun` child
-processes and adds write-capable `worker` slices — confined git
-worktrees whose outcomes are captured from git evidence, replayed by
-their LOGICAL identity, and re-validated against the live registry at
-replay time (a stale outcome runs live instead of lying). The dependency points engine → framework: this
-module never learns openseek exists.
+The core implementation is split by responsibility:
+[`workflow.mbt`](workflow.mbt) handles calls and accounting,
+[`combinators.mbt`](combinators.mbt) supplies concurrency and failure policies,
+[`runner.mbt`](runner.mbt) defines the engine boundary,
+[`journal.mbt`](journal.mbt) implements persistence and replay matching, and
+[`types.mbt`](types.mbt) defines calls, attempts, and failures. The generated
+[`package interface`](pkg.generated.mbti) lists all public signatures.
