@@ -53,15 +53,19 @@ pub fn context() -> Context? {
 }
 
 ///|
-/// The handoff from its JSON form: what `context()` reads, exposed so a host
-/// can build the document it is about to write and check it round-trips, and
-/// so tests need no environment.
+/// The handoff from its JSON form: what `context()` reads.
+///
+/// PRIVATE, like the layout it fills. `Context` is abstract so that a script
+/// cannot CHOOSE the coordinates that make its children accountable; a public
+/// reader taking arbitrary JSON would be a constructor, and hand that standing
+/// back through the front door. `context()` is the only way in, and the only
+/// coordinates a `Context` can carry are the ones the host wrote down.
 ///
 /// FAIL CLOSED. A document missing any required coordinate, or carrying a
 /// version this package does not know, yields `None` rather than a partial
 /// context — a half-read handoff would name child ids the host never reserved,
 /// or a ledger path nothing is watching.
-pub fn parse(json : Json) -> Context? {
+fn parse(json : Json) -> Context? {
   guard json
     is {
       "v": 1,
