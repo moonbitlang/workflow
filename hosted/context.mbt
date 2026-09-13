@@ -30,6 +30,7 @@ const HostVar = "WORKFLOW_HOST"
 /// correct value is the one that arrived, and a script with the standing to
 /// rewrite one would have the standing to make its own children unaccountable.
 struct Context {
+  extensions : Map[String, Json]
   exe : String
   child_args : Array[String]
   child_id : String
@@ -94,7 +95,25 @@ fn parse(json : Json) -> Context? {
   let first_ordinal = first.to_int()
   let ordinal_count = count.to_int()
   guard first_ordinal > 0 && ordinal_count > 0 else { return None }
+  let extensions : Map[String, Json] = Map([])
+  if json is Object(fields) {
+    for key, value in fields {
+      match key {
+        "v"
+        | "exe"
+        | "child_args"
+        | "child_id"
+        | "ids"
+        | "journal"
+        | "events"
+        | "cwd"
+        | "deadline_ms" => ()
+        _ => extensions[key] = value
+      }
+    }
+  }
   Some({
+    extensions,
     exe,
     child_args: argv,
     child_id,
