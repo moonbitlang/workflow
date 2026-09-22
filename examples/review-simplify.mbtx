@@ -12,10 +12,10 @@ import {
 ///|
 /// Read-only simplification reviews from Codex and Claude, without a host.
 /// Requires moonx and authenticated CLIs for the selected engines.
-///   moon run examples/review-simplify.mbtx -- --list
-///   moon run examples/review-simplify.mbtx -- --jobs 2
-///   moon run examples/review-simplify.mbtx -- --engines claude shim/codex
-///   moon run examples/review-simplify.mbtx -- --codex-model MODEL --claude-model MODEL
+///   moonx ./examples/review-simplify.mbtx --list
+///   moonx ./examples/review-simplify.mbtx --jobs 2
+///   moonx ./examples/review-simplify.mbtx --engines claude shim/codex
+///   moonx ./examples/review-simplify.mbtx --codex-model MODEL --claude-model MODEL
 /// Extra CLI arguments are JSON arrays, never shell strings:
 ///   --codex-args '["-c", "model_reasoning_effort=\"high\""]'
 ///   --claude-args '["--effort", "high"]'

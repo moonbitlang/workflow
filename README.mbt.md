@@ -495,13 +495,13 @@ are larger standalone programs:
   published shims, with a fresh journal per run.
 
 ```sh
-moon run examples/review-simplify.mbtx -- --list
-moon run examples/review-simplify.mbtx -- --jobs 2
-moon run examples/review-simplify.mbtx -- --engines claude shim/codex
+moonx ./examples/review-simplify.mbtx --list
+moonx ./examples/review-simplify.mbtx --jobs 2
+moonx ./examples/review-simplify.mbtx --engines claude shim/codex
 # Models are optional; omitted settings inherit each CLI's configuration.
-moon run examples/review-simplify.mbtx -- --codex-model MODEL --claude-model MODEL
+moonx ./examples/review-simplify.mbtx --codex-model MODEL --claude-model MODEL
 # Extra CLI arguments are JSON arrays, preserving each argument verbatim.
-moon run examples/review-simplify.mbtx -- --codex-args '["-c","model_reasoning_effort=\"high\""]' --claude-args '["--effort","high"]'
+moonx ./examples/review-simplify.mbtx --codex-args '["-c","model_reasoning_effort=\"high\""]' --claude-args '["--effort","high"]'
 ```
 
 `--codex-shim` and `--claude-shim` accept locally built native executables;
@@ -512,7 +512,8 @@ its reviewer uses file-reading tools. Review steps have different meanings
 across engines; `--steps` is not a common model-call or token budget.
 
 Those scripts use the published module without a version pin. They are not
-part of `moon test`; only `moon run <script.mbtx>` compiles and executes one.
+part of `moon test`; run one with `moonx ./<script.mbtx>` (or
+`moon run <script.mbtx> --`).
 Running a model-backed example requires its engines and credentials.
 
 From the repository root, the normal validation sequence is:
