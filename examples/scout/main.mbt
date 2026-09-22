@@ -31,7 +31,7 @@ async fn main {
       @argparse.PositionArg(
         "engine",
         about="the engine binary to spawn",
-        num_args=@argparse.ValueRange(lower=1, upper=1),
+        num_args=@argparse.ValueRange::single(),
       ),
     ],
   )

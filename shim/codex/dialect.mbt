@@ -32,10 +32,7 @@ fn Codex::observe(self : Codex, line : String) -> Array[Json] {
   if trimmed == "" {
     return events
   }
-  guard (Some(@json.parse(trimmed.to_owned())) catch { _ => None })
-    is Some(json) else {
-    return events
-  }
+  let json = @json.parse(trimmed) catch { _ => return events }
   match json {
     { "type": "thread.started", "thread_id": String(id), .. } =>
       self.thread_id = Some(id)
@@ -103,15 +100,14 @@ fn Codex::report(self : Codex, structured~ : Bool) -> Json? {
   } else {
     text.to_json()
   }
-  let report : Json = { "answer": answer, "engine": "codex" }
-  guard report is Object(fields) else { return None }
+  let fields : Map[String, Json] = { "answer": answer, "engine": "codex" }
   if self.thread_id is Some(id) {
     fields["thread_id"] = id.to_json()
   }
   if !self.notices.is_empty() {
     fields["notices"] = self.notices.to_json()
   }
-  Some(report)
+  Some(Json::object(fields))
 }
 
 ///|
@@ -239,4 +235,21 @@ test "turn and stream errors are failures; the first one wins" {
   )
   assert_eq(state.failure, Some("codex: quota"))
   assert_eq(state.report(structured=false), None)
+}
+
+///|
+// Synthetic framing cases: invalid lines must not erase the previous answer.
+test "CRLF and Unicode reports survive malformed lines with no metadata" {
+  let state = Codex()
+  assert_eq(state.report(structured=false), None)
+  let line = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"你好🌙\"}}\r\n"
+  assert_eq(state.observe(line), [@shim.agent_step(1)])
+  for invalid in ["", "\r\n", "not json"] {
+    assert_eq(state.observe(invalid), [])
+  }
+  assert_eq(state.steps, 1)
+  assert_eq(
+    state.report(structured=false),
+    Some({ "answer": "你好🌙", "engine": "codex" }),
+  )
 }

@@ -65,8 +65,10 @@ pub fn JournalEntry::JournalEntry(
 /// JSON reader expects, rather than the string the default `Int64` codec
 /// writes.
 pub impl ToJson for JournalEntry with fn to_json(self) {
-  let json : Json = { "call": self.call, "outcome": self.outcome }
-  guard json is Object(fields) else { return json }
+  let fields : Map[String, Json] = {
+    "call": Json(self.call),
+    "outcome": Json(self.outcome),
+  }
   if self.phase is Some(phase) {
     fields["phase"] = phase.to_json()
   }
@@ -76,7 +78,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
   if self.finished_at is Some(at) {
     fields["finished_at"] = Json::number(at.to_double())
   }
-  json
+  Json::object(fields)
 }
 
 ///|

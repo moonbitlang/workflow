@@ -78,13 +78,7 @@ pub fn Options::parse(
   args : ArrayView[String],
   default_command~ : String,
 ) -> Result[Options, String] {
-  let mut cut = args.length()
-  for index, arg in args {
-    if arg == "--" {
-      cut = index
-      break
-    }
-  }
+  let cut = args.search("--").unwrap_or(args.length())
   let extra = if cut < args.length() { args[cut + 1:].to_owned() } else { [] }
   let matches = spec(default_command).parse(argv=args[:cut], env=Map([])) catch {
     // Display-ready text: the error and this command's full help.
