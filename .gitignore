@@ -8,6 +8,8 @@ target/
 *.jsonl.html
 # Review-court outputs written next to where it runs.
 cross-review.md
+codex-simplify.md
+simplification-review.md
 .cross-review/
 # Doc-audit reports, whatever `--out` they were given.
 *doc-audit.md

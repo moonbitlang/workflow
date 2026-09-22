@@ -1,0 +1,314 @@
+///|
+import {
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/workflow",
+  "moonbitlang/workflow/spawn",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/string",
+  "moonbitlang/core/json",
+}
+
+///|
+/// Read-only simplification reviews from Codex and Claude, without a host.
+/// Requires moonx and authenticated CLIs for the selected engines.
+///   moon run examples/review-simplify.mbtx -- --list
+///   moon run examples/review-simplify.mbtx -- --jobs 2
+///   moon run examples/review-simplify.mbtx -- --engines claude shim/codex
+///   moon run examples/review-simplify.mbtx -- --codex-model MODEL --claude-model MODEL
+/// Extra CLI arguments are JSON arrays, never shell strings:
+///   --codex-args '["-c", "model_reasoning_effort=\"high\""]'
+///   --claude-args '["--effort", "high"]'
+/// To test local shims: moon build shim/codex --target native (likewise claude),
+/// then --codex-shim ./_build/native/debug/build/shim/codex/codex.exe.
+/// Imports and default moonx coordinates use the latest published module.
+/// Each run uses a fresh journal; old code reviews are never silently replayed.
+/// Individual reports and the journal remain in the printed scratch directory.
+/// The combined report groups both engines by package, preserving attribution
+/// and failures; agreement is not proof and proposals are not applied.
+async fn main {
+  let spec = @argparse.Command(
+    "review-simplify",
+    about="Review each package with Codex and Claude, preserving both reports.",
+    options=[
+      @argparse.OptionArg("repo", long="repo", default_values=["."]),
+      @argparse.OptionArg("jobs", long="jobs", default_values=["2"]),
+      @argparse.OptionArg("steps", long="steps", default_values=["40"]),
+      @argparse.OptionArg("deadline-ms", long="deadline-ms", default_values=[
+        "600000",
+      ]),
+      @argparse.OptionArg(
+        "engines",
+        long="engines",
+        default_values=["codex,claude"],
+        about="Comma-separated codex,claude; one or both.",
+      ),
+      @argparse.OptionArg("codex-model", long="codex-model"),
+      @argparse.OptionArg("claude-model", long="claude-model"),
+      @argparse.OptionArg(
+        "codex-shim",
+        long="codex-shim",
+        about="Local native Codex shim executable.",
+      ),
+      @argparse.OptionArg(
+        "claude-shim",
+        long="claude-shim",
+        about="Local native Claude shim executable.",
+      ),
+      @argparse.OptionArg(
+        "codex-args",
+        long="codex-args",
+        default_values=["[]"],
+        about="JSON array of additional Codex CLI arguments; preserve JSON output and read-only policy.",
+      ),
+      @argparse.OptionArg(
+        "claude-args",
+        long="claude-args",
+        default_values=["[]"],
+        about="JSON array of additional Claude CLI arguments; preserve stream-json output and read-only policy.",
+      ),
+      @argparse.OptionArg("out", long="out", default_values=[
+        "simplification-review.md",
+      ]),
+    ],
+    flags=[
+      @argparse.FlagArg(
+        "list",
+        long="list",
+        about="List packages without launching agents.",
+      ),
+    ],
+    positionals=[
+      @argparse.PositionArg("packages", num_args=@argparse.ValueRange(lower=0)),
+    ],
+  )
+  let args = spec.parse() catch {
+    error => {
+      println("\{error}")
+      return
+    }
+  }
+  let repo = @fs.realpath(value(args, "repo", "."))
+  let jobs = positive(args, "jobs", "2")
+  let steps = positive(args, "steps", "40")
+  let deadline = positive(args, "deadline-ms", "600000")
+  let engines = value(args, "engines", "codex,claude")
+    .split(",")
+    .map(e => e.to_owned())
+    .to_array()
+  let engine_seen : Set[String] = Set([])
+  let launches : Map[String, @spawn.LaunchSpec] = Map([])
+  for engine in engines {
+    guard engine is ("codex" | "claude") else {
+      fail("unknown engine: \{engine}")
+    }
+    guard !engine_seen.contains(engine) else {
+      fail("duplicate engine: \{engine}")
+    }
+    engine_seen.add(engine)
+    launches[engine] = engine_launch(args, engine, repo, deadline)
+  }
+  let discovered : Array[String] = []
+  discover(repo, ".", discovered)
+  discovered.sort()
+  let selected = args.values.get("packages").unwrap_or([])
+  let packages = if selected.is_empty() { discovered } else { selected }
+  let seen : Set[String] = Set([])
+  for pkg in packages {
+    guard discovered.contains(pkg) else { fail("unknown package: \{pkg}") }
+    guard !seen.contains(pkg) else { fail("duplicate package: \{pkg}") }
+    seen.add(pkg)
+  }
+  guard !packages.is_empty() else { fail("no MoonBit packages under \{repo}") }
+  println(
+    "\{packages.length()} packages in \{repo}; \{engines.join(" + ")}; at most \{jobs} concurrent calls",
+  )
+  for pkg in packages {
+    println("  \{pkg}")
+  }
+  if args.flags.get("list") is Some(true) {
+    return
+  }
+  let run_dir = @fs.tmpdir(prefix="review-simplify-")
+  println("Run artifacts: \{run_dir}")
+  let wf = @workflow.Workflow(
+    runner=@spawn.contract_runner(launch=call => launches[call.kind]),
+    journal=@workflow.Journal::load("\{run_dir}/journal.jsonl"),
+    max_concurrent=jobs,
+    max_calls=packages.length() * engines.length(),
+    on_event=event => {
+      match event {
+        @workflow.AgentStarted(label~, ..) => println("START \{label}")
+        @workflow.AgentFinished(label~, ..) => println("DONE  \{label}")
+        _ => ()
+      }
+    },
+  )
+  let reports = @workflow.parallel_all(
+    packages.map(pkg => {
+      () => {
+        let reviews = @workflow.parallel_all(
+          engines.map(engine => {
+            () => {
+              let result = @workflow.attempt(() => {
+                wf.agent(
+                  prompt=review_prompt(repo, pkg),
+                  kind=engine,
+                  label="simplify:\{pkg}:\{engine}",
+                  max_steps=steps,
+                )
+              })
+              let (ok, text) = match result {
+                Ok({ "answer": String(answer), "engine": String(actual), .. }) if actual ==
+                  engine &&
+                  !answer.is_empty() => (true, answer)
+                Ok(other) => (false, "Unexpected report: \{other.stringify()}")
+                Err(error) => (false, "Review failed: \{error}")
+              }
+              let section = "### \{engine}\n\n\{text}\n"
+              // Numeric package index avoids collisions between root, root/, a_b/ and a/b/.
+              let index = packages.search(pkg).unwrap()
+              @fs.write_file(
+                "\{run_dir}/\{index}-\{engine}.md",
+                "## Package `\{pkg}`\n\n" + section,
+              )
+              (ok, section)
+            }
+          }),
+        )
+        (
+          reviews.filter(r => !r.0).length(),
+          "## Package `\{pkg}`\n\n" + reviews.map(r => r.1).join("\n"),
+        )
+      }
+    }),
+  )
+  let failed = reports.fold(init=0, (n, r) => n + r.0)
+  let total = packages.length() * engines.length()
+  let summary = "\{total - failed}/\{total} reviews completed; \{wf.calls_made()} calls, \{wf.tokens_spent()} observed tokens."
+  let output = value(args, "out", "simplification-review.md")
+  @fs.write_file(
+    output,
+    "# Simplification review\n\nRepository: `\{repo}`\n\n\{summary}\n\nSuggestions only; not applied or compiler-verified. Engine reports are grouped by package, not adjudicated consensus.\n\n" +
+    reports.map(r => r.1).join("\n"),
+  )
+  println("\{summary}\nReport: \{output}\nJournal: \{run_dir}/journal.jsonl")
+  if failed > 0 {
+    fail("\{failed} reviews failed; see report")
+  }
+}
+
+///|
+async fn engine_launch(
+  args : @argparse.Matches,
+  engine : String,
+  repo : String,
+  deadline : Int,
+) -> @spawn.LaunchSpec {
+  let shim = match args.values.get("\{engine}-shim") {
+    Some([path, ..]) => Some(@fs.realpath(path))
+    _ => None
+  }
+  let argv = if shim is Some(_) {
+    []
+  } else {
+    ["moonbitlang/workflow/shim/\{engine}"]
+  }
+  argv.push_iter(["--cwd", repo].iter())
+  if args.values.get("\{engine}-model") is Some([model, ..]) {
+    argv.push_iter(["--model", model].iter())
+  }
+  let extra = @json.parse(value(args, "\{engine}-args", "[]"))
+  guard extra is Array(tokens) else {
+    fail("--\{engine}-args must be a JSON array of strings")
+  }
+  if !tokens.is_empty() {
+    argv.push("--")
+  }
+  for token in tokens {
+    guard token is String(text) else {
+      fail("--\{engine}-args must contain only strings")
+    }
+    argv.push(text)
+  }
+  @spawn.LaunchSpec(
+    command=shim.unwrap_or("moonx"),
+    args=argv,
+    cwd=repo,
+    deadline_ms=deadline,
+  )
+}
+
+///|
+fn review_prompt(repo : String, pkg : String) -> String {
+  (
+    $|Review package `\{pkg}` in the MoonBit repository `\{repo}` for simplification opportunities.
+    $|Read AGENTS.md, this package's moon.pkg, its source and tests, and relevant callers.
+    $|The package is ONLY the files directly in that directory; subdirectories are separate packages.
+    $|This is a read-only review. Do not edit files, install dependencies, run builds/tests/formatters,
+    $|or launch additional agents. Use available read-only tools to inspect files and .mbti signatures; do not require Bash, which the Claude shim disables.
+    $|Look for redundant logic, duplicated helpers/tests, unnecessary API surface and clearer idiomatic MoonBit.
+    $|Preserve behavior, public compatibility, cancellation, accounting, replay, and child-contract semantics.
+    $|Verify replacement APIs in source or .mbti before proposing them. Do not simplify exhaustive matches
+    $|into catch-alls, or treat exports.mbt entries naming external callers as unused.
+    $|Return concise Markdown in Chinese: package purpose, then at most five concrete suggestions.
+    $|For each give file:line, current code, proposed change, evidence that behavior is preserved,
+    $|and the specific tests needed. Distinguish safe mechanical changes from design tradeoffs.
+    $|If no worthwhile changes are supported by evidence, say so. Disclose any files you could not inspect.
+    $|Do not claim tests passed; you are only reviewing. Finish within about 20 tool calls.
+  )
+}
+
+///|
+async fn discover(
+  root : String,
+  relative : String,
+  found : Array[String],
+) -> Unit {
+  let dir = if relative == "." { root } else { "\{root}/\{relative}" }
+  let entries = @fs.readdir(dir)
+  if entries.contains("moon.pkg") || entries.contains("moon.pkg.json") {
+    found.push(relative)
+  }
+  for entry in entries {
+    if entry.has_prefix(".") ||
+      entry is ("_build" | "target" | "node_modules" | "vendor") {
+      continue
+    }
+    let path = "\{dir}/\{entry}"
+    if @fs.kind(path, follow_symlink=false) is Directory {
+      // Nested modules have their own dependency context and are not packages of this module.
+      if @fs.exists("\{path}/moon.mod") || @fs.exists("\{path}/moon.mod.json") {
+        continue
+      }
+      discover(
+        root,
+        if relative == "." {
+          entry
+        } else {
+          "\{relative}/\{entry}"
+        },
+        found,
+      )
+    }
+  }
+}
+
+///|
+fn value(args : @argparse.Matches, name : String, fallback : String) -> String {
+  match args.values.get(name) {
+    Some([v, ..]) => v
+    _ => fallback
+  }
+}
+
+///|
+fn positive(
+  args : @argparse.Matches,
+  name : String,
+  fallback : String,
+) -> Int raise {
+  let n = @string.parse_int(value(args, name, fallback))
+  guard n > 0 else { fail("--\{name} must be positive") }
+  n
+}
