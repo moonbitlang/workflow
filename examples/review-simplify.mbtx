@@ -7,6 +7,7 @@ import {
   "moonbitlang/core/argparse",
   "moonbitlang/core/string",
   "moonbitlang/core/json",
+  "moonbitlang/x/sys",
 }
 
 ///|
@@ -14,6 +15,7 @@ import {
 /// Requires moonx and authenticated CLIs for the selected engines.
 ///   moonx ./examples/review-simplify.mbtx --list
 ///   moonx ./examples/review-simplify.mbtx --jobs 2
+///   moonx ./examples/review-simplify.mbtx --repo ../openseek --engines codex --batch-size 4
 ///   moonx ./examples/review-simplify.mbtx --engines claude shim/codex
 ///   moonx ./examples/review-simplify.mbtx --codex-model MODEL --claude-model MODEL
 /// Extra CLI arguments are JSON arrays, never shell strings:
@@ -24,15 +26,32 @@ import {
 /// Imports and default moonx coordinates use the latest published module.
 /// Each run uses a fresh journal; old code reviews are never silently replayed.
 /// Individual reports and the journal remain in the printed scratch directory.
-/// The combined report groups both engines by package, preserving attribution
+/// Nested modules are excluded and reported; run separately with --repo for each.
+/// The combined report groups engines by package batch, preserving attribution
 /// and failures; agreement is not proof and proposals are not applied.
 async fn main {
+  review() catch {
+    error => {
+      println("\{error}")
+      @sys.exit(1)
+    }
+  }
+}
+
+///|
+async fn review() -> Unit {
   let spec = @argparse.Command(
     "review-simplify",
     about="Review each package with Codex and Claude, preserving both reports.",
     options=[
       @argparse.OptionArg("repo", long="repo", default_values=["."]),
       @argparse.OptionArg("jobs", long="jobs", default_values=["2"]),
+      @argparse.OptionArg(
+        "batch-size",
+        long="batch-size",
+        default_values=["1"],
+        about="Packages per agent call; raise steps/deadline for larger batches.",
+      ),
       @argparse.OptionArg("steps", long="steps", default_values=["40"]),
       @argparse.OptionArg("deadline-ms", long="deadline-ms", default_values=[
         "600000",
@@ -82,14 +101,10 @@ async fn main {
       @argparse.PositionArg("packages", num_args=@argparse.ValueRange(lower=0)),
     ],
   )
-  let args = spec.parse() catch {
-    error => {
-      println("\{error}")
-      return
-    }
-  }
+  let args = spec.parse()
   let repo = @fs.realpath(value(args, "repo", "."))
   let jobs = positive(args, "jobs", "2")
+  let batch_size = positive(args, "batch-size", "1")
   let steps = positive(args, "steps", "40")
   let deadline = positive(args, "deadline-ms", "600000")
   let engines = value(args, "engines", "codex,claude")
@@ -109,8 +124,11 @@ async fn main {
     launches[engine] = engine_launch(args, engine, repo, deadline)
   }
   let discovered : Array[String] = []
-  discover(repo, ".", discovered)
-  discovered.sort()
+  let skipped : Array[String] = []
+  discover(repo, ".", discovered, skipped)
+  // Keep package families adjacent when batching. String.compare uses length first.
+  discovered.sort_by((a, b) => a.lexical_compare(b))
+  skipped.sort_by((a, b) => a.lexical_compare(b))
   let selected = args.values.get("packages").unwrap_or([])
   let packages = if selected.is_empty() { discovered } else { selected }
   let seen : Set[String] = Set([])
@@ -120,11 +138,29 @@ async fn main {
     seen.add(pkg)
   }
   guard !packages.is_empty() else { fail("no MoonBit packages under \{repo}") }
+  let batches : Array[Array[String]] = []
+  for start = 0; start < packages.length(); {
+    let end = if batch_size < packages.length() - start {
+      start + batch_size
+    } else {
+      packages.length()
+    }
+    batches.push(packages[start:end].to_owned())
+    continue end
+  }
   println(
     "\{packages.length()} packages in \{repo}; \{engines.join(" + ")}; at most \{jobs} concurrent calls",
   )
   for pkg in packages {
     println("  \{pkg}")
+  }
+  println(
+    "\{batches.length()} batches per engine, up to \{batch_size} packages per call",
+  )
+  if !skipped.is_empty() {
+    println(
+      "Excluded nested modules (review separately with --repo): \{skipped.join(", ")}",
+    )
   }
   if args.flags.get("list") is Some(true) {
     return
@@ -135,7 +171,7 @@ async fn main {
     runner=@spawn.contract_runner(launch=call => launches[call.kind]),
     journal=@workflow.Journal::load("\{run_dir}/journal.jsonl"),
     max_concurrent=jobs,
-    max_calls=packages.length() * engines.length(),
+    max_calls=batches.length() * engines.length(),
     on_event=event => {
       match event {
         @workflow.AgentStarted(label~, ..) => println("START \{label}")
@@ -145,14 +181,15 @@ async fn main {
     },
   )
   let reports = @workflow.parallel_all(
-    packages.map(pkg => {
+    batches.map(batch => {
+      let pkg = batch.join(", ")
       () => {
         let reviews = @workflow.parallel_all(
           engines.map(engine => {
             () => {
               let result = @workflow.attempt(() => {
                 wf.agent(
-                  prompt=review_prompt(repo, pkg),
+                  prompt=review_prompt(repo, batch),
                   kind=engine,
                   label="simplify:\{pkg}:\{engine}",
                   max_steps=steps,
@@ -166,11 +203,11 @@ async fn main {
                 Err(error) => (false, "Review failed: \{error}")
               }
               let section = "### \{engine}\n\n\{text}\n"
-              // Numeric package index avoids collisions between root, root/, a_b/ and a/b/.
-              let index = packages.search(pkg).unwrap()
+              // Numeric batch index avoids collisions between package path spellings.
+              let index = batches.search(batch).unwrap()
               @fs.write_file(
                 "\{run_dir}/\{index}-\{engine}.md",
-                "## Package `\{pkg}`\n\n" + section,
+                "## Packages `\{pkg}`\n\n" + section,
               )
               (ok, section)
             }
@@ -178,18 +215,18 @@ async fn main {
         )
         (
           reviews.filter(r => !r.0).length(),
-          "## Package `\{pkg}`\n\n" + reviews.map(r => r.1).join("\n"),
+          "## Packages `\{pkg}`\n\n" + reviews.map(r => r.1).join("\n"),
         )
       }
     }),
   )
   let failed = reports.fold(init=0, (n, r) => n + r.0)
-  let total = packages.length() * engines.length()
-  let summary = "\{total - failed}/\{total} reviews completed; \{wf.calls_made()} calls, \{wf.tokens_spent()} observed tokens."
+  let total = batches.length() * engines.length()
+  let summary = "\{total - failed}/\{total} batch reviews completed; \{wf.calls_made()} calls, \{wf.tokens_spent()} observed tokens."
   let output = value(args, "out", "simplification-review.md")
   @fs.write_file(
     output,
-    "# Simplification review\n\nRepository: `\{repo}`\n\n\{summary}\n\nSuggestions only; not applied or compiler-verified. Engine reports are grouped by package, not adjudicated consensus.\n\n" +
+    "# Simplification review\n\nRepository: `\{repo}`\n\n\{summary}\n\nSuggestions only; not applied or compiler-verified. Engine reports are grouped by package batch, not adjudicated consensus. Nested modules are excluded: \{skipped.join(", ")}.\n\n" +
     reports.map(r => r.1).join("\n"),
   )
   println("\{summary}\nReport: \{output}\nJournal: \{run_dir}/journal.jsonl")
@@ -240,22 +277,31 @@ async fn engine_launch(
 }
 
 ///|
-fn review_prompt(repo : String, pkg : String) -> String {
+fn review_prompt(repo : String, packages : Array[String]) -> String {
+  let pkg = packages.join("`, `")
   (
-    $|Review package `\{pkg}` in the MoonBit repository `\{repo}` for simplification opportunities.
-    $|Read AGENTS.md, this package's moon.pkg, its source and tests, and relevant callers.
+    $|Review packages `\{pkg}` in the MoonBit repository `\{repo}` for simplification opportunities.
+    $|Read root and applicable nested AGENTS.md, each package's moon.pkg, its source and tests, and relevant callers.
     $|The package is ONLY the files directly in that directory; subdirectories are separate packages.
     $|This is a read-only review. Do not edit files, install dependencies, run builds/tests/formatters,
     $|or launch additional agents. Use available read-only tools to inspect files and .mbti signatures; do not require Bash, which the Claude shim disables.
+    $|Do not read earlier review reports or generated review artifacts; form independent conclusions from source.
     $|Look for redundant logic, duplicated helpers/tests, unnecessary API surface and clearer idiomatic MoonBit.
+    $|Check array comprehensions such as `[ for x in xs if keep(x) => transform(x) ]`,
+    $|and conditional spreads such as `[prefix, ..if enabled { [value] }, ..suffix]`.
+    $|Check element type inference and constructor qualification in proposed comprehensions/spreads.
+    $|Suggest them only when they improve clarity; preserve iteration order, evaluation count, side effects and error timing.
+    $|Do not replace clear map/filter expressions just for stylistic consistency, or conflate missing and invalid values.
     $|Preserve behavior, public compatibility, cancellation, accounting, replay, and child-contract semantics.
     $|Verify replacement APIs in source or .mbti before proposing them. Do not simplify exhaustive matches
     $|into catch-alls, or treat exports.mbt entries naming external callers as unused.
-    $|Return concise Markdown in Chinese: package purpose, then at most five concrete suggestions.
+    $|Return concise Markdown in Chinese: a section for EVERY requested package (including no findings), with purpose and at most three concrete suggestions per package.
+    $|Label each suggestion by category: collection construction, duplicated logic, control flow, API surface, or other.
+    $|Prioritize changes that can be reviewed in independent commits by category; avoid speculative abstraction or behavior changes.
     $|For each give file:line, current code, proposed change, evidence that behavior is preserved,
     $|and the specific tests needed. Distinguish safe mechanical changes from design tradeoffs.
     $|If no worthwhile changes are supported by evidence, say so. Disclose any files you could not inspect.
-    $|Do not claim tests passed; you are only reviewing. Finish within about 20 tool calls.
+    $|Do not claim tests passed; you are only reviewing. Finish within about \{12 + 8 * packages.length()} tool calls; explicitly disclose incomplete coverage.
   )
 }
 
@@ -264,6 +310,7 @@ async fn discover(
   root : String,
   relative : String,
   found : Array[String],
+  skipped : Array[String],
 ) -> Unit {
   let dir = if relative == "." { root } else { "\{root}/\{relative}" }
   let entries = @fs.readdir(dir)
@@ -279,6 +326,7 @@ async fn discover(
     if @fs.kind(path, follow_symlink=false) is Directory {
       // Nested modules have their own dependency context and are not packages of this module.
       if @fs.exists("\{path}/moon.mod") || @fs.exists("\{path}/moon.mod.json") {
+        skipped.push(path)
         continue
       }
       discover(
@@ -289,6 +337,7 @@ async fn discover(
           "\{relative}/\{entry}"
         },
         found,
+        skipped,
       )
     }
   }

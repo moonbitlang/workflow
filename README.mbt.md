@@ -489,7 +489,7 @@ are larger standalone programs:
 - [`compose.mbtx`](examples/compose.mbtx) routes calls across multiple engines.
 - [`review-simplify.mbtx`](examples/review-simplify.mbtx) asks Codex and
   Claude to review every package, without a host. It groups both reports
-  by package in `simplification-review.md`, keeping engine attribution and
+  by package (or package batch) in `simplification-review.md`, keeping engine attribution and
   failures visible. Suggestions are not applied or treated as consensus.
   It defaults to two concurrent calls across both engines, through the
   published shims, with a fresh journal per run.
@@ -497,12 +497,22 @@ are larger standalone programs:
 ```sh
 moonx ./examples/review-simplify.mbtx --list
 moonx ./examples/review-simplify.mbtx --jobs 2
+# Codex-only sweep of another module, amortizing CLI startup across four packages.
+moonx ./examples/review-simplify.mbtx --repo ../openseek --engines codex --batch-size 4
 moonx ./examples/review-simplify.mbtx --engines claude shim/codex
 # Models are optional; omitted settings inherit each CLI's configuration.
 moonx ./examples/review-simplify.mbtx --codex-model MODEL --claude-model MODEL
 # Extra CLI arguments are JSON arrays, preserving each argument verbatim.
 moonx ./examples/review-simplify.mbtx --codex-args '["-c","model_reasoning_effort=\"high\""]' --claude-args '["--effort","high"]'
 ```
+
+`--batch-size` defaults to 1; larger values share one review call across several
+packages. Increase `--steps` / `--deadline-ms` for larger batches as needed.
+Discovery lists excluded nested modules; review each separately with `--repo`.
+Each package still receives its own section, with suggestions categorized for
+separate commits. The prompt checks comprehensions and conditional array spreads
+where clearer, preserving evaluation order, side effects, and error timing.
+Failed calls remain in the report and produce a nonzero exit status.
 
 `--codex-shim` and `--claude-shim` accept locally built native executables;
 `--out` selects the combined report path. Additional CLI arguments can
