@@ -241,3 +241,56 @@ test "a schema that is not an object is refused; null means none" {
   }
   assert_eq(request.schema, None)
 }
+
+///|
+test "argv separator uses the first match within a sliced view" {
+  let argv = ["ignored", "--model", "m", "--", "--", "tail"]
+  guard @shim.Options::parse(argv[1:], default_command="codex") is Ok(options) else {
+    fail("expected parsed options")
+  }
+  assert_eq(options.model, Some("m"))
+  assert_eq(options.extra, ["--", "tail"])
+  for args in [["--"], ["--", "--model", "not-a-shim-option"]] {
+    guard @shim.Options::parse(args, default_command="codex") is Ok(parsed) else {
+      fail("expected separator at start")
+    }
+    assert_eq(parsed.model, None)
+    assert_eq(parsed.extra, args[1:].to_owned())
+  }
+}
+
+///|
+test "usage preserves wire order and distinguishes absent from zero price" {
+  let plain = @shim.usage(
+    prompt_tokens=3,
+    completion_tokens=2,
+    cache_hit=1,
+    cache_miss=2,
+  )
+  assert_eq(
+    plain.stringify(),
+    "{\"event\":\"usage\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_cache_hit_tokens\":1,\"prompt_cache_miss_tokens\":2}}",
+  )
+  for price in [0.0, 0.25] {
+    assert_eq(
+      @shim.usage(
+        prompt_tokens=3,
+        completion_tokens=2,
+        cache_hit=1,
+        cache_miss=2,
+        cost_usd=price,
+      ),
+      {
+        "event": "usage",
+        "usage": {
+          "prompt_tokens": 3,
+          "completion_tokens": 2,
+          "total_tokens": 5,
+          "prompt_cache_hit_tokens": 1,
+          "prompt_cache_miss_tokens": 2,
+          "cost_usd": price,
+        },
+      },
+    )
+  }
+}

@@ -114,23 +114,13 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
   // Derive dataflow: output-of(i) embedded in input-of(j), i < j. The
   // probe is JSON-escaped through the encoder itself, so it matches how
   // the text actually appears inside a stringified input.
-  let values : Array[String] = entries.map(entry => answer_of(entry.outcome))
+  let probes = entries.map(entry => probe_of(entry.outcome))
   let inputs : Array[String] = entries.map(entry => entry.call.input.stringify())
   let edges : Array[(Int, Int)] = []
   for j, input in inputs {
     for i in 0..<j {
-      let value = values[i]
-      if value.length() > 60 {
-        // The encoder wrote the delimiters; strip exactly those back off,
-        // keeping every escape it put inside them.
-        let quoted = Json::string(clip(value, 50)).stringify()
-        guard quoted.strip_prefix("\"") is Some(open) &&
-          open.strip_suffix("\"") is Some(probe) else {
-          continue
-        }
-        if input.contains(probe) {
-          edges.push((i, j))
-        }
+      if probes[i] is Some(probe) && input.contains(probe) {
+        edges.push((i, j))
       }
     }
   }
@@ -319,11 +309,17 @@ fn steps_of(outcome : @workflow.AgentOutcome) -> Int {
 }
 
 ///|
-fn answer_of(outcome : @workflow.AgentOutcome) -> String {
-  match outcome {
-    Finished(value~, ..) => answer_of_value(value)
-    DidNotFinish(..) => ""
+fn probe_of(outcome : @workflow.AgentOutcome) -> String? {
+  guard outcome is Finished(value~, ..) else { return None }
+  let answer = answer_of_value(value)
+  guard answer.length() > 60 else { return None }
+  // Strip only the encoder's delimiters, preserving escapes in the probe.
+  let quoted = Json::string(clip(answer, 50)).stringify()
+  guard quoted.strip_prefix("\"") is Some(open) &&
+    open.strip_suffix("\"") is Some(probe) else {
+    return None
   }
+  Some(probe.to_owned())
 }
 
 ///|
@@ -392,3 +388,36 @@ let style : String =
   #|summary::marker{color:var(--soft)}
   #|.out{white-space:pre-wrap;font-size:13.5px;line-height:1.6;color:var(--ink);padding:10px 4px 8px 22px;max-width:75ch}
   #|</style>
+
+///|
+test "dataflow probes preserve threshold, escaping and Unicode boundaries" {
+  let attempt = @workflow.AgentAttempt(
+    attempt_id="probe",
+    steps_used=0,
+    prompt_tokens=0,
+    completion_tokens=0,
+  )
+  fn finished(text : String) -> @workflow.AgentOutcome {
+    @workflow.Finished(value={ "answer": text }, attempt~)
+  }
+  assert_eq(
+    probe_of(@workflow.DidNotFinish(failure=@workflow.NoReport, attempt=None)),
+    None,
+  )
+  let sixty = "a".repeat(60)
+  assert_eq(probe_of(finished(sixty)), None)
+  assert_eq(probe_of(finished(sixty + "a")), Some("a".repeat(50)))
+  assert_eq(
+    probe_of(finished("a".repeat(49) + "🌙" + "b".repeat(20))),
+    Some("a".repeat(49)),
+  )
+  assert_eq(
+    probe_of(finished("\"\\\n" + "x".repeat(60))),
+    Some("\\\"\\\\\\n" + "x".repeat(47)),
+  )
+  let object : Json = { "payload": sixty }
+  assert_eq(
+    probe_of(@workflow.Finished(value=object, attempt~)),
+    Some("{\\\"payload\\\":\\\"" + "a".repeat(38)),
+  )
+}

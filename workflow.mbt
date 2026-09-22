@@ -123,7 +123,7 @@ pub async fn Workflow::agent(
   self.agent_call(
     kind~,
     input~,
-    label=label.unwrap_or(brief(prompt)),
+    label=label.unwrap_or_else(() => brief(prompt)),
     max_steps?,
     schema?,
   )
@@ -262,7 +262,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
   max_steps? : Int,
   schema? : Json,
 ) -> T {
-  let label = label.unwrap_or(brief(prompt))
+  let label = label.unwrap_or_else(() => brief(prompt))
   let value = self.agent(prompt~, kind~, hints?, label~, max_steps?, schema?)
   @json.from_json(value) catch {
     error =>

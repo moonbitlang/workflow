@@ -81,10 +81,7 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
   if trimmed == "" {
     return
   }
-  guard (Some(@json.parse(trimmed.to_owned())) catch { _ => None })
-    is Some(json) else {
-    return
-  }
+  let json = @json.parse(trimmed) catch { _ => return }
   if self.observe_line is Some(hook) {
     hook(json)
   }
@@ -146,10 +143,9 @@ fn Observations::observe(self : Observations, line : String) -> Unit {
     } => if integral(to_sequence) is Some(_) { self.context_yield = true }
     { "event": "turn_failed", "error": String(error), .. }
     | { "event": "agent_setup_failed", "error": String(error), .. }
-    | { "event": "command_error", "error": String(error), .. } =>
+    | { "event": "command_error", "error": String(error), .. }
+    | { "event": "agent_aborted", "reason": String(error), .. } =>
       self.failure = Some(error)
-    { "event": "agent_aborted", "reason": String(reason), .. } =>
-      self.failure = Some(reason)
     _ => ()
   }
 }
@@ -265,21 +261,19 @@ pub async fn contract_run(
         // INSIDE the deadline scope: an input larger than the pipe
         // capacity against a child that never reads must hit the wall
         // deadline, not block forever.
-        let request : Json = {
+        let fields : Map[String, Json] = {
           "workflow_contract": 1,
-          "id": id,
-          "kind": kind,
+          "id": Json(id),
+          "kind": Json(kind),
           "input": input,
         }
-        if request is Object(fields) {
-          if max_steps is Some(steps) {
-            fields["max_steps"] = steps.to_json()
-          }
-          if schema is Some(schema) {
-            fields["schema"] = schema
-          }
+        if max_steps is Some(steps) {
+          fields["max_steps"] = Json(steps)
         }
-        stdin_writer.write("\{request.stringify()}\n")
+        if schema is Some(schema) {
+          fields["schema"] = schema
+        }
+        stdin_writer.write("\{Json::object(fields).stringify()}\n")
         drain()
       }
       try {
@@ -417,8 +411,6 @@ pub fn contract_runner(
     let spec = launch(call)
     ids.val += 1
     let id = "cr-\{ids.val}"
-    let cwd = spec.cwd
-    let extra_env = spec.extra_env
     let result = contract_run(
       command=spec.command,
       args=spec.args,
@@ -428,8 +420,8 @@ pub fn contract_runner(
       max_steps?=call.max_steps,
       schema?=call.schema,
       wall_deadline_ms=spec.deadline_ms.unwrap_or(deadline_ms),
-      cwd?,
-      extra_env?,
+      cwd?=spec.cwd,
+      extra_env?=spec.extra_env,
     )
     let attempt = @workflow.AgentAttempt(
       attempt_id=id,

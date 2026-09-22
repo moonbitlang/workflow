@@ -131,11 +131,10 @@ fn claude_args(
     args.push("--permission-mode")
     args.push("acceptEdits")
     args.push("--allowedTools")
-    args.push_iter(mutating.iter())
   } else {
     args.push("--disallowedTools")
-    args.push_iter(mutating.iter())
   }
+  args.push_iter(mutating.iter())
   args
 }
 
@@ -152,6 +151,11 @@ test "argv: read-only by default, writable for worker, extras before the tool li
   ])
   let worker = @shim.Request(kind="worker", input=Json::null(), prompt="why?")
   let plain = @shim.Options(command="claude")
+  let writable = @shim.Options(command="claude", writable=true)
+  assert_eq(
+    claude_args(request, writable, None),
+    claude_args(worker, plain, None),
+  )
   assert_eq(claude_args(worker, plain, Some("{}")), [
     "-p", "why?", "--output-format", "stream-json", "--verbose", "--json-schema",
     "{}", "--permission-mode", "acceptEdits", "--allowedTools", "Edit", "Write",

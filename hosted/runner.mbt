@@ -156,35 +156,20 @@ fn outcome_of(
     completion_tokens=result.completion_tokens,
     cost_usd?=result.cost_usd,
   )
-  match result.terminal {
+  let failure = match result.terminal {
     Captured =>
       match result.report {
-        Some(value) => @workflow.Finished(value~, attempt~)
-        // Unreachable by the contract: refuse to dress an invariant violation
-        // up as a clean no-report terminal.
-        None =>
-          @workflow.DidNotFinish(
-            failure=@workflow.Failed("captured terminal without a report value"),
-            attempt=Some(attempt),
-          )
+        Some(value) => return @workflow.Finished(value~, attempt~)
+        // Refuse to dress an invariant violation up as a clean no-report terminal.
+        None => @workflow.Failed("captured terminal without a report value")
       }
-    NoReport =>
-      @workflow.DidNotFinish(failure=@workflow.NoReport, attempt=Some(attempt))
-    MaxSteps =>
-      @workflow.DidNotFinish(failure=@workflow.MaxSteps, attempt=Some(attempt))
-    ContextYield =>
-      @workflow.DidNotFinish(
-        failure=@workflow.ContextYield,
-        attempt=Some(attempt),
-      )
-    TimedOut =>
-      @workflow.DidNotFinish(failure=@workflow.TimedOut, attempt=Some(attempt))
-    Failed(reason) =>
-      @workflow.DidNotFinish(
-        failure=@workflow.Failed(reason),
-        attempt=Some(attempt),
-      )
+    NoReport => @workflow.NoReport
+    MaxSteps => @workflow.MaxSteps
+    ContextYield => @workflow.ContextYield
+    TimedOut => @workflow.TimedOut
+    Failed(reason) => @workflow.Failed(reason)
   }
+  @workflow.DidNotFinish(failure~, attempt=Some(attempt))
 }
 
 ///|

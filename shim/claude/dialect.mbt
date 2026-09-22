@@ -67,10 +67,7 @@ fn Claude::observe(self : Claude, line : String) -> Array[Json] {
   if trimmed == "" {
     return events
   }
-  guard (Some(@json.parse(trimmed.to_owned())) catch { _ => None })
-    is Some(json) else {
-    return events
-  }
+  let json = @json.parse(trimmed) catch { _ => return events }
   match json {
     { "type": "assistant", "message": message, .. } => {
       // An id-less message (never seen from the CLI, but not a reason to
@@ -80,14 +77,15 @@ fn Claude::observe(self : Claude, line : String) -> Array[Json] {
       } else {
         "anonymous-\{self.steps + 1}"
       }
-      if !self.snapshots.contains(id) {
+      let first_seen = !self.snapshots.contains(id)
+      if first_seen {
         self.steps += 1
         events.push(@shim.agent_step(self.steps))
       }
       match cost_of(message) {
         Some(cost) => self.snapshots[id] = cost
         None =>
-          if !self.snapshots.contains(id) {
+          if first_seen {
             self.snapshots[id] = { prompt: 0, completion: 0, hit: 0, miss: 0, }
           }
       }
@@ -201,8 +199,7 @@ fn Claude::settle(self : Claude) -> Json? {
 /// caller may want for resume or accounting.
 fn Claude::report(self : Claude) -> Json? {
   guard self.answer is Some(answer) else { return None }
-  let report : Json = { "answer": answer, "engine": "claude" }
-  guard report is Object(fields) else { return None }
+  let fields : Map[String, Json] = { "answer": answer, "engine": "claude" }
   if self.session_id is Some(id) {
     fields["session_id"] = id.to_json()
   }
@@ -212,7 +209,7 @@ fn Claude::report(self : Claude) -> Json? {
   if self.cost_usd is Some(cost) {
     fields["cost_usd"] = cost.to_json()
   }
-  Some(report)
+  Some(Json::object(fields))
 }
 
 ///|
@@ -336,5 +333,45 @@ test "a structured answer replaces the text" {
   assert_eq(
     state.report(),
     Some({ "answer": { "verdict": "real" }, "engine": "claude" }),
+  )
+}
+
+///|
+// Synthetic framing and partial-message cases, not a new CLI dialect.
+test "missing usage blocks preserve the last valid snapshot and one step" {
+  let state = Claude()
+  for line in ["", "\r\n", "not json"] {
+    assert_eq(state.observe(line), [])
+  }
+  let missing = "{\"type\":\"assistant\",\"message\":{\"id\":\"m\"}}\r\n"
+  assert_eq(state.observe(missing), [@shim.agent_step(1)])
+  assert_eq(
+    state.observe(
+      "{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}",
+    ),
+    [],
+  )
+  assert_eq(state.observe(missing), [])
+  assert_eq(state.steps, 1)
+  assert_eq(
+    state.settle(),
+    Some({
+      "event": "usage",
+      "usage": {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "total_tokens": 5,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 3,
+      },
+    }),
+  )
+  assert_eq(state.report(), None)
+  let _ = state.observe(
+    "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"你好🌙\"}\r\n",
+  )
+  assert_eq(
+    state.report(),
+    Some({ "answer": "你好🌙", "engine": "claude" }),
   )
 }

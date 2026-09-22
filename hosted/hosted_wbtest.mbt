@@ -139,3 +139,55 @@ async test "cancellation closes the sidecar bracket and still re-raises" {
   let journal = @workflow.Journal::load("\{dir}/journal.jsonl")
   assert_eq(journal.prior().length(), 0)
 }
+
+///|
+async test "hosted failures retain child identity, usage and sidecar status" {
+  let cases : Array[(String, @workflow.AgentFailure, String)] = [
+    ("", @workflow.NoReport, "no_report"),
+    ("{\"event\":\"max_steps_exhausted\"}", @workflow.MaxSteps, "max_steps"),
+    (
+      "{\"event\":\"context_yield\",\"to_sequence\":1,\"answer\":\"later\"}",
+      @workflow.ContextYield,
+      "context_yield",
+    ),
+    (
+      "{\"event\":\"turn_failed\",\"error\":\"fixture\"}",
+      @workflow.Failed("fixture"),
+      "failed",
+    ),
+  ]
+  for (terminal, expected, status) in cases {
+    let child = "read line\nprintf '%s\\n' '{\"event\":\"agent_step\",\"step\":2}' '{\"event\":\"usage\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7,\"prompt_cache_hit_tokens\":0,\"prompt_cache_miss_tokens\":3,\"cost_usd\":0.25}}' '\{terminal}'"
+    guard parse({
+        "v": 1,
+        "exe": "sh",
+        "child_args": ["-c", child],
+        "child_id": "test-{n}",
+        "ids": [1, 1],
+      })
+      is Some(ctx) else {
+      fail("expected context")
+    }
+    let events : Array[Json] = []
+    let outcome = ctx
+      .runner(emit_line=(_, event) => events.push(event))
+      .invoke(@workflow.AgentCall(kind="explore", input="q", label="fixture"))
+    guard outcome is @workflow.DidNotFinish(failure~, attempt=Some(attempt)) else {
+      fail("expected accounted failure")
+    }
+    assert_true(failure == expected)
+    assert_eq(attempt.attempt_id, "test-1")
+    assert_eq(attempt.steps_used, 2)
+    assert_eq(attempt.prompt_tokens, 3)
+    assert_eq(attempt.completion_tokens, 4)
+    assert_eq(attempt.cost_usd, Some(0.25))
+    assert_eq(events.length(), 2)
+    assert_eq(events[1], {
+      "event": "agent_finished",
+      "child": "test-1",
+      "status": status,
+      "steps": 2,
+      "tokens": 7,
+    })
+  }
+}
