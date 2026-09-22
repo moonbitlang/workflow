@@ -487,6 +487,29 @@ are larger standalone programs:
 - [`simplify.mbtx`](examples/simplify.mbtx) runs a simplification sweep,
   choosing a hosted runner when configured or a standalone OpenSeek runner.
 - [`compose.mbtx`](examples/compose.mbtx) routes calls across multiple engines.
+- [`review-simplify.mbtx`](examples/review-simplify.mbtx) asks Codex and
+  Claude to review every package, without a host. It groups both reports
+  by package in `simplification-review.md`, keeping engine attribution and
+  failures visible. Suggestions are not applied or treated as consensus.
+  It defaults to two concurrent calls across both engines, through the
+  published shims, with a fresh journal per run.
+
+```sh
+moon run examples/review-simplify.mbtx -- --list
+moon run examples/review-simplify.mbtx -- --jobs 2
+moon run examples/review-simplify.mbtx -- --engines claude shim/codex
+# Models are optional; omitted settings inherit each CLI's configuration.
+moon run examples/review-simplify.mbtx -- --codex-model MODEL --claude-model MODEL
+# Extra CLI arguments are JSON arrays, preserving each argument verbatim.
+moon run examples/review-simplify.mbtx -- --codex-args '["-c","model_reasoning_effort=\"high\""]' --claude-args '["--effort","high"]'
+```
+
+`--codex-shim` and `--claude-shim` accept locally built native executables;
+`--out` selects the combined report path. Additional CLI arguments can
+select profiles/settings, but must preserve JSON output and the read-only
+policy. Claude's default shim disables Bash as well as editing tools, so
+its reviewer uses file-reading tools. Review steps have different meanings
+across engines; `--steps` is not a common model-call or token budget.
 
 Those scripts use the published module without a version pin. They are not
 part of `moon test`; only `moon run <script.mbtx>` compiles and executes one.
