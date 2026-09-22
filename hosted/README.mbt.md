@@ -193,3 +193,8 @@ journals, and cancellation using local shell children;
 moon test hosted --target native
 moon test hosted --target wasm
 ```
+
+Host-specific top-level fields are available through `ctx.extension(name)` as
+`Json?`. For example, OpenSeek supplies audit input in an `openseek` object.
+The library leaves extension schemas to the host; reserved handoff fields are
+excluded. Missing fields return `None`, while explicit null is `Some(Null)`.

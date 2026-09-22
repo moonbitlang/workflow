@@ -44,6 +44,17 @@ partial one.
 | `cwd` | no | The child's working directory. |
 | `deadline_ms` | no | Wall deadline per child. Default 600 000. |
 
+## Host-specific extensions
+
+Hosts may add namespaced top-level fields, for example
+`"openseek": {"audit": {"goal": "ship the parser"}}`. `ctx.extension("openseek")`
+returns that value as `Json?`; the host and its scripts own its schema and
+validation. The library preserves arbitrary JSON values without interpreting
+them. Missing fields return `None`; explicit `null` returns `Some(Null)`.
+Reserved fields in the table above are not extensions and are never returned
+by this accessor. Hosts should use their own namespace to avoid collisions
+with future common fields. Existing handoffs need no changes; `v` remains 1.
+
 ## What the host must guarantee
 
 **The block is disjoint.** The ordinals in `ids` must not be handed to anything
