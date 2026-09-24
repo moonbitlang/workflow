@@ -1,9 +1,9 @@
 import {
-  "moonbitlang/async@0.21.1",
-  "moonbitlang/async@0.21.1/fs",
-  "moonbitlang/workflow@0.7.0",
-  "moonbitlang/workflow@0.7.0/spawn",
-  "moonbitlang/workflow@0.7.0/hosted",
+  "moonbitlang/async@0.22.4",
+  "moonbitlang/async@0.22.4/fs",
+  "moonbitlang/workflow@0.8.0",
+  "moonbitlang/workflow@0.8.0/spawn",
+  "moonbitlang/workflow@0.8.0/hosted",
   "moonbitlang/core/argparse",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -264,11 +264,7 @@ async fn sweep() -> Unit {
     None => {
       let wf = @workflow.Workflow(
         runner=@spawn.contract_runner(launch=_ => {
-          command: "openseek",
-          args: ["subrun", "explore"],
-          cwd: None,
-          extra_env: None,
-          deadline_ms: None,
+          @spawn.LaunchSpec(command="openseek", args=["subrun", "explore"])
         }),
         journal=@workflow.Journal::load(value(args, "journal", "simplify.jsonl")),
         replay_scope=repo,
