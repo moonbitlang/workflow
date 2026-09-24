@@ -270,17 +270,19 @@ pub async fn run_cli(
           return
         }
       }
+      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
+      // signal that bypasses `catch` and unwinds only through `defer` /
+      // `errdefer`. Closing a pipe and cancelling a process are idempotent,
+      // so the deferred teardown also covers the explicit closes below.
+      defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error if @async.is_being_cancelled() => {
-          stdin_writer.close()
-          raise error
-        }
+        error if @async.is_being_cancelled() => raise error
         error => {
-          stdin_writer.close()
           failure.val = Some("shim pipes unavailable: \{error}")
           return
         }
       }
+      defer stdout_reader.close()
       let process = @process.spawn(
         group,
         command,
@@ -297,18 +299,13 @@ pub async fn run_cli(
         ),
         no_wait=true,
       ) catch {
-        error if @async.is_being_cancelled() => {
-          stdout_reader.close()
-          stdin_writer.close()
-          raise error
-        }
+        error if @async.is_being_cancelled() => raise error
         error => {
-          stdout_reader.close()
-          stdin_writer.close()
           failure.val = Some("cannot spawn \{command}: \{error}")
           return
         }
       }
+      defer process.cancel()
       // EOF at once: the CLI must never wait on stdin for a prompt.
       stdin_writer.close()
       if watch_stdin {
@@ -319,10 +316,6 @@ pub async fn run_cli(
           cancelled.val = true
           process.cancel()
         }
-      }
-      fn teardown() -> Unit {
-        stdout_reader.close()
-        process.cancel()
       }
       try {
         while stdout_reader.read_until("\n") is Some(line) {
@@ -350,7 +343,6 @@ pub async fn run_cli(
         }
       } catch {
         error => {
-          @async.protect_from_cancel(() => teardown())
           if @async.is_being_cancelled() {
             raise error
           }
@@ -360,11 +352,9 @@ pub async fn run_cli(
           return
         }
       }
-      teardown()
     }
   catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>
-      raise error
+    error if @async.is_being_cancelled() => raise error
     error =>
       if failure.val is None {
         failure.val = Some("shim run failed: \{error}")

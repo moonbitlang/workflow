@@ -101,9 +101,10 @@ Everything else follows from three decisions:
   like a success's. `attempt=None` means no launch was ever tried.
   Engines that price their work report it too: `cost_usd()` sums their
   figures, and stays a floor when an engine in the mix prices nothing.
-- **Cancellation propagates.** Engine bugs and cancellation `raise`
-  through and cancel the task group. They do not produce a journalled
-  outcome. Usage from an interrupted call is not added to the core counters;
+- **Cancellation propagates.** Engine bugs `raise` through; cancellation
+  is a signal that bypasses `catch` and unwinds through `defer`/`errdefer`.
+  Either way the task group is cancelled and no journalled outcome is
+  produced. Usage from an interrupted call is not added to the core counters;
   adapters that need it during teardown can use `spawn.ContractProgress`.
 
 ## A workflow, end to end

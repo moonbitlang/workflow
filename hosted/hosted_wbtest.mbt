@@ -122,7 +122,7 @@ async test "cancellation closes the sidecar bracket and still re-raises" {
     assert_true(started is Some(_))
     task.cancel()
     try task.wait() catch {
-      error => assert_true(@async.is_cancellation_error(error))
+      error => assert_true(error is @async.WaitedTaskAlreadyCancelled)
     } noraise {
       _ => fail("cancellation must re-raise, not return an outcome")
     }
