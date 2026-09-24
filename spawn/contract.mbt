@@ -199,8 +199,8 @@ pub async fn contract_run(
   // The group call is itself fold-guarded: a spawn failure can surface
   // ASYNCHRONOUSLY (the spawn's internal reaper task raising at group
   // exit, e.g. EAGAIN under fork pressure), bypassing the per-call
-  // catches inside. Cancellation still re-raises; anything else becomes
-  // a Failed terminal — a loaded machine must degrade the run, never
+  // catches inside. Cancellation bypasses every catch and unwinds; anything
+  // else becomes a Failed terminal — a loaded machine must degrade the run, never
   // crash the caller.
   try
     @async.with_task_group() <| group => {
@@ -211,17 +211,19 @@ pub async fn contract_run(
           return
         }
       }
+      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
+      // signal that bypasses `catch` and unwinds only through `defer` /
+      // `errdefer`. Closing a pipe and cancelling a process are idempotent,
+      // so the deferred teardown also covers the explicit closes below.
+      defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error if @async.is_being_cancelled() => {
-          stdin_writer.close()
-          raise error
-        }
+        error if @async.is_being_cancelled() => raise error
         error => {
-          stdin_writer.close()
           observations.failure = Some("subrun pipes unavailable: \{error}")
           return
         }
       }
+      defer stdout_reader.close()
       // `no_wait`: the group terminates the child at teardown rather than
       // waiting for an exit that may only come once its stdin is closed.
       let process = @process.spawn(
@@ -238,18 +240,13 @@ pub async fn contract_run(
         cwd?=cwd.map(dir => dir.view()),
         no_wait=true,
       ) catch {
-        error if @async.is_being_cancelled() => {
-          stdout_reader.close()
-          stdin_writer.close()
-          raise error
-        }
+        error if @async.is_being_cancelled() => raise error
         error => {
-          stdout_reader.close()
-          stdin_writer.close()
           observations.failure = Some("subrun spawn failed: \{error}")
           return
         }
       }
+      defer process.cancel()
       async fn drain() -> Unit {
         while stdout_reader.read_until("\n") is Some(line) {
           observations.observe(line)
@@ -302,14 +299,9 @@ pub async fn contract_run(
         }
       } catch {
         error => {
-          // External cancellation (or a pipe failure): tear the child down
-          // and re-raise cancellation; fold anything else into the
-          // terminal.
-          @async.protect_from_cancel(() => {
-            stdout_reader.close()
-            stdin_writer.close()
-            process.cancel()
-          })
+          // A pipe failure: the deferred teardown stops the child; fold the
+          // error into the terminal. (External cancellation never reaches
+          // here — it unwinds through the defers above.)
           if @async.is_being_cancelled() {
             raise error
           }
@@ -319,13 +311,9 @@ pub async fn contract_run(
           return
         }
       }
-      stdout_reader.close()
-      stdin_writer.close()
-      process.cancel()
     }
   catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>
-      raise error
+    error if @async.is_being_cancelled() => raise error
     error =>
       if observations.failure is None {
         observations.failure = Some("subrun runner failed: \{error}")

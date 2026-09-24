@@ -3,7 +3,7 @@ name = "moonbitlang/workflow"
 version = "0.7.2"
 
 import {
-  "moonbitlang/async@0.21.1",
+  "moonbitlang/async@0.22.4",
 }
 
 readme = "README.mbt.md"

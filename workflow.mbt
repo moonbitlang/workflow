@@ -191,8 +191,8 @@ pub async fn Workflow::agent_call(
   // The semaphore deliberately swallows cancellation for a waiter it has
   // already woken, so the slot is never lost — which means a call
   // cancelled while queued arrives HERE holding a slot. Re-check before
-  // launching: `pause` raises `Cancelled` when the flag is set, and the
-  // defer above hands the slot back.
+  // launching: `pause` delivers the cancellation signal when the flag is set,
+  // and the defer above hands the slot back.
   if @async.is_being_cancelled() {
     @async.pause()
   }

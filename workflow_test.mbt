@@ -114,8 +114,10 @@ async test "the launch allowance ignores calls cancelled while queued" {
       }
       work.cancel()
     }
+    // Waiting on a task someone else cancelled raises the ordinary
+    // `WaitedTaskAlreadyCancelled` error.
     let _ : Array[Json] = work.wait() catch {
-      error if @async.is_cancellation_error(error) => []
+      @async.WaitedTaskAlreadyCancelled => []
       error => raise error
     }
   })
