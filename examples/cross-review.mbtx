@@ -184,28 +184,20 @@ async fn review() -> Unit {
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
         "claude" =>
-          {
-            command: "moonx",
-            args: [
-              "\{shim}/claude",
-              "--model",
-              claude_model,
-              "--",
-              "--max-budget-usd",
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=[
+              "\{shim}/claude", "--model", claude_model, "--", "--max-budget-usd",
               "0.60",
             ],
-            cwd: None,
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
+            deadline_ms=600_000,
+          )
         "codex" =>
-          {
-            command: "moonx",
-            args: ["\{shim}/codex", "--model", codex_model],
-            cwd: None,
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=["\{shim}/codex", "--model", codex_model],
+            deadline_ms=600_000,
+          )
         kind => {
           // openseek reads kind and the step ceiling from ARGV
           // (docs/child-contract.md §7.1): mirror them.
@@ -214,13 +206,7 @@ async fn review() -> Unit {
             argv.push("--max-steps")
             argv.push("\{steps}")
           }
-          {
-            command: "openseek",
-            args: argv,
-            cwd: None,
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
+          @spawn.LaunchSpec(command="openseek", args=argv, deadline_ms=600_000)
         }
       }
     }),

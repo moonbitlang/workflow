@@ -95,17 +95,17 @@ fn Codex::report(self : Codex, structured~ : Bool) -> Json? {
   guard self.last_message is Some(text) else { return None }
   let answer : Json = if structured {
     @json.parse(text) catch {
-      _ => text.to_json()
+      _ => Json(text)
     }
   } else {
-    text.to_json()
+    Json(text)
   }
   let fields : Map[String, Json] = { "answer": answer, "engine": "codex" }
   if self.thread_id is Some(id) {
-    fields["thread_id"] = id.to_json()
+    fields["thread_id"] = Json(id)
   }
   if !self.notices.is_empty() {
-    fields["notices"] = self.notices.to_json()
+    fields["notices"] = Json(self.notices)
   }
   Some(Json::object(fields))
 }

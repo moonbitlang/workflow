@@ -125,7 +125,7 @@ fn Claude::observe(self : Claude, line : String) -> Array[Json] {
         !(structured is Null) {
         self.answer = Some(structured)
       } else {
-        self.answer = Some(text.to_json())
+        self.answer = Some(Json(text))
       }
     }
     _ => ()
@@ -201,13 +201,13 @@ fn Claude::report(self : Claude) -> Json? {
   guard self.answer is Some(answer) else { return None }
   let fields : Map[String, Json] = { "answer": answer, "engine": "claude" }
   if self.session_id is Some(id) {
-    fields["session_id"] = id.to_json()
+    fields["session_id"] = Json(id)
   }
   if self.num_turns is Some(turns) {
-    fields["num_turns"] = turns.to_json()
+    fields["num_turns"] = Json(turns)
   }
   if self.cost_usd is Some(cost) {
-    fields["cost_usd"] = cost.to_json()
+    fields["cost_usd"] = Json(cost)
   }
   Some(Json::object(fields))
 }

@@ -70,7 +70,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "outcome": Json(self.outcome),
   }
   if self.phase is Some(phase) {
-    fields["phase"] = phase.to_json()
+    fields["phase"] = Json(phase)
   }
   if self.started_at is Some(at) {
     fields["started_at"] = Json::number(at.to_double())

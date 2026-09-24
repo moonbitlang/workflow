@@ -160,7 +160,7 @@ pub fn usage(
   // The engine's own price, when it states one (`usage.cost_usd` on the
   // wire): the runner sums it into the attempt.
   if cost_usd is Some(cost) {
-    fields["cost_usd"] = cost.to_json()
+    fields["cost_usd"] = Json(cost)
   }
   { "event": "usage", "usage": Json::object(fields) }
 }
