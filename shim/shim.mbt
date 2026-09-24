@@ -264,7 +264,6 @@ pub async fn run_cli(
   try
     @async.with_task_group() <| group => {
       let (child_stdin, stdin_writer) = @process.write_to_process() catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           failure.val = Some("shim pipes unavailable: \{error}")
           return
@@ -276,7 +275,6 @@ pub async fn run_cli(
       // so the deferred teardown also covers the explicit closes below.
       defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           failure.val = Some("shim pipes unavailable: \{error}")
           return
@@ -299,7 +297,6 @@ pub async fn run_cli(
         ),
         no_wait=true,
       ) catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           failure.val = Some("cannot spawn \{command}: \{error}")
           return
@@ -343,9 +340,6 @@ pub async fn run_cli(
         }
       } catch {
         error => {
-          if @async.is_being_cancelled() {
-            raise error
-          }
           if failure.val is None {
             failure.val = Some("shim run failed: \{error}")
           }
@@ -354,7 +348,6 @@ pub async fn run_cli(
       }
     }
   catch {
-    error if @async.is_being_cancelled() => raise error
     error =>
       if failure.val is None {
         failure.val = Some("shim run failed: \{error}")

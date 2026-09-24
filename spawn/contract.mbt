@@ -205,7 +205,6 @@ pub async fn contract_run(
   try
     @async.with_task_group() <| group => {
       let (child_stdin, stdin_writer) = @process.write_to_process() catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           observations.failure = Some("subrun pipes unavailable: \{error}")
           return
@@ -217,7 +216,6 @@ pub async fn contract_run(
       // so the deferred teardown also covers the explicit closes below.
       defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           observations.failure = Some("subrun pipes unavailable: \{error}")
           return
@@ -240,7 +238,6 @@ pub async fn contract_run(
         cwd?=cwd.map(dir => dir.view()),
         no_wait=true,
       ) catch {
-        error if @async.is_being_cancelled() => raise error
         error => {
           observations.failure = Some("subrun spawn failed: \{error}")
           return
@@ -300,11 +297,8 @@ pub async fn contract_run(
       } catch {
         error => {
           // A pipe failure: the deferred teardown stops the child; fold the
-          // error into the terminal. (External cancellation never reaches
-          // here — it unwinds through the defers above.)
-          if @async.is_being_cancelled() {
-            raise error
-          }
+          // error into the terminal. Cancellation never reaches a `catch`;
+          // it unwinds through the defers above.
           if observations.failure is None {
             observations.failure = Some("subrun stream failed: \{error}")
           }
@@ -313,7 +307,6 @@ pub async fn contract_run(
       }
     }
   catch {
-    error if @async.is_being_cancelled() => raise error
     error =>
       if observations.failure is None {
         observations.failure = Some("subrun runner failed: \{error}")
