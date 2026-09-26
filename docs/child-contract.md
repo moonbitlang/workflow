@@ -355,7 +355,7 @@ For one agent call the runner:
    name it; a transport-1 argv must not);
 2. spawns the child as in §1, writes ONE request line (§10.2) and keeps
    stdin open — EOF is the graceful-cancel signal, as in §1;
-3. drains stdout until EOF without interpreting it;
+3. drains stdout until EOF as opaque bytes (it need not be UTF-8, or lines);
 4. after a clean EOF, waits up to 2 000 ms for the exit status; at the wall
    deadline it closes stdin and drains for `cancel_grace_ms` instead;
 5. reads the result file (§10.4) and removes the directory.
@@ -403,16 +403,16 @@ engine's full description of the same document.
 | --- | --- |
 | The child could not be launched (pipes, spawn, no temporary directory, argv/transport mismatch) | `Failed(reason)` |
 | `completed` (also when it lands in the grace window after the deadline) | `Captured`, report = `output` |
-| The deadline elapsed, and the result is not `completed` or there is none | `TimedOut` |
+| The deadline elapsed, and there is no `completed` result (none, a malformed or unreadable one, or another status) | `TimedOut` |
 | `no_report` / `max_steps_exhausted` / `context_yield` | `NoReport` / `MaxSteps` / `ContextYield` |
 | `aborted` / `interrupted` / `failed` | `Failed` |
-| No result file | `Failed("the child exited N without writing a result")` |
+| No result file | `Failed("the child exited N without writing a result")`, or the runner's own failure (a broken pipe, say) |
 | An unreadable or malformed file, a wrong `request_id`, an unknown `status` | `Failed(...)` |
 
 A missing file never means success. The exit status is kept beside the
 result (`ContractResult.exit_code`) rather than overriding it: a `completed`
 result with a nonzero exit is still `Captured`, and the status says the exit
-was abnormal.
+was abnormal. The exit status is collected in the grace window too.
 
 ### 10.5 Accounting
 
@@ -421,7 +421,11 @@ observed while the child runs, so a caller cancelled mid-run sees none. When
 the runner has no account from the child (no file, a malformed file, or a
 result without `usage`), `ContractResult.unaccounted` and
 `AgentAttempt.unaccounted` say why, and the counters are only what was
-observed. `None` means the counters are the child's own totals.
+observed. A failure before a child process started (pipes, spawn, the
+temporary directory) spent nothing and is not unaccounted; any failure after
+it is. `steps` is read even from a result without `usage`. A hosted launch
+cancelled mid-run writes `unaccounted` on its `agent_finished` sidecar line.
+`None` means the counters are the child's own totals.
 
 ### 10.6 The reference engine: `openseek run`
 

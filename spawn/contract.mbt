@@ -269,6 +269,9 @@ pub async fn contract_run(
     None => args
   }
   let mut exit_code : Int? = None
+  // Whether a child process started: a failure before that spent nothing, one
+  // after it may have spent anything.
+  let mut launched = false
   let observations : Observations = {
     interpret: transport is StdoutEvents,
     progress,
@@ -327,7 +330,16 @@ pub async fn contract_run(
         }
       }
       defer process.cancel()
+      launched = true
       async fn drain() -> Unit {
+        if transport is ResultFile {
+          // Opaque bytes: a line reader would reject output that is not
+          // UTF-8, and this stdout is not the protocol.
+          while stdout_reader.read_some(max_len=4096) is Some(_) {
+
+          }
+          return
+        }
         while stdout_reader.read_until("\n") is Some(line) {
           observations.observe(line)
         }
@@ -375,7 +387,11 @@ pub async fn contract_run(
             // flush; a report arriving in the grace window still counts.
             timed_out = true
             stdin_writer.close()
-            let _ = @async.with_timeout_opt(cancel_grace_ms, drain)
+            // A child that flushed and closed stdout in the grace window has
+            // an exit status worth keeping beside its result.
+            if @async.with_timeout_opt(cancel_grace_ms, drain) is Some(_) {
+              exit_code = @async.with_timeout_opt(2_000, () => process.wait())
+            }
           }
         }
       } catch {
@@ -401,7 +417,8 @@ pub async fn contract_run(
       path,
       id~,
       timed_out~,
-      launch_failure=observations.failure,
+      launched~,
+      runner_failure=observations.failure,
       exit_code~,
     )
   }
@@ -493,9 +510,10 @@ priv struct ChildResult {
   status : String
   output : Json?
   reason : String?
-  /// `(steps, prompt_tokens, completion_tokens)`, when the result carried
-  /// usage.
-  counters : (Int, Int, Int)?
+  /// `(prompt_tokens, completion_tokens)`, when the result carried usage.
+  tokens : (Int, Int)?
+  /// Model requests, when the result said.
+  steps : Int?
 }
 
 ///|
@@ -529,21 +547,18 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
     other => return Err("unknown status \{other}")
   }
   // Usage is whole or absent: a partial or fractional counter voids it, as
-  // on the event stream.
-  let counters = match (fields.get("usage"), fields.get("steps")) {
-    (None, _) => None
-    (
-      Some(
-        {
-          "prompt_tokens": Number(prompt, ..),
-          "completion_tokens": Number(completion, ..),
-          "total_tokens": Number(total, ..),
-          "prompt_cache_hit_tokens": Number(hit, ..),
-          "prompt_cache_miss_tokens": Number(miss, ..),
-          ..
-        }
-      ),
-      steps,
+  // on the event stream. Steps are independent of it.
+  let tokens = match fields.get("usage") {
+    None => None
+    Some(
+      {
+        "prompt_tokens": Number(prompt, ..),
+        "completion_tokens": Number(completion, ..),
+        "total_tokens": Number(total, ..),
+        "prompt_cache_hit_tokens": Number(hit, ..),
+        "prompt_cache_miss_tokens": Number(miss, ..),
+        ..
+      }
     ) =>
       match
         (
@@ -552,53 +567,53 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
           integral(total),
           integral(hit),
           integral(miss),
-          steps,
         ) {
-        (Some(prompt), Some(completion), Some(_), Some(_), Some(_), None) if prompt >=
+        (Some(prompt), Some(completion), Some(_), Some(_), Some(_)) if prompt >=
           0 &&
-          completion >= 0 => Some((0, prompt, completion))
-        (
-          Some(prompt),
-          Some(completion),
-          Some(_),
-          Some(_),
-          Some(_),
-          Some(Number(steps, ..)),
-        ) if prompt >= 0 && completion >= 0 =>
-          match integral(steps) {
-            Some(steps) if steps >= 0 => Some((steps, prompt, completion))
-            _ => return Err("malformed steps")
-          }
+          completion >= 0 => Some((prompt, completion))
         _ => return Err("malformed usage")
       }
-    (Some(_), _) => return Err("malformed usage")
+    Some(_) => return Err("malformed usage")
   }
-  Ok({ status, output: fields.get("output"), reason, counters, })
+  let steps = match fields.get("steps") {
+    None => None
+    Some(Number(steps, ..)) =>
+      match integral(steps) {
+        Some(steps) if steps >= 0 => Some(steps)
+        _ => return Err("malformed steps")
+      }
+    Some(_) => return Err("malformed steps")
+  }
+  Ok({ status, output: fields.get("output"), reason, tokens, steps, })
 }
 
 ///|
 /// Classify a transport-2 run from its result file. The file is authoritative:
-/// a missing one means the child did not finish, never success. A child that
-/// was cut off at the deadline is `TimedOut` unless it completed within the
-/// grace window.
+/// a missing one means the child did not finish, never success. The deadline
+/// wins over anything but a `completed` result, which still counts when it
+/// lands in the grace window. `launched` says a child process started: a
+/// failure before that spent nothing, and any failure after it leaves the
+/// child's spend unknown.
 async fn result_file_outcome(
   path : String,
   id~ : String,
   timed_out~ : Bool,
-  launch_failure~ : String?,
+  launched~ : Bool,
+  runner_failure~ : String?,
   exit_code~ : Int?,
 ) -> ContractResult {
   fn outcome(
     terminal : ContractTerminal,
     report : Json?,
-    counters : (Int, Int, Int)?,
+    tokens : (Int, Int)?,
+    steps : Int?,
     unaccounted : String?,
   ) -> ContractResult {
-    let (steps, prompt, completion) = counters.unwrap_or((0, 0, 0))
+    let (prompt, completion) = tokens.unwrap_or((0, 0))
     {
       report,
       terminal,
-      steps_used: steps,
+      steps_used: steps.unwrap_or(0),
       prompt_tokens: prompt,
       completion_tokens: completion,
       cost_usd: None,
@@ -606,30 +621,34 @@ async fn result_file_outcome(
       exit_code,
     }
   }
+  // Without a usable result: the deadline, else the runner's own failure,
+  // else the reason there is no result.
+  fn no_result(reason : String, unaccounted : String) -> ContractResult {
+    let terminal : ContractTerminal = match runner_failure {
+      _ if timed_out => TimedOut
+      Some(failure) => Failed(failure)
+      None => Failed(reason)
+    }
+    outcome(terminal, None, None, None, Some(unaccounted))
+  }
+  guard launched else {
+    let reason = runner_failure.unwrap_or("the child was not launched")
+    return outcome(Failed(reason), None, None, None, None)
+  }
   let exited = match exit_code {
     Some(code) => "exited \{code}"
     None => "did not exit in time"
   }
   let text = @fs.read_file(path).text() catch {
-    @os_error.OSError(_) as error if error.is_ENOENT() => {
-      let terminal : ContractTerminal = match launch_failure {
-        Some(reason) => Failed(reason)
-        None if timed_out => TimedOut
-        None => Failed("the child \{exited} without writing a result")
-      }
-      // A launch that never started spent nothing; any other child may have.
-      let unaccounted = match launch_failure {
-        Some(_) => None
-        None => Some("the child left no result")
-      }
-      return outcome(terminal, None, None, unaccounted)
-    }
+    @os_error.OSError(_) as error if error.is_ENOENT() =>
+      return no_result(
+        "the child \{exited} without writing a result",
+        "the child left no result",
+      )
     error =>
-      return outcome(
-        Failed("the result file is unreadable: \{error}"),
-        None,
-        None,
-        Some("the result file is unreadable"),
+      return no_result(
+        "the result file is unreadable: \{error}",
+        "the result file is unreadable",
       )
   }
   let decoded = try @json.parse(text) catch {
@@ -642,21 +661,25 @@ async fn result_file_outcome(
       Err(reason) => reason
       Ok(_) => ""
     }
-    return outcome(
-      Failed("malformed result file: \{reason}"),
-      None,
-      None,
-      Some("the result file is malformed"),
+    return no_result(
+      "malformed result file: \{reason}",
+      "the result file is malformed",
     )
   }
-  let unaccounted = match result.counters {
+  let unaccounted = match result.tokens {
     Some(_) => None
     None => Some("the child's result carries no usage")
   }
   let reason = result.reason.unwrap_or(result.status)
   let terminal : ContractTerminal = match result.status {
     "completed" =>
-      return outcome(Captured, result.output, result.counters, unaccounted)
+      return outcome(
+        Captured,
+        result.output,
+        result.tokens,
+        result.steps,
+        unaccounted,
+      )
     _ if timed_out => TimedOut
     "no_report" => NoReport
     "max_steps_exhausted" => MaxSteps
@@ -665,7 +688,7 @@ async fn result_file_outcome(
     "interrupted" => Failed("interrupted: \{reason}")
     _ => Failed(reason)
   }
-  outcome(terminal, None, result.counters, unaccounted)
+  outcome(terminal, None, result.tokens, result.steps, unaccounted)
 }
 
 ///|

@@ -454,3 +454,64 @@ async test "the transport and the argv must agree" {
     reason, "the argv names {result_file}, but the transport is StdoutEvents",
   )
 }
+
+///|
+async test "result-file stdout is opaque bytes, not lines" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|printf '\377\376 not utf-8\n'
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":"ok"}' > "$1"
+  let result = run_result_file_script(script)
+  guard result.terminal is Captured else { fail("expected Captured") }
+  assert_eq(result.report, Some(Json::string("ok")))
+}
+
+///|
+async test "steps survive a result without usage" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|printf '{"version":1,"request_id":"test-1","status":"max_steps_exhausted","steps":7}' > "$1"
+  let result = run_result_file_script(script)
+  assert_true(result.terminal is MaxSteps)
+  assert_eq(result.steps_used, 7)
+  assert_eq(result.unaccounted, Some("the child's result carries no usage"))
+}
+
+///|
+async test "the deadline wins over a malformed result" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|while read more; do :; done
+    #|printf 'not json' > "$1"
+  let result = run_result_file_script(script, wall_deadline_ms=300)
+  assert_true(result.terminal is TimedOut)
+  assert_eq(result.unaccounted, Some("the result file is malformed"))
+}
+
+///|
+async test "an exit status in the grace window is kept" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|while read more; do :; done
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":1}' > "$1"
+    #|exit 4
+  let result = run_result_file_script(script, wall_deadline_ms=300)
+  assert_true(result.terminal is Captured)
+  assert_eq(result.exit_code, Some(4))
+}
