@@ -4,9 +4,11 @@ This document is the normative description of the wire contract between a
 workflow runner and an agent process. The framework side is the `spawn`
 package of this module (`contract_run` is the one implementation; the
 `contract_runner` constructor lifts it into a `Runner`). The engine side is
-any executable. The reference engine is `openseek subrun <kind>` from
-[moonbitlang/openseek](https://github.com/moonbitlang/openseek), and the
-second half of this document records what that engine actually honours —
+any executable. The reference engine is `openseek run` from
+[moonbitlang/openseek](https://github.com/moonbitlang/openseek) over
+transport 2 (§10.6; older openseek engines spoke transport 1 as
+`openseek subrun <kind>`), and the second half of this document records what
+that engine actually honours —
 the part of the contract that was implicit until now.
 
 The dependency points engine → framework: this module never learns that any
@@ -169,9 +171,10 @@ attempt.
 
 ## 7. The reference engine: what `openseek subrun` honours
 
-> `openseek subrun` is openseek's transport-1 child. openseek's `run` speaks
-> transport 2 (§10.6); new launches should use it, and `subrun` is retired
-> once openseek's own callers have moved.
+> This section records openseek engines before `subrun` was retired
+> (openseek#1767): current openseek speaks only transport 2, as
+> `openseek run` (§10.6). It stays as the reference for launching those
+> older engines over transport 1.
 
 `openseek subrun <kind>` (source: `cmd/openseek/subrun.mbt` in the openseek
 repository; parent-side wrapper `agent_subrun.run_subrun`) speaks this
@@ -323,8 +326,9 @@ An executable is a workflow engine when it:
 The scripted-`sh` children in `spawn/spawn_test.mbt` are executable
 examples of the terminals a child can drive on its own — `Captured`,
 `NoReport`, `MaxSteps`, `Failed` (`TimedOut` and `ContextYield` are the
-runner's and the engine's to raise); openseek's `tests/cram/subrun.md` pins the
-reference engine's echo, error, and worker-validation lines byte for byte.
+runner's and the engine's to raise); openseek's `tests/cram/run-requests.md`
+pins the reference engine's transport-2 results, refusals, and cancellation
+byte for byte.
 The `shim/claude` and `shim/codex` executables in this module are two
 further conforming engines: each wraps a foreign CLI, reads the envelope
 through the shared `shim` package, and additionally enforces the request's
