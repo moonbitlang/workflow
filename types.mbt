@@ -66,6 +66,12 @@ pub struct AgentAttempt {
   /// free: an engine that prices nothing leaves it absent. Absent from the
   /// journal line when `None`, so earlier journals load unchanged.
   cost_usd : Double?
+  /// Why the counters above may fall short of what the attempt spent:
+  /// `Some(reason)` when the engine could not give its own account (a child
+  /// that died without a result, say), so the counters are only what was
+  /// observed. `None` means they are the engine's account. Absent from the
+  /// journal line when `None`, like `cost_usd`.
+  unaccounted : String?
 } derive(Eq, ToJson, FromJson)
 
 ///|
@@ -79,8 +85,16 @@ pub fn AgentAttempt::AgentAttempt(
   prompt_tokens~ : Int,
   completion_tokens~ : Int,
   cost_usd? : Double,
+  unaccounted? : String,
 ) -> AgentAttempt {
-  { attempt_id, steps_used, prompt_tokens, completion_tokens, cost_usd, }
+  {
+    attempt_id,
+    steps_used,
+    prompt_tokens,
+    completion_tokens,
+    cost_usd,
+    unaccounted,
+  }
 }
 
 ///|

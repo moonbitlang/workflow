@@ -40,6 +40,7 @@ struct Context {
   events_path : String?
   cwd : String?
   deadline_ms : Int?
+  transport : @spawn.Transport
 }
 
 ///|
@@ -66,10 +67,20 @@ pub fn context() -> Context? {
 /// version this package does not know, yields `None` rather than a partial
 /// context — a half-read handoff would name child ids the host never reserved,
 /// or a ledger path nothing is watching.
+///
+/// Version 1 launches children over the event stream. Version 2 adds a
+/// required `transport` (`"stdout_events"` or `"result_file"`); a library
+/// that predates it refuses a version 2 handoff, rather than passing a
+/// `{result_file}` placeholder to a child literally.
 fn parse(json : Json) -> Context? {
+  let transport : @spawn.Transport = match json {
+    { "v": 1, .. } => StdoutEvents
+    { "v": 2, "transport": "stdout_events", .. } => StdoutEvents
+    { "v": 2, "transport": "result_file", .. } => ResultFile
+    _ => return None
+  }
   guard json
     is {
-      "v": 1,
       "exe": String(exe),
       "child_args": Array(child_args),
       "child_id": String(child_id),
@@ -89,6 +100,11 @@ fn parse(json : Json) -> Context? {
   guard !exe.is_empty() else { return None }
   guard child_id.contains(OrdinalPlaceholder) else { return None }
   guard child_argv(child_args) is Some(argv) else { return None }
+  // The transport and the template must agree, or every launch would fail.
+  let names_result_file = argv.any(token => {
+    token.contains(@spawn.ResultFilePlaceholder)
+  })
+  guard names_result_file == (transport is ResultFile) else { return None }
   // A block of unknown size is not a block: both bounds must be present and
   // positive, and a script that assumed one would be inventing the ceiling it
   // is supposed to be under.
@@ -104,6 +120,7 @@ fn parse(json : Json) -> Context? {
         | "child_args"
         | "child_id"
         | "ids"
+        | "transport"
         | "journal"
         | "events"
         | "cwd"
@@ -123,6 +140,7 @@ fn parse(json : Json) -> Context? {
     events_path: optional_string(events),
     cwd: optional_string(cwd),
     deadline_ms: optional_int(deadline_ms),
+    transport,
   })
 }
 
@@ -216,7 +234,18 @@ test "an incomplete or unknown handoff is refused outright" {
     parse({ "v": 1, "exe": "/e", "child_args": ["run"], "child_id": "c-{n}" })
     is None,
   )
-  // An unknown contract version is refused rather than read optimistically.
+  // An unknown contract version is refused rather than read optimistically,
+  // and so is a version 2 handoff that names no transport.
+  assert_true(
+    parse({
+      "v": 3,
+      "exe": "/e",
+      "child_args": ["run"],
+      "child_id": "c-{n}",
+      "ids": [1, 4],
+    })
+    is None,
+  )
   assert_true(
     parse({
       "v": 2,
@@ -252,4 +281,52 @@ test "an incomplete or unknown handoff is refused outright" {
   )
   // Not JSON, or not an object at all.
   assert_true(parse(Json::string("nope")) is None)
+}
+
+///|
+test "a version 2 handoff names its transport, and the template must agree" {
+  let document : Json = {
+    "v": 2,
+    "transport": "result_file",
+    "exe": "/opt/engine",
+    "child_args": ["run", "--kind", "{kind}", "--result-file", "{result_file}"],
+    "child_id": "run7-sr-{n}",
+    "ids": [5, 32],
+  }
+  guard parse(document) is Some(ctx) else { fail("a full document must read") }
+  assert_true(ctx.transport is ResultFile)
+  // A result-file transport whose template names no result file, and an
+  // event-stream transport whose template does, are both refused.
+  assert_true(
+    parse({
+      "v": 2,
+      "transport": "result_file",
+      "exe": "/e",
+      "child_args": ["run"],
+      "child_id": "c-{n}",
+      "ids": [1, 4],
+    })
+    is None,
+  )
+  assert_true(
+    parse({
+      "v": 2,
+      "transport": "stdout_events",
+      "exe": "/e",
+      "child_args": ["run", "{result_file}"],
+      "child_id": "c-{n}",
+      "ids": [1, 4],
+    })
+    is None,
+  )
+  assert_true(
+    parse({
+      "v": 1,
+      "exe": "/e",
+      "child_args": ["run", "{result_file}"],
+      "child_id": "c-{n}",
+      "ids": [1, 4],
+    })
+    is None,
+  )
 }

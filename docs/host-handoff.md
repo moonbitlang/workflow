@@ -34,9 +34,10 @@ partial one.
 
 | field | required | meaning |
 |---|---|---|
-| `v` | yes | Contract version. Only `1` is read. |
+| `v` | yes | Handoff version: `1`, or `2` (below). Anything else is refused. |
+| `transport` | with `v: 2` | `"stdout_events"` or `"result_file"`: how each child hands back its result ([child contract §10](child-contract.md#10-transport-2-the-result-file)). Version 1 is always `"stdout_events"`. |
 | `exe` | yes | The engine to spawn. An absolute path is strongly advised: a sandbox policy that admits programs by exact path then admits *this* binary and not a same-named one earlier in `PATH`. |
-| `child_args` | yes | The argv for one child, as a non-empty array of strings. `{kind}` is replaced by the call's kind and `{child}` by the rendered child id, in every token. |
+| `child_args` | yes | The argv for one child, as a non-empty array of strings. `{kind}` is replaced by the call's kind and `{child}` by the rendered child id, in every token. With the `result_file` transport it must also name `{result_file}`, which the runner replaces with a fresh private path per launch; with `stdout_events` it must not. A template that disagrees with its transport is refused. |
 | `child_id` | yes | How this host names a child. Must contain `{n}`, which is replaced by the child's ordinal; a template that consumed no ordinal would name every child alike. |
 | `ids` | yes | `[first, count]`, both positive: the ordinals this script may use. It is also the **launch ceiling** — see below. |
 | `journal` | no | Where to append the ledger of resolved calls. Absent means an in-memory journal that dies with the process. |
@@ -90,6 +91,11 @@ launch:
 {"event":"agent_finished","child":"run7-sr-5","status":"captured","steps":12,"tokens":3400}
 ```
 
+When the runner could not get the child's own account of its spend (a
+`result_file` child that died without a result, say), the finish line carries
+`"unaccounted": "<why>"` and the counters are only what was observed, as the
+journal's `AgentAttempt.unaccounted` records too.
+
 The `started` line exists because the journal cannot report a launch: a
 `JournalEntry` carries an outcome, so it is written when the call *resolves*.
 It carries the child id so a watcher can begin following that child's own
@@ -117,3 +123,24 @@ the [child contract](child-contract.md) already carries it. A template with an
 optional flag in it would need conditional groups to express "omit both tokens
 when unset"; the envelope needs nothing. An engine that reads `max_steps` only
 from argv should learn to read it from the envelope instead.
+
+## Version 2
+
+Version 2 adds `transport`, so a host can launch children that write a result
+file instead of streaming events:
+
+```json
+{
+  "v": 2,
+  "transport": "result_file",
+  "exe": "/opt/engine",
+  "child_args": ["run", "--kind", "{kind}", "--input-format", "json", "--cancel-on-stdin-eof", "--result-file", "{result_file}", "--session", "{child}"],
+  "child_id": "run7-sr-{n}",
+  "ids": [5, 32]
+}
+```
+
+A library older than version 2 refuses this handoff: `context()` returns
+`None`, so a script behaves as if it had no host rather than passing
+`{result_file}` to a child literally. A host that must serve older scripts
+keeps writing version 1.

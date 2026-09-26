@@ -12,6 +12,12 @@ the part of the contract that was implicit until now.
 The dependency points engine → framework: this module never learns that any
 particular engine exists. Everything an engine must know is on this page.
 
+There are two transports. **Transport 1** (§1–§9) streams JSONL events on
+stdout and ends with a report line. **Transport 2** (§10) writes one result
+file and leaves stdout to humans. The launch configuration chooses
+(`LaunchSpec.transport`, `contract_run(transport=…)`, or the host handoff's
+`transport`); the runner never guesses from what a child prints.
+
 ## 1. Process lifecycle
 
 For one agent call the runner:
@@ -162,6 +168,10 @@ attempt.
   settings from argv — which is exactly what §7 is about.
 
 ## 7. The reference engine: what `openseek subrun` honours
+
+> `openseek subrun` is openseek's transport-1 child. openseek's `run` speaks
+> transport 2 (§10.6); new launches should use it, and `subrun` is retired
+> once openseek's own callers have moved.
 
 `openseek subrun <kind>` (source: `cmd/openseek/subrun.mbt` in the openseek
 repository; parent-side wrapper `agent_subrun.run_subrun`) speaks this
@@ -328,3 +338,95 @@ printf '{"event":"agent_step","step":1}\n'
 printf '{"event":"usage","usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":7}}\n'
 printf '{"subrun_report": {"answer": 42}}\n'
 ```
+
+## 10. Transport 2: the result file
+
+Transport 1 makes stdout a protocol, so a child cannot print anything a human
+would read there, and a tool that leaks a JSON line can impersonate a result.
+Transport 2 separates the two: the child writes ONE result file, and stdout is
+drained so the child never blocks on it, but never read.
+
+### 10.1 Lifecycle
+
+For one agent call the runner:
+
+1. creates a private temporary directory and substitutes
+   `<dir>/result.json` for every `{result_file}` in the argv (the argv must
+   name it; a transport-1 argv must not);
+2. spawns the child as in §1, writes ONE request line (§10.2) and keeps
+   stdin open — EOF is the graceful-cancel signal, as in §1;
+3. drains stdout until EOF without interpreting it;
+4. after a clean EOF, waits up to 2 000 ms for the exit status; at the wall
+   deadline it closes stdin and drains for `cancel_grace_ms` instead;
+5. reads the result file (§10.4) and removes the directory.
+
+### 10.2 The request line
+
+```json
+{"version": 1, "request_id": "cr-7", "kind": "explore", "input": {"query": "…"}, "limits": {"max_steps": 24}}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `version` | integer | The request document's version, `1`. (Transport 2 and request version 1 are separate numbers.) |
+| `request_id` | string | The runner's attempt id. The child MUST echo it in its result. |
+| `kind` | string | The call's kind, as the engine names its presets. |
+| `input` | any JSON | The call's input, opaque to the runner. |
+| `limits.max_steps` | integer, optional | The caller's step ceiling. |
+| `schema` | JSON object, optional | Present only when the caller passed one. An engine that cannot hold its report to the schema MUST refuse the request (a `failed` result), not ignore it. |
+
+### 10.3 The result file
+
+The child writes the file once, when it is over, so that a reader sees either
+no file or a whole one (write a sibling, then rename it into place):
+
+```json
+{"version": 1, "request_id": "cr-7", "status": "completed", "output": {"answer": "…"}, "usage": {"prompt_tokens": 90, "completion_tokens": 10, "total_tokens": 100, "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 90}, "steps": 2}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `version` | integer | `1`. |
+| `request_id` | string | The request's `request_id`, echoed. A result for another request is refused. |
+| `status` | string | `completed`, `no_report`, `max_steps_exhausted`, `context_yield`, `aborted`, `interrupted`, or `failed`. |
+| `output` | any JSON | With `completed`: the report. |
+| `reason` | string | With `context_yield`, `aborted`, `interrupted`, `failed`: why. |
+| `usage` | object, optional | The child's cumulative totals, the five integral counters of the `usage` event. A total, never an increment. |
+| `steps` | integer, optional | Model requests the child made. |
+
+Other fields are ignored. openseek's `docs/run-result.md` is the reference
+engine's full description of the same document.
+
+### 10.4 Classification
+
+| Condition | Terminal |
+| --- | --- |
+| The child could not be launched (pipes, spawn, no temporary directory, argv/transport mismatch) | `Failed(reason)` |
+| `completed` (also when it lands in the grace window after the deadline) | `Captured`, report = `output` |
+| The deadline elapsed, and the result is not `completed` or there is none | `TimedOut` |
+| `no_report` / `max_steps_exhausted` / `context_yield` | `NoReport` / `MaxSteps` / `ContextYield` |
+| `aborted` / `interrupted` / `failed` | `Failed` |
+| No result file | `Failed("the child exited N without writing a result")` |
+| An unreadable or malformed file, a wrong `request_id`, an unknown `status` | `Failed(...)` |
+
+A missing file never means success. The exit status is kept beside the
+result (`ContractResult.exit_code`) rather than overriding it: a `completed`
+result with a nonzero exit is still `Captured`, and the status says the exit
+was abnormal.
+
+### 10.5 Accounting
+
+The counters come from the result's `usage` and `steps`, and nothing is
+observed while the child runs, so a caller cancelled mid-run sees none. When
+the runner has no account from the child (no file, a malformed file, or a
+result without `usage`), `ContractResult.unaccounted` and
+`AgentAttempt.unaccounted` say why, and the counters are only what was
+observed. `None` means the counters are the child's own totals.
+
+### 10.6 The reference engine: `openseek run`
+
+`openseek run --kind {kind} --input-format json --cancel-on-stdin-eof
+--result-file {result_file}` speaks transport 2. It reads `kind` and
+`limits.max_steps` from the request (an explicit `--max-steps` wins), refuses
+a `schema`, and rejects a `--kind` that disagrees with the request. A child
+launched this way delegates no further. See openseek's `docs/run-result.md`.
