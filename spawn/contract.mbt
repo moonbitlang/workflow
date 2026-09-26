@@ -387,11 +387,14 @@ pub async fn contract_run(
             // flush; a report arriving in the grace window still counts.
             timed_out = true
             stdin_writer.close()
-            // A child that flushed and closed stdout in the grace window has
-            // an exit status worth keeping beside its result.
-            if @async.with_timeout_opt(cancel_grace_ms, drain) is Some(_) {
-              exit_code = @async.with_timeout_opt(2_000, () => process.wait())
-            }
+            // The grace window bounds the whole wind-down: flushing, and the
+            // exit status worth keeping beside a result. A child still
+            // running when it ends is terminated, and a result it writes
+            // later does not count.
+            let _ = @async.with_timeout_opt(cancel_grace_ms, () => {
+              drain()
+              exit_code = Some(process.wait())
+            })
           }
         }
       } catch {
