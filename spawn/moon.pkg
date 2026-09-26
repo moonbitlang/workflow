@@ -1,6 +1,8 @@
 import {
   "moonbitlang/workflow",
   "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/os_error",
   "moonbitlang/async/process",
   "moonbitlang/core/json",
 }

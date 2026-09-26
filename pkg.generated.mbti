@@ -45,8 +45,9 @@ pub struct AgentAttempt {
   prompt_tokens : Int
   completion_tokens : Int
   cost_usd : Double?
+  unaccounted : String?
 } derive(Eq, ToJson, @json.FromJson)
-pub fn AgentAttempt::AgentAttempt(attempt_id~ : String, steps_used~ : Int, prompt_tokens~ : Int, completion_tokens~ : Int, cost_usd? : Double) -> Self
+pub fn AgentAttempt::AgentAttempt(attempt_id~ : String, steps_used~ : Int, prompt_tokens~ : Int, completion_tokens~ : Int, cost_usd? : Double, unaccounted? : String) -> Self
 
 pub struct AgentCall {
   kind : String

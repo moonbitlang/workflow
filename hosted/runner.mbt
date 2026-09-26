@@ -123,15 +123,20 @@ pub fn Context::runner(
       wall_deadline_ms=self.deadline_ms.unwrap_or(DefaultDeadlineMs),
       cwd?=self.cwd,
       progress~,
+      transport=self.transport,
     )
     let outcome = outcome_of(child, result)
-    emit_line(self.events_path, {
+    let finished : Map[String, Json] = {
       "event": "agent_finished",
       "child": child,
       "status": status_of(outcome),
       "steps": result.steps_used,
       "tokens": result.prompt_tokens + result.completion_tokens,
-    })
+    }
+    if result.unaccounted is Some(reason) {
+      finished["unaccounted"] = Json::string(reason)
+    }
+    emit_line(self.events_path, Json::object(finished))
     outcome
   })
 }
@@ -155,6 +160,7 @@ fn outcome_of(
     prompt_tokens=result.prompt_tokens,
     completion_tokens=result.completion_tokens,
     cost_usd?=result.cost_usd,
+    unaccounted?=result.unaccounted,
   )
   let failure = match result.terminal {
     Captured =>

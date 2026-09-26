@@ -258,3 +258,199 @@ async test "a malformed, negative, or infinite cost_usd invalidates the whole us
   assert_eq(result.completion_tokens, 1)
   assert_eq(result.cost_usd, Some(0.5))
 }
+
+///|
+/// A transport-2 child: `sh -c SCRIPT sh {result_file}`, so the script finds
+/// its result path in `$1`.
+async fn run_result_file_script(
+  script : String,
+  max_steps? : Int,
+  wall_deadline_ms? : Int = 10_000,
+) -> @spawn.ContractResult {
+  @spawn.contract_run(
+    command="sh",
+    args=["-c", script, "sh", @spawn.ResultFilePlaceholder],
+    input={ "query": "q" },
+    kind="probe",
+    id="test-1",
+    max_steps?,
+    wall_deadline_ms~,
+    transport=ResultFile,
+  )
+}
+
+///|
+async test "a result file is the result, and stdout is not read" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  // The stdout lines would count as a report and usage under transport 1.
+  let script =
+    #|read line
+    #|printf '{"subrun_report": {"forged": true}}\n'
+    #|printf '{"event":"usage","usage":{"prompt_tokens":999,"completion_tokens":1,"total_tokens":1000,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":999}}\n'
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":{"answer":42},"usage":{"prompt_tokens":90,"completion_tokens":10,"total_tokens":100,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":90},"steps":2}' > "$1"
+  let result = run_result_file_script(script)
+  guard result.terminal is Captured else { fail("expected Captured") }
+  assert_eq(result.report, Some(({ "answer": 42 } : Json)))
+  assert_eq(result.steps_used, 2)
+  assert_eq(result.prompt_tokens, 90)
+  assert_eq(result.completion_tokens, 10)
+  assert_eq(result.unaccounted, None)
+  assert_eq(result.exit_code, Some(0))
+}
+
+///|
+async test "the transport 2 request names its id, kind, input, and limits" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":%s}' "$line" > "$1"
+  let result = run_result_file_script(script, max_steps=7)
+  assert_eq(
+    result.report,
+    Some(
+      (
+        {
+          "version": 1,
+          "request_id": "test-1",
+          "kind": "probe",
+          "input": { "query": "q" },
+          "limits": { "max_steps": 7 },
+        } : Json),
+    ),
+  )
+}
+
+///|
+async test "no result file is a failure whose spend is unaccounted" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let clean = run_result_file_script("read line")
+  guard clean.terminal is Failed(reason) else { fail("expected Failed") }
+  assert_eq(reason, "the child exited 0 without writing a result")
+  assert_eq(clean.unaccounted, Some("the child left no result"))
+  let crashed = run_result_file_script("read line; exit 3")
+  guard crashed.terminal is Failed(reason) else { fail("expected Failed") }
+  assert_true(reason.contains("exited 3"))
+  assert_eq(crashed.exit_code, Some(3))
+}
+
+///|
+async test "a result for another request, or a malformed one, is refused" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let other =
+    #|read line
+    #|printf '{"version":1,"request_id":"test-9","status":"completed","output":1}' > "$1"
+  guard run_result_file_script(other).terminal is Failed(reason) else {
+    fail("expected Failed")
+  }
+  assert_eq(reason, "malformed result file: answers request test-9, not test-1")
+  let fractional =
+    #|read line
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":1,"usage":{"prompt_tokens":1.5,"completion_tokens":0,"total_tokens":0,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0}}' > "$1"
+  let result = run_result_file_script(fractional)
+  guard result.terminal is Failed(reason) else { fail("expected Failed") }
+  assert_eq(reason, "malformed result file: malformed usage")
+  assert_eq(result.unaccounted, Some("the result file is malformed"))
+}
+
+///|
+async test "each non-completed status maps to its terminal" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  fn script(status : String) -> String {
+    "read line\nprintf '{\"version\":1,\"request_id\":\"test-1\",\"status\":\"\{status}\",\"reason\":\"why\"}' > \"$1\""
+  }
+  let max_steps = run_result_file_script(script("max_steps_exhausted"))
+  assert_true(max_steps.terminal is MaxSteps)
+  // A result without usage leaves the counters unaccounted.
+  assert_eq(max_steps.unaccounted, Some("the child's result carries no usage"))
+  assert_true(run_result_file_script(script("no_report")).terminal is NoReport)
+  assert_true(
+    run_result_file_script(script("context_yield")).terminal is ContextYield,
+  )
+  guard run_result_file_script(script("interrupted")).terminal is Failed(reason) else {
+    fail("expected Failed")
+  }
+  assert_eq(reason, "interrupted: why")
+  guard run_result_file_script(script("failed")).terminal is Failed(reason) else {
+    fail("expected Failed")
+  }
+  assert_eq(reason, "why")
+  guard run_result_file_script(script("finished")).terminal is Failed(reason) else {
+    fail("expected Failed")
+  }
+  assert_eq(reason, "malformed result file: unknown status finished")
+}
+
+///|
+async test "at the deadline stdin closes, and the child's own account still counts" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  // The child waits for stdin EOF, then reports the interruption with usage.
+  let script =
+    #|read line
+    #|while read more; do :; done
+    #|printf '{"version":1,"request_id":"test-1","status":"interrupted","reason":"cancelled","usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":5},"steps":1}' > "$1"
+  let result = run_result_file_script(script, wall_deadline_ms=300)
+  guard result.terminal is TimedOut else { fail("expected TimedOut") }
+  assert_eq(result.prompt_tokens, 5)
+  assert_eq(result.steps_used, 1)
+  assert_eq(result.unaccounted, None)
+}
+
+///|
+async test "a completed result stands beside an abnormal exit" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|read line
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":"done"}' > "$1"
+    #|exit 4
+  let result = run_result_file_script(script)
+  assert_true(result.terminal is Captured)
+  assert_eq(result.exit_code, Some(4))
+}
+
+///|
+async test "the transport and the argv must agree" {
+  let missing = @spawn.contract_run(
+    command="sh",
+    args=["-c", "read line"],
+    input={},
+    kind="probe",
+    id="test-1",
+    wall_deadline_ms=10_000,
+    transport=ResultFile,
+  )
+  guard missing.terminal is Failed(reason) else { fail("expected Failed") }
+  assert_eq(reason, "the ResultFile transport needs {result_file} in the argv")
+  let stray = @spawn.contract_run(
+    command="sh",
+    args=["-c", "read line", "sh", "{result_file}"],
+    input={},
+    kind="probe",
+    id="test-1",
+    wall_deadline_ms=10_000,
+  )
+  guard stray.terminal is Failed(reason) else { fail("expected Failed") }
+  assert_eq(
+    reason, "the argv names {result_file}, but the transport is StdoutEvents",
+  )
+}
