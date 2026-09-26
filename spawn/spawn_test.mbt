@@ -515,3 +515,30 @@ async test "an exit status in the grace window is kept" {
   assert_true(result.terminal is Captured)
   assert_eq(result.exit_code, Some(4))
 }
+
+///|
+async test "the grace window bounds the wind-down, exit wait included" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  // On stdin EOF the child closes stdout at once, but writes a completed
+  // result only after the grace window has ended.
+  let script =
+    #|read line
+    #|while read more; do :; done
+    #|exec 1>&-
+    #|sleep 1
+    #|printf '{"version":1,"request_id":"test-1","status":"completed","output":1}' > "$1"
+  let result = @spawn.contract_run(
+    command="sh",
+    args=["-c", script, "sh", @spawn.ResultFilePlaceholder],
+    input={},
+    kind="probe",
+    id="test-1",
+    wall_deadline_ms=100,
+    cancel_grace_ms=100,
+    transport=ResultFile,
+  )
+  assert_true(result.terminal is TimedOut)
+}
