@@ -100,14 +100,20 @@ pub fn Context::runner(
       } else {
         "failed"
       }
+      let finished : Map[String, Json] = {
+        "event": "agent_finished",
+        "child": child,
+        "status": status,
+        "steps": progress.steps,
+        "tokens": progress.prompt_tokens + progress.completion_tokens,
+      }
+      // A result-file child reports its spend only in its result, which a
+      // cancelled launch never reads: the counters above are not its account.
+      if self.transport is ResultFile {
+        finished["unaccounted"] = "the launch was cancelled before its result was read"
+      }
       @async.protect_from_cancel(() => {
-        emit_line(self.events_path, {
-          "event": "agent_finished",
-          "child": child,
-          "status": status,
-          "steps": progress.steps,
-          "tokens": progress.prompt_tokens + progress.completion_tokens,
-        })
+        emit_line(self.events_path, Json::object(finished))
       })
     }
     let result = @spawn.contract_run(

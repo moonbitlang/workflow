@@ -191,3 +191,81 @@ async test "hosted failures retain child identity, usage and sidecar status" {
     })
   }
 }
+
+///|
+/// A transport-2 child: it writes its result, echoing the child id it was
+/// launched with (`$1`) as the request id and in its report, to `$2`.
+let result_file_child : String =
+  #|read line
+  #|printf 'progress for humans\n'
+  #|printf '{"version":1,"request_id":"%s","status":"completed","output":{"answered_by":"%s"},"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":11},"steps":1}' "$1" "$1" > "$2"
+
+///|
+fn result_file_handoff(dir : String, child : String) -> Json {
+  {
+    "v": 2,
+    "transport": "result_file",
+    "exe": "sh",
+    "child_args": ["-c", child, "child", "{child}", "{result_file}"],
+    "child_id": "run7-sr-{n}",
+    "ids": [5, 4],
+    "journal": "\{dir}/journal.jsonl",
+    "events": "\{dir}/events.jsonl",
+  }
+}
+
+///|
+async test "a version 2 handoff launches result-file children" {
+  let dir = @fs.tmpdir(prefix="hosted-result-file-")
+  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  guard parse(result_file_handoff(dir, result_file_child)) is Some(ctx) else {
+    fail("the handoff must read")
+  }
+  let answer = ctx.run(wf => wf.agent(prompt="a", kind="explore"))
+  assert_eq(answer, { "answered_by": "run7-sr-5" })
+  let events = @fs.read_file("\{dir}/events.jsonl").text()
+  assert_true(events.contains("\"status\":\"captured\""))
+  assert_true(events.contains("\"tokens\":16"))
+  assert_false(events.contains("unaccounted"))
+}
+
+///|
+async test "a cancelled result-file launch says its spend is unaccounted" {
+  let dir = @fs.tmpdir(prefix="hosted-result-file-cancel-")
+  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  guard parse(
+      result_file_handoff(dir, "read line; while read line; do :; done"),
+    )
+    is Some(ctx) else {
+    fail("the handoff must read")
+  }
+  @async.with_task_group() <| group => {
+    let task = group.spawn(() => {
+      ctx.run(wf => wf.agent(prompt="q", kind="explore"))
+    })
+    let started = @async.with_timeout_opt(5_000, () => {
+      while !@fs.exists("\{dir}/events.jsonl") {
+        @async.sleep(10)
+      }
+      while !@fs.read_file("\{dir}/events.jsonl")
+            .text()
+            .contains("agent_started") {
+        @async.sleep(10)
+      }
+    })
+    assert_true(started is Some(_))
+    task.cancel()
+    try task.wait() catch {
+      error => assert_true(error is @async.WaitedTaskAlreadyCancelled)
+    } noraise {
+      _ => fail("cancellation must re-raise, not return an outcome")
+    }
+  }
+  let events = @fs.read_file("\{dir}/events.jsonl").text()
+  assert_true(events.contains("\"status\":\"cancelled\""))
+  assert_true(
+    events.contains(
+      "\"unaccounted\":\"the launch was cancelled before its result was read\"",
+    ),
+  )
+}
