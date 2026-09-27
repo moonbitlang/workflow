@@ -513,10 +513,19 @@ priv struct ChildResult {
   status : String
   output : Json?
   reason : String?
-  /// `(prompt_tokens, completion_tokens)`, when the result carried usage.
-  tokens : (Int, Int)?
+  /// The child's account, when the result carried usage.
+  usage : ChildUsage?
   /// Model requests, when the result said.
   steps : Int?
+}
+
+///|
+/// The part of a result's `usage` this runner charges.
+priv struct ChildUsage {
+  prompt_tokens : Int
+  completion_tokens : Int
+  /// The engine's own price, when it stated one.
+  cost_usd : Double?
 }
 
 ///|
@@ -550,8 +559,9 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
     other => return Err("unknown status \{other}")
   }
   // Usage is whole or absent: a partial or fractional counter voids it, as
-  // on the event stream. Steps are independent of it.
-  let tokens = match fields.get("usage") {
+  // on the event stream, and so does a present `cost_usd` that is not a
+  // finite, non-negative number. Steps are independent of it.
+  let usage = match fields.get("usage") {
     None => None
     Some(
       {
@@ -561,8 +571,15 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
         "prompt_cache_hit_tokens": Number(hit, ..),
         "prompt_cache_miss_tokens": Number(miss, ..),
         ..
+      } as usage
+    ) => {
+      let cost_usd = match usage {
+        { "cost_usd": Number(cost, ..), .. } if cost >= 0.0 &&
+          !cost.is_inf() &&
+          !cost.is_nan() => Some(cost)
+        { "cost_usd": _, .. } => return Err("malformed usage")
+        _ => None
       }
-    ) =>
       match
         (
           integral(prompt),
@@ -573,9 +590,15 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
         ) {
         (Some(prompt), Some(completion), Some(_), Some(_), Some(_)) if prompt >=
           0 &&
-          completion >= 0 => Some((prompt, completion))
+          completion >= 0 =>
+          Some({
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            cost_usd,
+          })
         _ => return Err("malformed usage")
       }
+    }
     Some(_) => return Err("malformed usage")
   }
   let steps = match fields.get("steps") {
@@ -587,7 +610,7 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
       }
     Some(_) => return Err("malformed steps")
   }
-  Ok({ status, output: fields.get("output"), reason, tokens, steps, })
+  Ok({ status, output: fields.get("output"), reason, usage, steps, })
 }
 
 ///|
@@ -608,18 +631,22 @@ async fn result_file_outcome(
   fn outcome(
     terminal : ContractTerminal,
     report : Json?,
-    tokens : (Int, Int)?,
+    usage : ChildUsage?,
     steps : Int?,
     unaccounted : String?,
   ) -> ContractResult {
-    let (prompt, completion) = tokens.unwrap_or((0, 0))
+    let (prompt, completion, cost_usd) = match usage {
+      Some(usage) =>
+        (usage.prompt_tokens, usage.completion_tokens, usage.cost_usd)
+      None => (0, 0, None)
+    }
     {
       report,
       terminal,
       steps_used: steps.unwrap_or(0),
       prompt_tokens: prompt,
       completion_tokens: completion,
-      cost_usd: None,
+      cost_usd,
       unaccounted,
       exit_code,
     }
@@ -669,7 +696,7 @@ async fn result_file_outcome(
       "the result file is malformed",
     )
   }
-  let unaccounted = match result.tokens {
+  let unaccounted = match result.usage {
     Some(_) => None
     None => Some("the child's result carries no usage")
   }
@@ -679,7 +706,7 @@ async fn result_file_outcome(
       return outcome(
         Captured,
         result.output,
-        result.tokens,
+        result.usage,
         result.steps,
         unaccounted,
       )
@@ -691,7 +718,7 @@ async fn result_file_outcome(
     "interrupted" => Failed("interrupted: \{reason}")
     _ => Failed(reason)
   }
-  outcome(terminal, None, result.tokens, result.steps, unaccounted)
+  outcome(terminal, None, result.usage, result.steps, unaccounted)
 }
 
 ///|

@@ -542,3 +542,34 @@ async test "the grace window bounds the wind-down, exit wait included" {
   )
   assert_true(result.terminal is TimedOut)
 }
+
+///|
+async test "a result's usage.cost_usd is the attempt's price; absent means unknown" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  fn script(cost : String) -> String {
+    "read line\nprintf '{\"version\":1,\"request_id\":\"test-1\",\"status\":\"completed\",\"output\":1,\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":1,\"total_tokens\":10,\"prompt_cache_hit_tokens\":0,\"prompt_cache_miss_tokens\":9\{cost}}}' > \"$1\""
+  }
+  let priced = run_result_file_script(script(",\"cost_usd\":0.25"))
+  assert_true(priced.terminal is Captured)
+  assert_eq(priced.prompt_tokens, 9)
+  assert_eq(priced.cost_usd, Some(0.25))
+  let unpriced = run_result_file_script(script(""))
+  assert_eq(unpriced.prompt_tokens, 9)
+  assert_eq(unpriced.cost_usd, None)
+  // A present price that is not a finite, non-negative number voids the
+  // usage whole, as a bad token counter does.
+  for
+    cost in [
+      ",\"cost_usd\":\"0.25\"", ",\"cost_usd\":-1", ",\"cost_usd\":1e999",
+    ] {
+    let result = run_result_file_script(script(cost))
+    guard result.terminal is Failed(reason) else { fail("expected Failed") }
+    assert_eq(reason, "malformed result file: malformed usage")
+    assert_eq(result.prompt_tokens, 0)
+    assert_eq(result.cost_usd, None)
+    assert_eq(result.unaccounted, Some("the result file is malformed"))
+  }
+}
