@@ -1,10 +1,11 @@
 # moonbitlang/workflow/shim/claude
 
-Run Claude Code as a workflow child. This executable reads the
-[child contract](../../docs/child-contract.md), drives
-`claude -p --output-format stream-json --verbose`, and translates the stream
-into step and usage events followed by a report. It supports native and wasm
-and exposes no callable library API.
+Run Claude Code as a workflow child. This executable speaks the
+[child contract](../../docs/child-contract.md)'s transport 2: it reads one
+request line on stdin, drives
+`claude -p --output-format stream-json --verbose`, reads that stream for the
+answer, usage, and steps, and writes one result file. It supports native and
+wasm and exposes no callable library API.
 
 ## Launch from a workflow
 
@@ -23,9 +24,15 @@ test:
 async fn main {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      @spawn.LaunchSpec(command="moonx", args=[
-        "moonbitlang/workflow/shim/claude",
-      ])
+      @spawn.LaunchSpec(
+        command="moonx",
+        args=[
+          "moonbitlang/workflow/shim/claude",
+          "--result-file",
+          @spawn.ResultFilePlaceholder,
+        ],
+        transport=ResultFile,
+      )
     }),
     max_calls=1,
   )
@@ -38,24 +45,29 @@ async fn main {
 }
 ```
 
-An unversioned `moonx` coordinate uses the latest published module. Pin it
+The runner replaces `{result_file}` (`@spawn.ResultFilePlaceholder`) with a
+fresh private path per launch and reads the result from it; the shim's
+stdout carries nothing. An unversioned `moonx` coordinate uses the latest
+published module. Pin it
 as `moonbitlang/workflow/shim/claude@<version>` when reproducing a run. A
 workflow with a journal can replay a prior report without launching the CLI.
 
 ## Options and tool policy
 
-All options precede the passthrough separator:
+All options, `--result-file` included, precede the passthrough separator:
 
 ```sh
 moonx moonbitlang/workflow/shim/claude --help
 ```
 
-`--help` prints plain text before reading a request. During execution,
-request and option errors are `command_error` JSONL events. The shared
-options are:
+`--help` prints plain text before reading a request. An option error, or a
+request that names no `request_id`, is printed on stderr and the shim exits
+nonzero without a result; any other malformed request is a `failed` result.
+The shared options are:
 
 | Option | Claude mapping |
 | --- | --- |
+| `--result-file PATH` | Required: where the result file goes. |
 | `--command EXE` | CLI executable; default `claude`. |
 | `--model NAME` | `--model NAME`; absent leaves model selection to the CLI. |
 | `--cwd DIR` | Working directory of the CLI process. |
@@ -78,7 +90,7 @@ shape; arbitrary worker objects with only a `task` field are not accepted.
 
 ## Reports and structured output
 
-The parent receives the value inside `subrun_report`:
+A `completed` result's `output`, which the parent receives as the report:
 
 ```json
 {
@@ -109,25 +121,30 @@ does not locally validate the answer against JSON Schema.
 
 Each distinct Claude assistant message id counts as one step. Thinking,
 text, and tool-use content blocks sharing a message id do not add separate
-steps. After emitting the observed step's events, the shim requests a stop
-when `steps > max_steps`; the over-limit work has already happened and is
+steps. After counting the observed step, the shim requests a stop when
+`steps > limits.max_steps`; the over-limit work has already happened and is
 counted. This is a reactive ceiling, not a guarantee of at most N model
 calls.
 
-Usage is settled once from the final result when available. Prompt tokens
-include fresh input, cache creation, and cache reads; cache reads are hits,
-and fresh input plus cache creation are misses. The final result's output
-tokens and price are used as supplied. If no result arrives, the last usage
-snapshot for each message is summed as a fallback, without an invented
-price.
+The result's `usage` is the final result's totals when available. Prompt
+tokens include fresh input, cache creation, and cache reads; cache reads are
+hits, and fresh input plus cache creation are misses. The final result's
+output tokens and price (`total_cost_usd`, as `usage.cost_usd`) are used as
+supplied. If no result arrives, the last usage snapshot for each message is
+summed as a fallback, without an invented price; with no snapshot either,
+the result carries no `usage`. `steps` is the number of distinct messages.
 
 The shared [shim runtime](../README.mbt.md#run-and-classify-the-cli) sends
-SIGINT and grants a 3-second flush period on a step stop. The shim emits
-`max_steps_exhausted` without a report. Parent stdin EOF cancels the run
-without a report; external async cancellation propagates. A failed result
-becomes `turn_failed`; a launch or request error becomes `command_error`.
-A clean exit without a result yields no report and is classified by the
-parent as `NoReport`.
+SIGINT and grants a 3-second flush period on a step stop and on the
+parent's cancel, and late usage still counts. The endings:
+
+| How the run ended | Result `status` |
+| --- | --- |
+| A successful `result` line | `completed`, with the report as `output` |
+| The step ceiling, or Claude's own `error_max_turns` | `max_steps_exhausted` |
+| Parent stdin EOF | `interrupted` |
+| An error `result`, a launch failure, an unreadable `--schema`, or a nonzero exit without a result | `failed`, with the reason |
+| A clean exit without a result | `no_report` |
 
 The behavior above follows the classifier and recorded Claude Code
 2.1.258 fixtures in [`dialect.mbt`](dialect.mbt); it is not a claim about
@@ -145,6 +162,7 @@ moon test shim/claude --target wasm
 ```
 
 `just shims` builds both adapters for both targets. [`main.mbt`](main.mbt)
-wires options, schema, process execution, and terminal events;
+wires the schema and process execution into `@shim.serve`;
 [`dialect.mbt`](dialect.mbt) classifies recorded stdout lines and builds
-reports. Update fixtures and classifier together when CLI output changes.
+the report and the result. Update fixtures and classifier together when CLI
+output changes.

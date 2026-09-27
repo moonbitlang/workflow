@@ -1,9 +1,10 @@
 # moonbitlang/workflow/shim/codex
 
-Run Codex as a workflow child. This executable reads the
-[child contract](../../docs/child-contract.md), drives `codex exec --json`,
-and translates completed items and turns into steps, usage, and a final
-report. It supports native and wasm and exposes no callable library API.
+Run Codex as a workflow child. This executable speaks the
+[child contract](../../docs/child-contract.md)'s transport 2: it reads one
+request line on stdin, drives `codex exec --json`, reads completed items and
+turns for the steps, usage, and answer, and writes one result file. It
+supports native and wasm and exposes no callable library API.
 
 ## Launch from a workflow
 
@@ -21,9 +22,15 @@ This example invokes a real agent, so documentation tests do not run it:
 async fn main {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      @spawn.LaunchSpec(command="moonx", args=[
-        "moonbitlang/workflow/shim/codex",
-      ])
+      @spawn.LaunchSpec(
+        command="moonx",
+        args=[
+          "moonbitlang/workflow/shim/codex",
+          "--result-file",
+          @spawn.ResultFilePlaceholder,
+        ],
+        transport=ResultFile,
+      )
     }),
     max_calls=1,
   )
@@ -36,7 +43,10 @@ async fn main {
 }
 ```
 
-An unversioned coordinate takes the latest published module; use
+The runner replaces `{result_file}` (`@spawn.ResultFilePlaceholder`) with a
+fresh private path per launch and reads the result from it; the shim's
+stdout carries nothing. An unversioned coordinate takes the latest published
+module; use
 `moonbitlang/workflow/shim/codex@<version>` to pin it. Add a workflow journal
 to reuse prior reports without launching Codex again.
 
@@ -46,11 +56,14 @@ to reuse prior reports without launching Codex again.
 moonx moonbitlang/workflow/shim/codex --help
 ```
 
-`--help` prints plain text before reading a request. During execution,
-request and option errors are `command_error` JSONL events.
+`--help` prints plain text before reading a request. An option error, or a
+request that names no `request_id`, is printed on stderr and the shim exits
+nonzero without a result; any other malformed request is a `failed` result.
+All options, `--result-file` included, precede the passthrough separator.
 
 | Option | Codex mapping |
 | --- | --- |
+| `--result-file PATH` | Required: where the result file goes. |
 | `--command EXE` | CLI executable; default `codex`. |
 | `--model NAME` | `-m NAME`; absent leaves selection to the CLI. |
 | `--cwd DIR` | Working directory of the CLI process. |
@@ -74,8 +87,8 @@ builds the supported query shape; an object containing only `task` does not.
 
 ## Reports and schema handling
 
-The last completed `agent_message` supplies the answer. The report inside
-`subrun_report` has this shape:
+The last completed `agent_message` supplies the answer. A `completed`
+result's `output`, which the parent receives as the report, has this shape:
 
 ```json
 {
@@ -91,7 +104,7 @@ The shim does not automatically resume that thread. Workflow journal replay
 is a separate mechanism.
 
 A request `schema` takes precedence over `--schema FILE`. The shim writes
-an envelope schema to a temporary JSON file and supplies it through
+the request's schema to a temporary JSON file and supplies it through
 `--output-schema`; a command-line schema path is passed through to Codex.
 Use an absolute path when also changing `--cwd`.
 
@@ -101,7 +114,7 @@ JSON Schema validation. The schema describes the answer, while
 `wf.agent_as[T]` decodes the complete report wrapper. Use a wrapper type with
 an `answer` field, or decode that field explicitly after `wf.agent`.
 
-## Event translation and limits
+## Stream translation and limits
 
 | CLI event | Adapter behavior |
 | --- | --- |
@@ -109,28 +122,33 @@ an `answer` field, or decode that field explicitly after `wf.agent`.
 | `item.completed` with `reasoning` | Ignored for step counting. |
 | `item.completed` with `error` | A notice, not a step or terminal failure. |
 | Other `item.completed` | Adds a step; an `agent_message` replaces the stored answer. |
-| `turn.completed` | Emits usage when input/output counters are valid. |
+| `turn.completed` | Adds its usage to the run's when input/output counters are valid. |
 | `turn.failed` or top-level `error` with a message | Records a terminal failure; the first message wins. |
 
 Steps measure completed non-reasoning, non-notice items, including commands,
 file changes, tool calls, and messages. They are not a count of model calls.
-The shim emits events for an item before checking `steps > max_steps`, so
-the over-limit item is counted and the stop is reactive.
+The shim counts an item before checking `steps > limits.max_steps`, so the
+over-limit item is counted and the stop is reactive.
 
-Usage arrives at turn completion. Prompt tokens are `input_tokens`, cache
-hits are `cached_input_tokens` capped at input tokens, and misses are their
-difference. The adapter emits no dollar price. In the recorded/tested
-codex-cli 0.151 behavior, interrupting a turn does not flush its usage;
-a capped run can therefore record zero observed tokens despite real work.
-Zero here means nothing was reported, not that the run was free.
+Usage arrives at turn completion and is summed over turns. Prompt tokens
+are `input_tokens`, cache hits are `cached_input_tokens` capped at input
+tokens, and misses are their difference. Codex states no dollar price, so
+the result's `usage` has no `cost_usd`. In the recorded/tested codex-cli
+0.151 behavior, interrupting a turn does not flush its usage; a capped or
+cancelled run's result therefore carries no `usage` at all, and the parent
+records the spend as unaccounted rather than free.
 
 The shared [shim runtime](../README.mbt.md#run-and-classify-the-cli) sends
-SIGINT on a step stop and observes late output for up to 3 seconds before
-termination. The adapter emits `max_steps_exhausted` without a report.
-Parent stdin EOF also tears down the CLI without a report. A request or
-launch error becomes `command_error`, and a recorded terminal failure becomes
-`turn_failed`. A clean exit without an agent message supplies no report;
-the parent classifies it as `NoReport`.
+SIGINT on a step stop and on the parent's cancel, and observes late output
+for up to 3 seconds before termination. The endings:
+
+| How the run ended | Result `status` |
+| --- | --- |
+| An agent message, and a clean or nonzero exit without a recorded failure | `completed`, with the report as `output` |
+| The step ceiling | `max_steps_exhausted` |
+| Parent stdin EOF | `interrupted` |
+| `turn.failed` or a top-level `error`, a launch failure, or a nonzero exit without a message | `failed`, with the reason |
+| A clean exit without an agent message | `no_report` |
 
 These rules follow the implementation and recorded codex-cli 0.151.0
 fixtures in [`dialect.mbt`](dialect.mbt), rather than assuming that every
@@ -148,6 +166,6 @@ moon test shim/codex --target wasm
 ```
 
 `just shims` builds both CLI adapters for both targets. [`main.mbt`](main.mbt)
-handles argv, schema files, and terminal emission;
-[`dialect.mbt`](dialect.mbt) handles event interpretation. When a CLI format
+wires schema files and process execution into `@shim.serve`;
+[`dialect.mbt`](dialect.mbt) interprets the stream and builds the result. When a CLI format
 changes, update its recorded fixtures and classifier in the same change.

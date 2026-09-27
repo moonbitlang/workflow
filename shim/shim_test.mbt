@@ -5,93 +5,28 @@ async fn can_spawn_sh() -> Bool {
 }
 
 ///|
-test "the v1 envelope yields kind, ceiling, and a hinted prompt" {
-  let line =
-    #|{"workflow_contract":1,"id":"cr-1","kind":"explore","max_steps":8,"input":{"query":"q","hints":"h"}}
-  guard @shim.Request::parse(line) is Ok(request) else { fail("parse") }
-  assert_eq(request.id, Some("cr-1"))
-  assert_eq(request.kind, "explore")
-  assert_eq(request.max_steps, Some(8))
-  assert_eq(request.prompt, "q\n\nHints: h")
-  assert_eq(request.input, { "query": "q", "hints": "h" })
+/// A cancel signal that never comes: a test's stdin is not a parent's pipe.
+async fn never() -> Unit {
+  @async.sleep(3_600_000)
 }
 
 ///|
-test "a bare input line is an explore call with no ceiling" {
-  guard @shim.Request::parse("{\"query\":\"q\"}\n") is Ok(request) else {
-    fail("parse")
-  }
-  assert_eq(request.id, None)
-  assert_eq(request.kind, "explore")
-  assert_eq(request.max_steps, None)
-  assert_eq(request.prompt, "q")
-  // `prompt` and a bare string work too.
-  guard @shim.Request::parse("{\"prompt\":\"p\"}") is Ok(p) else { fail("p") }
-  assert_eq(p.prompt, "p")
-  guard @shim.Request::parse("\"bare\"") is Ok(bare) else { fail("bare") }
-  assert_eq(bare.prompt, "bare")
-}
-
-///|
-test "unknown majors, non-JSON, and promptless inputs are typed refusals" {
-  assert_true(
-    @shim.Request::parse("{\"workflow_contract\":2,\"input\":{}}")
-    is Err("unsupported workflow_contract version 2"),
+test "the result document: output or reason by status, usage and steps when known" {
+  let usage = @shim.Usage(
+    prompt_tokens=90,
+    completion_tokens=10,
+    cache_hit_tokens=70,
+    cache_miss_tokens=20,
   )
-  assert_true(@shim.Request::parse("not json") is Err("shim input is not JSON"))
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"input\":{\"query\":\"  \"}}",
-    )
-    is Err("shim input needs a `query` (or `prompt`) string"),
-  )
-}
-
-///|
-test "argv: defaults, settings, and verbatim passthrough after `--`" {
-  guard @shim.Options::parse([], default_command="codex") is Ok(bare) else {
-    fail("bare")
-  }
-  assert_eq(bare.command, "codex")
-  assert_eq(bare.model, None)
-  assert_eq(bare.writable, false)
-  assert_eq(bare.extra, [])
-  guard @shim.Options::parse(
-      ["--model", "m", "--cwd", "/w", "--writable", "--", "--model", "theirs"],
-      default_command="claude",
-    )
-    is Ok(full) else {
-    fail("full")
-  }
-  assert_eq(full.command, "claude")
-  assert_eq(full.model, Some("m"))
-  assert_eq(full.cwd, Some("/w"))
-  assert_eq(full.writable, true)
-  // The CLI's own `--model` rode through untouched, ours stayed ours.
-  assert_eq(full.extra, ["--model", "theirs"])
-}
-
-///|
-test "argv: an unknown option is refused, never taken for a CLI flag" {
-  guard @shim.Options::parse(["--writeable"], default_command="claude")
-    is Err(problem) else {
-    fail("a typo must not parse")
-  }
-  assert_true(problem.contains("unexpected argument '--writeable'"))
-  assert_true(problem.contains("--writable"))
-}
-
-///|
-test "usage carries all five counters with a derived total" {
   assert_eq(
-    @shim.usage(
-      prompt_tokens=90,
-      completion_tokens=10,
-      cache_hit=70,
-      cache_miss=20,
+    @shim.ShimResult(Completed({ "answer": 42 }), usage~, steps=2).to_json(
+      request_id="r",
     ),
     {
-      "event": "usage",
+      "version": 1,
+      "request_id": "r",
+      "status": "completed",
+      "output": { "answer": 42 },
       "usage": {
         "prompt_tokens": 90,
         "completion_tokens": 10,
@@ -99,8 +34,66 @@ test "usage carries all five counters with a derived total" {
         "prompt_cache_hit_tokens": 70,
         "prompt_cache_miss_tokens": 20,
       },
+      "steps": 2,
     },
   )
+  // Unknown usage is absent, never zero.
+  assert_eq(@shim.ShimResult(NoReport).to_json(request_id="r"), {
+    "version": 1,
+    "request_id": "r",
+    "status": "no_report",
+  })
+  assert_eq(
+    @shim.ShimResult(MaxStepsExhausted, steps=9).to_json(request_id="r"),
+    {
+      "version": 1,
+      "request_id": "r",
+      "status": "max_steps_exhausted",
+      "steps": 9,
+    },
+  )
+  assert_eq(
+    @shim.ShimResult(Interrupted("cancelled")).to_json(request_id="r"),
+    {
+      "version": 1,
+      "request_id": "r",
+      "status": "interrupted",
+      "reason": "cancelled",
+    },
+  )
+  assert_eq(@shim.ShimResult(Failed("boom")).to_json(request_id="r"), {
+    "version": 1,
+    "request_id": "r",
+    "status": "failed",
+    "reason": "boom",
+  })
+}
+
+///|
+test "usage carries a stated price, zero included; a sum is priced only when both are" {
+  let priced = @shim.Usage(
+    prompt_tokens=3,
+    completion_tokens=2,
+    cache_hit_tokens=1,
+    cache_miss_tokens=2,
+    cost_usd=0.0,
+  )
+  assert_eq(
+    @shim.ShimResult(NoReport, usage=priced).to_json(request_id="r").stringify(),
+    "{\"version\":1,\"request_id\":\"r\",\"status\":\"no_report\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_cache_hit_tokens\":1,\"prompt_cache_miss_tokens\":2,\"cost_usd\":0}}",
+  )
+  let both = priced.add(priced)
+  assert_eq(both.prompt_tokens, 6)
+  assert_eq(both.cache_miss_tokens, 4)
+  assert_eq(both.cost_usd, Some(0.0))
+  let unpriced = @shim.Usage(
+    prompt_tokens=1,
+    completion_tokens=1,
+    cache_hit_tokens=0,
+    cache_miss_tokens=1,
+  )
+  assert_eq(priced.add(unpriced).cost_usd, None)
+  assert_eq(priced.add(unpriced).completion_tokens, 3)
   assert_eq(@shim.integral(3.0), Some(3))
   assert_eq(@shim.integral(1.5), None)
 }
@@ -120,7 +113,7 @@ async test "run_cli drains every line and reports the exit status" {
   let exit = @shim.run_cli(
     command="sh",
     args=["-c", script],
-    watch_stdin=false,
+    until_cancelled=never,
     observe=line => {
       seen.push(line.trim(chars="\r\n").to_owned())
       @shim.Continue
@@ -147,7 +140,7 @@ async test "Stop tears the CLI down and wins over its exit status" {
   let exit = @shim.run_cli(
     command="sh",
     args=["-c", script],
-    watch_stdin=false,
+    until_cancelled=never,
     // SIGTERM here: `moon test` runs with SIGINT ignored, and a
     // non-interactive sh cannot trap a signal ignored on entry (POSIX),
     // so the default SIGINT would be a silent no-op in this harness.
@@ -167,130 +160,37 @@ async test "Stop tears the CLI down and wins over its exit status" {
 }
 
 ///|
+async test "the parent's cancel is graceful: late lines still reach observe" {
+  guard can_spawn_sh() else {
+    println("skipped: cannot spawn sh")
+    return
+  }
+  let script =
+    #|trap 'echo flushed; exit 0' TERM
+    #|echo started
+    #|while :; do sleep 1; done
+  let seen : Array[String] = []
+  let exit = @shim.run_cli(
+    command="sh",
+    args=["-c", script],
+    until_cancelled=() => @async.sleep(300),
+    stop_signal=@signal.SIGTERM,
+    observe=line => {
+      seen.push(line.trim(chars="\r\n").to_owned())
+      @shim.Continue
+    },
+  )
+  assert_true(exit is @shim.Cancelled)
+  assert_eq(seen, ["started", "flushed"])
+}
+
+///|
 async test "an unspawnable command is a Failed exit, never a crash" {
   let exit = @shim.run_cli(
     command="/nonexistent/agent-cli-not-here",
     args=[],
-    watch_stdin=false,
+    until_cancelled=never,
     observe=_ => @shim.Continue,
   )
   assert_true(exit is @shim.Failed(_))
-}
-
-///|
-test "a fractional step ceiling is a malformed request, never no ceiling" {
-  // Cross-engine review finding: `integral` rejected 5.5 but the request
-  // then read as "no max_steps" — an unbounded run from a bad envelope.
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"max_steps\":5.5,\"input\":{\"query\":\"q\"}}",
-    )
-    is Err("shim input max_steps must be an integer"),
-  )
-}
-
-///|
-test "a v1 envelope without input, or with a mistyped ceiling, is refused as such" {
-  // Cross-engine review findings: these used to read as "unsupported
-  // version 1" and "no ceiling" respectively.
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"id\":\"cr-1\",\"kind\":\"explore\"}",
-    )
-    is Err("shim input envelope has no `input`"),
-  )
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"max_steps\":\"5\",\"input\":{\"query\":\"q\"}}",
-    )
-    is Err("shim input max_steps must be an integer"),
-  )
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"max_steps\":null,\"input\":{\"query\":\"q\"}}",
-    )
-    is Err("shim input max_steps must be an integer"),
-  )
-}
-
-///|
-test "the envelope's schema reaches the request; a bare input has none" {
-  let line =
-    #|{"workflow_contract":1,"kind":"explore","schema":{"type":"object"},"input":{"query":"q"}}
-  guard @shim.Request::parse(line) is Ok(request) else { fail("parse") }
-  assert_eq(request.schema, Some({ "type": "object" }))
-  guard @shim.Request::parse("{\"query\":\"q\"}") is Ok(bare) else {
-    fail("bare")
-  }
-  assert_eq(bare.schema, None)
-}
-
-///|
-test "a schema that is not an object is refused; null means none" {
-  assert_true(
-    @shim.Request::parse(
-      "{\"workflow_contract\":1,\"schema\":\"object\",\"input\":{\"query\":\"q\"}}",
-    )
-    is Err("shim input schema must be a JSON object"),
-  )
-  guard @shim.Request::parse(
-      "{\"workflow_contract\":1,\"schema\":null,\"input\":{\"query\":\"q\"}}",
-    )
-    is Ok(request) else {
-    fail("null schema")
-  }
-  assert_eq(request.schema, None)
-}
-
-///|
-test "argv separator uses the first match within a sliced view" {
-  let argv = ["ignored", "--model", "m", "--", "--", "tail"]
-  guard @shim.Options::parse(argv[1:], default_command="codex") is Ok(options) else {
-    fail("expected parsed options")
-  }
-  assert_eq(options.model, Some("m"))
-  assert_eq(options.extra, ["--", "tail"])
-  for args in [["--"], ["--", "--model", "not-a-shim-option"]] {
-    guard @shim.Options::parse(args, default_command="codex") is Ok(parsed) else {
-      fail("expected separator at start")
-    }
-    assert_eq(parsed.model, None)
-    assert_eq(parsed.extra, args[1:].to_owned())
-  }
-}
-
-///|
-test "usage preserves wire order and distinguishes absent from zero price" {
-  let plain = @shim.usage(
-    prompt_tokens=3,
-    completion_tokens=2,
-    cache_hit=1,
-    cache_miss=2,
-  )
-  assert_eq(
-    plain.stringify(),
-    "{\"event\":\"usage\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_cache_hit_tokens\":1,\"prompt_cache_miss_tokens\":2}}",
-  )
-  for price in [0.0, 0.25] {
-    assert_eq(
-      @shim.usage(
-        prompt_tokens=3,
-        completion_tokens=2,
-        cache_hit=1,
-        cache_miss=2,
-        cost_usd=price,
-      ),
-      {
-        "event": "usage",
-        "usage": {
-          "prompt_tokens": 3,
-          "completion_tokens": 2,
-          "total_tokens": 5,
-          "prompt_cache_hit_tokens": 1,
-          "prompt_cache_miss_tokens": 2,
-          "cost_usd": price,
-        },
-      },
-    )
-  }
 }
