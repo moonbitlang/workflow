@@ -4,6 +4,8 @@
 /// `--` is passed to the CLI verbatim — the escape hatch for a flag the
 /// shim does not know yet.
 ///
+///   --result-file <path>  where to write the result (required; the runner
+///                     passes its `{result_file}` placeholder here)
 ///   --command <exe>   the CLI binary (default: the dialect's name on PATH)
 ///   --model <name>    forwarded as the CLI's model flag
 ///   --cwd <dir>       the CLI's working directory
@@ -15,6 +17,8 @@
 /// fabricating one (a dialect's own tests) goes through `Options(...)`,
 /// so a later setting costs no dialect anything.
 pub struct Options {
+  /// Where the one result file goes (contract transport 2).
+  result_file : String
   command : String
   model : String?
   cwd : String?
@@ -25,18 +29,19 @@ pub struct Options {
 
 ///|
 /// Options from their parts, for a caller that FABRICATES them instead of
-/// parsing argv. Only the binary is required — every other setting is a
-/// flag the operator did not pass, and `writable` defaults to the
-/// read-only run that argv defaults to.
+/// parsing argv. Only the binary and the result path are required — every
+/// other setting is a flag the operator did not pass, and `writable`
+/// defaults to the read-only run that argv defaults to.
 pub fn Options::Options(
   command~ : String,
+  result_file~ : String,
   model? : String,
   cwd? : String,
   writable? : Bool = false,
   schema? : String,
   extra? : Array[String] = [],
 ) -> Options {
-  { command, model, cwd, writable, schema, extra, }
+  { result_file, command, model, cwd, writable, schema, extra, }
 }
 
 ///|
@@ -47,11 +52,16 @@ fn spec(default_command : String) -> @argparse.Command {
   @argparse.Command(
     default_command,
     about=(
-      $|Drive the \{default_command} CLI as a workflow child speaking the
-      $|contract on stdin/stdout. Everything after `--` reaches the CLI
-      $|unchanged.
+      $|Drive the \{default_command} CLI as a workflow child: read one request
+      $|line on stdin, write one result file to --result-file. Everything
+      $|after `--` reaches the CLI unchanged.
     ),
     options=[
+      @argparse.OptionArg(
+        "result-file",
+        about="where to write the result file",
+        required=true,
+      ),
       @argparse.OptionArg("command", about="the CLI binary", default_values=[
         default_command,
       ]),
@@ -74,7 +84,7 @@ fn spec(default_command : String) -> @argparse.Command {
 ///|
 /// Parse the shim's argv (without argv[0]). Unknown options are refused —
 /// a typo must not silently become a prompt or a CLI flag.
-pub fn Options::parse(
+fn Options::parse(
   args : ArrayView[String],
   default_command~ : String,
 ) -> Result[Options, String] {
@@ -84,7 +94,12 @@ pub fn Options::parse(
     // Display-ready text: the error and this command's full help.
     error => return Err("\{error}")
   }
+  guard first(matches, "result-file") is Some(result_file) &&
+    !result_file.is_blank() else {
+    return Err("--result-file needs a path")
+  }
   Ok({
+    result_file,
     command: first(matches, "command").unwrap_or(default_command),
     model: first(matches, "model"),
     cwd: first(matches, "cwd"),

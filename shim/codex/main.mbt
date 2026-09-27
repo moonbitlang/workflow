@@ -1,64 +1,58 @@
 ///|
-/// A PROCESS SHIM: Codex as a workflow engine. Speaks the child contract
-/// on its own stdin/stdout (`docs/child-contract.md`) and drives
-/// `codex exec --json` underneath, translating framing both ways. Point a
-/// `LaunchSpec` at the PUBLISHED shim — no build step, no path to
-/// hard-code:
+/// A PROCESS SHIM: Codex as a workflow engine. Speaks the child contract's
+/// transport 2 (`docs/child-contract.md` §10): one request line on stdin,
+/// one result file at `--result-file`. It drives `codex exec --json`
+/// underneath and reads that stream for the answer, the usage, and the
+/// steps. Point a `LaunchSpec` at the PUBLISHED shim — no build step, no
+/// path to hard-code:
 ///
-///   moonx moonbitlang/workflow/shim/codex [--model m] [--cwd d] [--writable] [--schema f] [-- codex args...]
+///   moonx moonbitlang/workflow/shim/codex --result-file {result_file} [--model m] [--cwd d] [--writable] [--schema f] [-- codex args...]
 ///
-/// `moonx` runs the wasm build, which this shim fully supports: it spawns
-/// the CLI, keeps the parent's stdin-EOF cancel channel live, and frames
-/// stdout exactly as the native build does. Building locally
-/// (`just shims`) is for developing THIS shim, where the published
+/// with `transport=ResultFile`, so the runner substitutes a fresh path for
+/// `{result_file}`. `moonx` runs the wasm build, which this shim fully
+/// supports: it spawns the CLI, keeps the parent's stdin-EOF cancel channel
+/// live, and writes the result exactly as the native build does. Building
+/// locally (`just shims`) is for developing THIS shim, where the published
 /// version is not what you want to run.
 ///
 /// Kind policy: read-only runs (the default) use the `read-only` sandbox;
 /// `worker`, or `--writable`, uses `workspace-write`. The request's
-/// `max_steps` IS enforced here — each completed non-reasoning item is a
-/// step, and the CLI is torn down the moment the ceiling is exceeded —
+/// `limits.max_steps` IS enforced here — each completed non-reasoning item
+/// is a step, and the CLI is torn down the moment the ceiling is exceeded —
 /// because the CLI has no turn cap of its own. Known limit (verified live
 /// on codex-cli 0.151): Codex reports usage only on `turn.completed` and
-/// does NOT flush it on SIGINT, so a capped run reports zero cost — the
-/// parent sees `MaxSteps` with an honest zero, never an estimate.
+/// does NOT flush it on SIGINT, so a capped or cancelled run's result
+/// carries no usage — the parent records the spend as unaccounted, never
+/// as an invented zero.
 async fn main {
-  run() catch {
-    error =>
-      @shim.emit(@shim.command_error("codex shim failed: \{error}")) catch {
-        _ => ()
-      }
-  }
+  @shim.serve(default_command="codex", run~)
 }
 
 ///|
-async fn run() -> Unit {
-  let options = match
-    @shim.Options::parse(@env.args()[1:], default_command="codex") {
-    Ok(options) => options
-    Err(problem) => {
-      @shim.emit(@shim.command_error(problem))
-      return
-    }
+/// One request, start to finish: the result file's content.
+async fn run(
+  options : @shim.Options,
+  request : @shim.Request,
+) -> @shim.ShimResult {
+  // Codex takes its schema from a FILE: the call's own schema (request) is
+  // written to a scratch directory for the run; `--schema <file>` is the
+  // deployment default for scripts that pass none.
+  let scratch = match request.schema {
+    Some(_) => Some(@fs.tmpdir(prefix="workflow-codex-schema-"))
+    None => None
   }
-  guard @shim.read_request() is Some(parsed) else { return }
-  let request = match parsed {
-    Ok(request) => request
-    Err(problem) => {
-      @shim.emit(@shim.command_error(problem))
-      return
+  defer (if scratch is Some(dir) {
+    @fs.rmdir(dir, recursive=true) catch {
+      _ => ()
     }
-  }
-  // Codex takes its schema from a FILE: the call's own schema (envelope)
-  // is written to a scratch directory for the run; `--schema <file>` is
-  // the deployment default for scripts that pass none.
-  let (schema_path, scratch) = match request.schema {
-    Some(schema) => {
-      let dir = @fs.tmpdir(prefix="workflow-codex-schema-")
+  })
+  let schema_path = match (request.schema, scratch) {
+    (Some(schema), Some(dir)) => {
       let path = "\{dir}/schema.json"
       @fs.write_file(path, schema.stringify())
-      (Some(path), Some(dir))
+      Some(path)
     }
-    None => (options.schema, None)
+    _ => options.schema
   }
   let state = Codex()
   let exit = @shim.run_cli(
@@ -66,37 +60,16 @@ async fn run() -> Unit {
     args=codex_args(request, options, schema_path),
     cwd?=options.cwd,
     observe=line => {
-      // Emit first, then judge the ceiling: the over-limit step DID happen
-      // (the CLI already made the call), so its step and cost are reported
-      // before the run is stopped — steps and charges stay consistent.
-      for event in state.observe(line) {
-        @shim.emit(event)
-      }
+      // Count first, then judge the ceiling: the over-limit step DID happen
+      // (the CLI already made the call), so it is reported with the stop.
+      state.observe(line)
       if request.max_steps is Some(limit) && state.steps > limit {
         return @shim.Stop
       }
       @shim.Continue
     },
   )
-  if scratch is Some(dir) {
-    @fs.rmdir(dir, recursive=true) catch {
-      _ => ()
-    }
-  }
-  let structured = schema_path is Some(_)
-  match exit {
-    Cancelled => ()
-    Stopped => @shim.emit(@shim.max_steps_exhausted())
-    Failed(reason) => @shim.emit(@shim.command_error(reason))
-    Exited(code) =>
-      if state.failure is Some(error) {
-        @shim.emit(@shim.turn_failed(error))
-      } else if state.report(structured~) is Some(report) {
-        @shim.emit_report(report)
-      } else if code != 0 {
-        @shim.emit(@shim.turn_failed("codex exited \{code} without a message"))
-      }
-  }
+  state.result(exit, structured=schema_path is Some(_))
 }
 
 ///|
@@ -130,9 +103,15 @@ fn codex_args(
 
 ///|
 test "argv: read-only sandbox by default, workspace-write for worker" {
-  let request = @shim.Request(kind="explore", input=Json::null(), prompt="why?")
+  let request = @shim.Request(
+    request_id="r",
+    kind="explore",
+    input=Json::null(),
+    prompt="why?",
+  )
   let options = @shim.Options(
     command="codex",
+    result_file="/r",
     model="gpt-5",
     schema="out.json",
     extra=["--ephemeral"],
@@ -141,8 +120,13 @@ test "argv: read-only sandbox by default, workspace-write for worker" {
     "exec", "--json", "--skip-git-repo-check", "-s", "read-only", "-m", "gpt-5",
     "--output-schema", "out.json", "--ephemeral", "why?",
   ])
-  let worker = @shim.Request(kind="worker", input=Json::null(), prompt="why?")
-  let plain = @shim.Options(command="codex")
+  let worker = @shim.Request(
+    request_id="r",
+    kind="worker",
+    input=Json::null(),
+    prompt="why?",
+  )
+  let plain = @shim.Options(command="codex", result_file="/r")
   assert_eq(codex_args(worker, plain, None), [
     "exec", "--json", "--skip-git-repo-check", "-s", "workspace-write", "why?",
   ])

@@ -1,62 +1,45 @@
 ///|
 /// A PROCESS SHIM: Claude Code as a workflow engine. Speaks the child
-/// contract on its own stdin/stdout (`docs/child-contract.md`) and drives
-/// `claude -p --output-format stream-json` underneath, translating
-/// framing both ways. Point a `LaunchSpec` at the PUBLISHED shim — no
-/// build step, no path to hard-code:
+/// contract's transport 2 (`docs/child-contract.md` §10): one request line
+/// on stdin, one result file at `--result-file`. It drives
+/// `claude -p --output-format stream-json` underneath and reads that stream
+/// for the answer, the usage, and the steps. Point a `LaunchSpec` at the
+/// PUBLISHED shim — no build step, no path to hard-code:
 ///
-///   moonx moonbitlang/workflow/shim/claude [--model m] [--cwd d] [--writable] [--schema f] [-- claude args...]
+///   moonx moonbitlang/workflow/shim/claude --result-file {result_file} [--model m] [--cwd d] [--writable] [--schema f] [-- claude args...]
 ///
-/// `moonx` runs the wasm build, which this shim fully supports: it spawns
-/// the CLI, keeps the parent's stdin-EOF cancel channel live, and frames
-/// stdout exactly as the native build does. Building locally
-/// (`just shims`) is for developing THIS shim, where the published
+/// with `transport=ResultFile`, so the runner substitutes a fresh path for
+/// `{result_file}`. `moonx` runs the wasm build, which this shim fully
+/// supports: it spawns the CLI, keeps the parent's stdin-EOF cancel channel
+/// live, and writes the result exactly as the native build does. Building
+/// locally (`just shims`) is for developing THIS shim, where the published
 /// version is not what you want to run.
 ///
 /// Kind policy: read-only runs (the default) disallow the editing and
 /// shell tools; `worker`, or `--writable`, accepts edits and allows them.
-/// The request's `max_steps` IS enforced here — each `assistant` message
-/// is a step, and the CLI is torn down the moment the ceiling is
+/// The request's `limits.max_steps` IS enforced here — each `assistant`
+/// message is a step, and the CLI is torn down the moment the ceiling is
 /// exceeded — because the CLI has no turn cap of its own.
 async fn main {
-  run() catch {
-    error =>
-      @shim.emit(@shim.command_error("claude shim failed: \{error}")) catch {
-        _ => ()
-      }
-  }
+  @shim.serve(default_command="claude", run~)
 }
 
 ///|
-async fn run() -> Unit {
-  let options = match
-    @shim.Options::parse(@env.args()[1:], default_command="claude") {
-    Ok(options) => options
-    Err(problem) => {
-      @shim.emit(@shim.command_error(problem))
-      return
-    }
-  }
-  guard @shim.read_request() is Some(parsed) else { return }
-  let request = match parsed {
-    Ok(request) => request
-    Err(problem) => {
-      @shim.emit(@shim.command_error(problem))
-      return
-    }
-  }
-  // The call's own schema (envelope) wins; `--schema <file>` is the
+/// One request, start to finish: the result file's content.
+async fn run(
+  options : @shim.Options,
+  request : @shim.Request,
+) -> @shim.ShimResult {
+  // The call's own schema (request) wins; `--schema <file>` is the
   // deployment default for scripts that pass none.
   let schema = match (envelope_schema(request), options.schema) {
     (Some(schema), _) => Some(schema)
     (None, Some(path)) =>
       Some(@utf8.decode_lossy(@fs.read_file(path).binary())) catch {
-        error => {
-          @shim.emit(
-            @shim.command_error("cannot read --schema \{path}: \{error}"),
+        error =>
+          return @shim.ShimResult(
+            Failed("cannot read --schema \{path}: \{error}"),
           )
-          return
-        }
       }
     (None, None) => None
   }
@@ -66,39 +49,17 @@ async fn run() -> Unit {
     args=claude_args(request, options, schema),
     cwd?=options.cwd,
     observe=line => {
-      // Emit first, then judge the ceiling: the over-limit step DID happen
+      // Count first, then judge the ceiling: the over-limit step DID happen
       // (the CLI already made the call), so its step and cost are reported
-      // before the run is stopped — steps and charges stay consistent.
-      for event in state.observe(line) {
-        @shim.emit(event)
-      }
+      // with the stop — steps and charges stay consistent.
+      state.observe(line)
       if request.max_steps is Some(limit) && state.steps > limit {
         return @shim.Stop
       }
       @shim.Continue
     },
   )
-  // A run that ended without its result never charged the true totals:
-  // settle the per-message snapshots first, so the cost of the work done
-  // still reaches the parent before the terminal event.
-  if !(exit is Failed(_)) && state.settle() is Some(usage) {
-    @shim.emit(usage)
-  }
-  match exit {
-    Cancelled => ()
-    Stopped => @shim.emit(@shim.max_steps_exhausted())
-    Failed(reason) => @shim.emit(@shim.command_error(reason))
-    Exited(code) =>
-      if state.failure is Some(error) {
-        @shim.emit(@shim.turn_failed(error))
-      } else if state.exhausted {
-        @shim.emit(@shim.max_steps_exhausted())
-      } else if state.report() is Some(report) {
-        @shim.emit_report(report)
-      } else if code != 0 {
-        @shim.emit(@shim.turn_failed("claude exited \{code} without a result"))
-      }
-  }
+  state.result(exit)
 }
 
 ///|
@@ -140,18 +101,35 @@ fn claude_args(
 
 ///|
 test "argv: read-only by default, writable for worker, extras before the tool list" {
-  let request = @shim.Request(kind="explore", input=Json::null(), prompt="why?")
-  let options = @shim.Options(command="claude", model="opus", extra=[
-    "--max-budget-usd", "1",
-  ])
+  let request = @shim.Request(
+    request_id="r",
+    kind="explore",
+    input=Json::null(),
+    prompt="why?",
+  )
+  let options = @shim.Options(
+    command="claude",
+    result_file="/r",
+    model="opus",
+    extra=["--max-budget-usd", "1"],
+  )
   assert_eq(claude_args(request, options, None), [
     "-p", "why?", "--output-format", "stream-json", "--verbose", "--model", "opus",
     "--max-budget-usd", "1", "--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit",
     "Bash",
   ])
-  let worker = @shim.Request(kind="worker", input=Json::null(), prompt="why?")
-  let plain = @shim.Options(command="claude")
-  let writable = @shim.Options(command="claude", writable=true)
+  let worker = @shim.Request(
+    request_id="r",
+    kind="worker",
+    input=Json::null(),
+    prompt="why?",
+  )
+  let plain = @shim.Options(command="claude", result_file="/r")
+  let writable = @shim.Options(
+    command="claude",
+    result_file="/r",
+    writable=true,
+  )
   assert_eq(
     claude_args(request, writable, None),
     claude_args(worker, plain, None),
@@ -164,14 +142,15 @@ test "argv: read-only by default, writable for worker, extras before the tool li
 }
 
 ///|
-/// The envelope's schema as the inline JSON text `--json-schema` takes.
+/// The request's schema as the inline JSON text `--json-schema` takes.
 fn envelope_schema(request : @shim.Request) -> String? {
   request.schema.map(schema => schema.stringify())
 }
 
 ///|
-test "the envelope's schema becomes the inline --json-schema text" {
+test "the request's schema becomes the inline --json-schema text" {
   let request = @shim.Request(
+    request_id="r",
     kind="explore",
     input=Json::null(),
     prompt="why?",
@@ -179,6 +158,7 @@ test "the envelope's schema becomes the inline --json-schema text" {
   )
   assert_eq(envelope_schema(request), Some("{\"type\":\"object\"}"))
   let unshaped = @shim.Request(
+    request_id="r",
     kind="explore",
     input=Json::null(),
     prompt="why?",
