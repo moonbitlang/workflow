@@ -395,7 +395,7 @@ no file or a whole one (write a sibling, then rename it into place):
 | `status` | string | `completed`, `no_report`, `max_steps_exhausted`, `context_yield`, `aborted`, `interrupted`, or `failed`. |
 | `output` | any JSON | With `completed`: the report. |
 | `reason` | string | With `context_yield`, `aborted`, `interrupted`, `failed`: why. |
-| `usage` | object, optional | The child's cumulative totals, the five integral counters of the `usage` event. A total, never an increment. |
+| `usage` | object, optional | The child's cumulative totals, the five integral counters of the `usage` event. A total, never an increment. An optional `usage.cost_usd` (a finite, non-negative number) is the engine's own price for the run; absent means unknown, never free. A present `cost_usd` that is not such a number makes the result malformed, as a partial or fractional counter does (§10.4). |
 | `steps` | integer, optional | Model requests the child made. |
 
 Other fields are ignored. openseek's `docs/run-result.md` is the reference
@@ -420,7 +420,8 @@ was abnormal. The exit status is collected in the grace window too.
 
 ### 10.5 Accounting
 
-The counters come from the result's `usage` and `steps`, and nothing is
+The counters, and the price when `usage.cost_usd` states one, come from the
+result's `usage` and `steps`, and nothing is
 observed while the child runs, so a caller cancelled mid-run sees none. When
 the runner has no account from the child (no file, a malformed file, or a
 result without `usage`), `ContractResult.unaccounted` and
