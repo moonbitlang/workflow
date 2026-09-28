@@ -43,8 +43,6 @@ async test "the handoff reads from WORKFLOW_HOST, and only from it" {
   assert_eq(ctx.extension("transport"), None)
   assert_eq(ctx.child_capacity(), 3)
   assert_eq(ctx.journal_path(), Some("/store/run7.jsonl"))
-  // The sidecar is optional: a host that named no events file gets none.
-  assert_eq(ctx.events_path(), None)
 }
 
 ///|

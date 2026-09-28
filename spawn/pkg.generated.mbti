@@ -16,32 +16,11 @@ pub fn contract_runner(launch~ : (@workflow.AgentCall) -> LaunchSpec, deadline_m
 
 // Types and methods
 pub struct ContractResult {
-  report : Json?
-  terminal : ContractTerminal
-  steps_used : Int
-  prompt_tokens : Int
-  completion_tokens : Int
-  cost_usd : Double?
-  unaccounted : String?
+  outcome : @workflow.AgentOutcome
   exit_code : Int?
 }
 
-pub enum ContractTerminal {
-  Captured
-  NoReport
-  MaxSteps
-  ContextYield
-  TimedOut
-  Failed(String)
-} derive(Eq)
-
-pub struct LaunchSpec {
-  command : String
-  args : Array[String]
-  cwd : String?
-  extra_env : Map[String, String]?
-  deadline_ms : Int?
-} derive(Eq)
+type LaunchSpec
 pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int) -> Self
 
 // Type aliases

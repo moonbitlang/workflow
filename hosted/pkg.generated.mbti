@@ -20,7 +20,7 @@ pub fn Context::events_path(Self) -> String?
 pub fn Context::extension(Self, String) -> Json?
 pub fn Context::journal_path(Self) -> String?
 pub async fn[T] Context::run(Self, async (@workflow.Workflow) -> T, max_concurrent? : Int) -> T
-pub fn Context::runner(Self, emit_line? : async (String?, Json) -> Unit) -> @workflow.Runner
+pub fn Context::runner(Self) -> @workflow.Runner
 
 // Type aliases
 

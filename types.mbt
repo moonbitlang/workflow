@@ -103,9 +103,10 @@ pub fn AgentAttempt::AgentAttempt(
 /// appear here: retrying those is the engine's job, below this seam. What
 /// a script retries is a whole AGENT that came back with nothing usable —
 /// `retry`, whose default policy is written against this vocabulary.
-/// Mirrors the child contract's non-`Captured` terminals (`Captured` is the
-/// success path), plus `Skipped` (a human declined the call — replay keeps
-/// it declined rather than overriding the decision).
+/// The child contract's result statuses other than `completed` map onto
+/// these (`docs/child-contract.md` §4), plus `Skipped` (a human declined
+/// the call — replay keeps it declined rather than overriding the
+/// decision).
 pub(all) enum AgentFailure {
   TimedOut
   NoReport
@@ -127,6 +128,16 @@ pub(all) enum AgentOutcome {
   Finished(value~ : Json, attempt~ : AgentAttempt)
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
 } derive(Eq, ToJson, FromJson)
+
+///|
+/// The attempt this outcome accounts for: always there for `Finished`, and
+/// for `DidNotFinish` unless no launch was ever tried.
+pub fn AgentOutcome::attempt(self : AgentOutcome) -> AgentAttempt? {
+  match self {
+    Finished(attempt~, ..) => Some(attempt)
+    DidNotFinish(attempt~, ..) => attempt
+  }
+}
 
 ///|
 /// The typed error channel of the workflow layer. Every call site either

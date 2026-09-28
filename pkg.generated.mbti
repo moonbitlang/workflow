@@ -80,6 +80,7 @@ pub(all) enum AgentOutcome {
   Finished(value~ : Json, attempt~ : AgentAttempt)
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
 } derive(Eq, ToJson, @json.FromJson)
+pub fn AgentOutcome::attempt(Self) -> AgentAttempt?
 
 type Journal
 pub fn Journal::in_memory(prior? : Array[JournalEntry]) -> Self

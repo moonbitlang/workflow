@@ -289,11 +289,7 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
 
 ///|
 fn tokens_of(outcome : @workflow.AgentOutcome) -> Int {
-  let attempt = match outcome {
-    Finished(attempt~, ..) => Some(attempt)
-    DidNotFinish(attempt~, ..) => attempt
-  }
-  match attempt {
+  match outcome.attempt() {
     Some(attempt) => attempt.prompt_tokens + attempt.completion_tokens
     None => 0
   }
@@ -301,10 +297,9 @@ fn tokens_of(outcome : @workflow.AgentOutcome) -> Int {
 
 ///|
 fn steps_of(outcome : @workflow.AgentOutcome) -> Int {
-  match outcome {
-    Finished(attempt~, ..) => attempt.steps_used
-    DidNotFinish(attempt=Some(attempt), ..) => attempt.steps_used
-    DidNotFinish(attempt=None, ..) => 0
+  match outcome.attempt() {
+    Some(attempt) => attempt.steps_used
+    None => 0
   }
 }
 
