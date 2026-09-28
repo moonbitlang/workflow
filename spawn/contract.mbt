@@ -1,30 +1,36 @@
 ///|
 /// THE CHILD CONTRACT, and its one implementation.
 ///
-/// A workflow agent can be any process that speaks this wire contract:
+/// A workflow agent can be any process that speaks this wire contract. The
+/// runner writes ONE JSON request line on the child's stdin and holds the
+/// pipe open — closing it is the graceful-cancel signal, not the end of
+/// input. The request is self-contained, so it never depends on
+/// engine-specific argv (argv remains deployment configuration). After
+/// `wall_deadline_ms` the runner closes stdin and grants `cancel_grace_ms`
+/// to flush and exit — a result landing in the grace window still counts —
+/// then terminates the child. How the child hands back its result is the
+/// launch's `Transport`:
 ///
-/// - the runner writes ONE JSON line on the child's stdin and holds the
-///   pipe open — closing it is the graceful-cancel signal, not the end
-///   of input. The line is the VERSIONED request envelope
-///   `{"workflow_contract": 1, "id": ..., "kind": ..., "max_steps"?: ...,
-///   "schema"?: ..., "input": ...}` — self-contained, so the request never depends on
-///   engine-specific argv (argv remains deployment configuration);
-/// - the child emits JSONL on stdout: event lines (an object with an
-///   `event` tag — `usage` and `agent_step` are summed/maxed for exact
-///   cost accounting; `max_steps_exhausted`, `context_yield`,
-///   `turn_failed`, `agent_setup_failed`, `command_error`, and
-///   `agent_aborted` classify how a run degraded) and, last, ONE
-///   distinguished `{"subrun_report": ...}` line carrying the result;
-/// - non-JSON stdout lines are skipped (a leaky tool subprocess must not
-///   poison the run);
-/// - after `wall_deadline_ms` the runner closes stdin and grants
-///   `cancel_grace_ms` to flush and exit — a report landing in the grace
-///   window still counts — then terminates the child.
+/// - `ResultFile` (transport 2): the request is the document
+///   `{"version": 1, "request_id", "kind", "input", "limits"?, "schema"?}`,
+///   and the child writes ONE result file at the path the runner puts in
+///   its argv; stdout is drained unread. `openseek run` and the shims in
+///   this module speak it.
+/// - `StdoutEvents` (transport 1): the request is the envelope
+///   `{"workflow_contract": 1, "id", "kind", "max_steps"?, "schema"?,
+///   "input"}`, and the child emits JSONL on stdout: event lines (an
+///   object with an `event` tag — `usage` and `agent_step` are
+///   summed/maxed for exact cost accounting; `max_steps_exhausted`,
+///   `context_yield`, `turn_failed`, `agent_setup_failed`,
+///   `command_error`, and `agent_aborted` classify how a run degraded)
+///   and, last, ONE distinguished `{"subrun_report": ...}` line carrying
+///   the result. Non-JSON stdout lines are skipped (a leaky tool
+///   subprocess must not poison the run).
 ///
-/// `openseek subrun <kind>` speaks this contract natively; a shim around
-/// any other engine (a Rust CLI, a shell script) needs only to translate
-/// framing. External cancellation of the CALLER is never folded into a
-/// terminal: it re-raises after teardown, per structured concurrency.
+/// A shim around any other engine (a Rust CLI, a shell script) needs only
+/// to translate framing. External cancellation of the CALLER is never
+/// folded into a terminal: it re-raises after teardown, per structured
+/// concurrency.
 let default_cancel_grace_ms : Int = 5_000
 
 ///|
@@ -292,7 +298,7 @@ pub async fn contract_run(
     @async.with_task_group() <| group => {
       let (child_stdin, stdin_writer) = @process.write_to_process() catch {
         error => {
-          observations.failure = Some("subrun pipes unavailable: \{error}")
+          observations.failure = Some("child pipes unavailable: \{error}")
           return
         }
       }
@@ -303,7 +309,7 @@ pub async fn contract_run(
       defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
         error => {
-          observations.failure = Some("subrun pipes unavailable: \{error}")
+          observations.failure = Some("child pipes unavailable: \{error}")
           return
         }
       }
@@ -325,7 +331,7 @@ pub async fn contract_run(
         no_wait=true,
       ) catch {
         error => {
-          observations.failure = Some("subrun spawn failed: \{error}")
+          observations.failure = Some("child spawn failed: \{error}")
           return
         }
       }
@@ -377,7 +383,7 @@ pub async fn contract_run(
                   code != 0 &&
                   observations.report is None &&
                   observations.failure is None {
-                  observations.failure = Some("subrun exited \{code}")
+                  observations.failure = Some("child exited \{code}")
                 }
               }
               None => ()
@@ -403,7 +409,7 @@ pub async fn contract_run(
           // error into the terminal. Cancellation never reaches a `catch`;
           // it unwinds through the defers above.
           if observations.failure is None {
-            observations.failure = Some("subrun stream failed: \{error}")
+            observations.failure = Some("child stream failed: \{error}")
           }
           return
         }
@@ -412,7 +418,7 @@ pub async fn contract_run(
   catch {
     error =>
       if observations.failure is None {
-        observations.failure = Some("subrun runner failed: \{error}")
+        observations.failure = Some("child runner failed: \{error}")
       }
   }
   if result_path is Some(path) {
