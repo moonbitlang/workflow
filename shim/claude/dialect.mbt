@@ -11,7 +11,7 @@
 /// message id, cost is charged once from the result, and the per-message
 /// snapshots serve only as the fallback for a run cut short before its
 /// result (`usage`).
-struct Claude {
+priv struct Claude {
   mut steps : Int
   snapshots : Map[String, @shim.Usage]
   /// The result's true totals, priced when it stated a price.
@@ -369,15 +369,16 @@ test "error results and the turn ceiling produce no report" {
       #|{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}
     ),
   ])
-  assert_true(
-    failed.status(Exited(1)) is Failed("claude: error_during_execution: boom"),
+  assert_eq(
+    failed.status(Exited(1)),
+    Failed("claude: error_during_execution: boom"),
   )
   let capped = observed([
     (
       #|{"type":"result","subtype":"error_max_turns","is_error":true}
     ),
   ])
-  assert_true(capped.status(Exited(0)) is MaxStepsExhausted)
+  assert_eq(capped.status(Exited(0)), MaxStepsExhausted)
   assert_eq(capped.report(), None)
 }
 

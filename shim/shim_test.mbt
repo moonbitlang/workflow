@@ -82,18 +82,31 @@ test "usage carries a stated price, zero included; a sum is priced only when bot
     @shim.ShimResult(NoReport, usage=priced).to_json(request_id="r").stringify(),
     "{\"version\":1,\"request_id\":\"r\",\"status\":\"no_report\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5,\"prompt_cache_hit_tokens\":1,\"prompt_cache_miss_tokens\":2,\"cost_usd\":0}}",
   )
-  let both = priced.add(priced)
-  assert_eq(both.prompt_tokens, 6)
-  assert_eq(both.cache_miss_tokens, 4)
-  assert_eq(both.cost_usd, Some(0.0))
+  assert_eq(
+    priced.add(priced),
+    @shim.Usage(
+      prompt_tokens=6,
+      completion_tokens=4,
+      cache_hit_tokens=2,
+      cache_miss_tokens=4,
+      cost_usd=0.0,
+    ),
+  )
   let unpriced = @shim.Usage(
     prompt_tokens=1,
     completion_tokens=1,
     cache_hit_tokens=0,
     cache_miss_tokens=1,
   )
-  assert_eq(priced.add(unpriced).cost_usd, None)
-  assert_eq(priced.add(unpriced).completion_tokens, 3)
+  assert_eq(
+    priced.add(unpriced),
+    @shim.Usage(
+      prompt_tokens=4,
+      completion_tokens=3,
+      cache_hit_tokens=1,
+      cache_miss_tokens=3,
+    ),
+  )
   assert_eq(@shim.integral(3.0), Some(3))
   assert_eq(@shim.integral(1.5), None)
 }

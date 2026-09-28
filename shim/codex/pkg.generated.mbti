@@ -6,7 +6,6 @@ package "moonbitlang/workflow/shim/codex"
 // Errors
 
 // Types and methods
-type Codex
 
 // Type aliases
 

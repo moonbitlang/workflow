@@ -11,7 +11,7 @@
 /// be omitted"), not a failure — the run goes on and usually completes.
 /// Only `turn.failed` and a top-level `error` event end a run without a
 /// report.
-struct Codex {
+priv struct Codex {
   mut steps : Int
   mut thread_id : String?
   mut last_message : String?
@@ -291,9 +291,9 @@ test "a run stopped before its turn completed carries no usage" {
     "reason": "the parent closed stdin",
     "steps": 2,
   })
-  assert_true(
-    state.status(Exited(2), structured=false)
-    is Failed("codex exited 2 without a message"),
+  assert_eq(
+    state.status(Exited(2), structured=false),
+    Failed("codex exited 2 without a message"),
   )
 }
 
@@ -330,9 +330,7 @@ test "turn and stream errors are failures; the first one wins" {
     ),
   ])
   assert_eq(state.failure, Some("codex: quota"))
-  assert_true(
-    state.status(Exited(1), structured=false) is Failed("codex: quota"),
-  )
+  assert_eq(state.status(Exited(1), structured=false), Failed("codex: quota"))
   assert_eq(state.report(structured=false), None)
 }
 

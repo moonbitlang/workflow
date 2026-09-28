@@ -9,7 +9,7 @@ pub struct Usage {
   cache_hit_tokens : Int
   cache_miss_tokens : Int
   cost_usd : Double?
-}
+} derive(Eq, Debug)
 
 ///|
 /// A usage reading from its parts; `cost_usd` only when the CLI stated it.
@@ -60,7 +60,7 @@ pub(all) enum Status {
   Interrupted(String)
   /// The run could not finish: why.
   Failed(String)
-}
+} derive(Eq, Debug)
 
 ///|
 /// Everything a shim reports about one run: how it ended, what it cost when
@@ -69,7 +69,7 @@ struct ShimResult {
   status : Status
   usage : Usage?
   steps : Int?
-}
+} derive(Eq, Debug)
 
 ///|
 /// A result from its parts. Omit `usage` when the CLI reported none, and
