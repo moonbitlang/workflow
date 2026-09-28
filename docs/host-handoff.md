@@ -14,9 +14,16 @@ variable.
 
 One JSON document. A family of variables was rejected deliberately: a handoff
 is all-or-nothing, and a script that read four of five names would launch
-children the host never reserved. The reader **fails closed** — any missing
-required field, or an unknown `v`, yields no context at all rather than a
-partial one.
+children the host never reserved.
+
+An unset or blank variable means no handoff: `@hosted.context()` returns
+`None`, and a script may do its own work. A handoff that IS set is read
+whole or not at all — the reader **fails closed**: any missing or malformed
+required field, or a `v` or `transport` it does not read, raises
+`HandoffError` with the reason rather than yielding a partial context, and
+never reads as "no handoff" (a script that fell back to standalone work on a
+broken handoff would launch children its host never reserved and cannot
+see).
 
 ```json
 {
@@ -35,16 +42,16 @@ partial one.
 
 | field | required | meaning |
 |---|---|---|
-| `v` | yes | Handoff version: `1`, or `2` (below). Anything else is refused. |
-| `transport` | with `v: 2` | `"stdout_events"` or `"result_file"`: how each child hands back its result ([child contract §10](child-contract.md#10-transport-2-the-result-file)). Version 1 is always `"stdout_events"`. |
+| `v` | yes | The handoff document's version: `2`. Anything else is refused. |
+| `transport` | yes | `"result_file"`: each child writes one result file ([child contract](child-contract.md)). Anything else is refused. |
 | `exe` | yes | The engine to spawn. An absolute path is strongly advised: a sandbox policy that admits programs by exact path then admits *this* binary and not a same-named one earlier in `PATH`. |
-| `child_args` | yes | The argv for one child, as a non-empty array of strings. `{kind}` is replaced by the call's kind and `{child}` by the rendered child id, in every token. With the `result_file` transport it must also name `{result_file}`, which the runner replaces with a fresh private path per launch; with `stdout_events` it must not. A template that disagrees with its transport is refused. |
+| `child_args` | yes | The argv for one child, as a non-empty array of strings. `{kind}` is replaced by the call's kind and `{child}` by the rendered child id, in every token. It must also name `{result_file}`, which the runner replaces with a fresh private path per launch; a template that does not is refused. |
 | `child_id` | yes | How this host names a child. Must contain `{n}`, which is replaced by the child's ordinal; a template that consumed no ordinal would name every child alike. |
-| `ids` | yes | `[first, count]`, both positive: the ordinals this script may use. It is also the **launch ceiling** — see below. |
-| `journal` | no | Where to append the ledger of resolved calls. Absent means an in-memory journal that dies with the process. |
-| `events` | no | Where to append the sidecar of launch brackets. Absent means no sidecar. |
-| `cwd` | no | The child's working directory. |
-| `deadline_ms` | no | Wall deadline per child. Default 600 000. |
+| `ids` | yes | `[first, count]`, both positive integers: the ordinals this script may use. It is also the **launch ceiling** — see below. |
+| `journal` | no | Where to append the ledger of resolved calls. Absent, null, or empty means an in-memory journal that dies with the process. |
+| `events` | no | Where to append the sidecar of launch brackets. Absent, null, or empty means no sidecar. |
+| `cwd` | no | The child's working directory. Absent, null, or empty means the script's own. |
+| `deadline_ms` | no | Wall deadline per child, a positive integer. Default 600 000. |
 
 ## Host-specific extensions
 
@@ -56,6 +63,12 @@ them. Missing fields return `None`; explicit `null` returns `Some(Null)`.
 Reserved fields in the table above are not extensions and are never returned
 by this accessor. Hosts should use their own namespace to avoid collisions
 with future common fields. Adding an extension needs no new `v`.
+
+Three version numbers are in play, and none of them moves with another:
+`v` is the handoff document's (`2`); the request and result documents a
+child reads and writes are version `1` (the
+[child contract](child-contract.md)); and the `moonbitlang/workflow` package
+has its own release version.
 
 ## What the host must guarantee
 
@@ -81,7 +94,9 @@ which child ids will belong to this run.
 
 `@hosted.context()` reads the variable, or returns `None` when there is none —
 an ordinary state, not an error: a script run by hand has nothing to delegate
-to and should do its own work.
+to and should do its own work. A variable that is set but unusable raises
+`HandoffError`; let it escape `main`, which prints
+`unusable WORKFLOW_HOST handoff: <reason>` and exits nonzero.
 
 `ctx.run(wf => ...)` yields a `Workflow` whose `Runner` spawns `exe` with the
 substituted argv, journals to `journal`, and writes two sidecar lines per
@@ -92,10 +107,10 @@ launch:
 {"event":"agent_finished","child":"run7-sr-5","status":"captured","steps":12,"tokens":3400}
 ```
 
-When the runner could not get the child's own account of its spend (a
-`result_file` child that died without a result, say), the finish line carries
-`"unaccounted": "<why>"` and the counters are only what was observed, as the
-journal's `AgentAttempt.unaccounted` records too.
+When the runner could not get the child's own account of its spend (a child
+that died without a result, say), the finish line carries
+`"unaccounted": "<why>"` and the counters are zero, as the journal's
+`AgentAttempt.unaccounted` records too.
 
 The `started` line exists because the journal cannot report a launch: a
 `JournalEntry` carries an outcome, so it is written when the call *resolves*.
@@ -103,7 +118,8 @@ It carries the child id so a watcher can begin following that child's own
 record immediately.
 
 If the caller cancels a running child, the runner tears down the child, writes
-`agent_finished` with `status="cancelled"` and the usage observed so far, then
+`agent_finished` with `status="cancelled"`, zero counters, and an
+`unaccounted` reason (the child's spend is in a result nobody read), then
 re-raises cancellation. The sidecar write is protected from cancellation so
 cooperative teardown can close the launch bracket. It does not turn a cancelled
 call into a journalled outcome. Sidecar writes remain best effort; a process
@@ -128,22 +144,9 @@ the request instead.
 
 ## Versions
 
-Version 2 added `transport`, so a host can launch children that write a
-result file — the transport the reference engine and the shims speak.
-Version 1 has no `transport` field and always means `stdout_events`, for
-engines that still stream events:
-
-```json
-{
-  "v": 1,
-  "exe": "/opt/engine",
-  "child_args": ["{kind}", "--session", "{child}"],
-  "child_id": "run7-sr-{n}",
-  "ids": [5, 32]
-}
-```
-
-A library older than version 2 refuses a version 2 handoff: `context()`
-returns `None`, so a script behaves as if it had no host rather than passing
-`{result_file}` to a child literally. A host that must serve such older
-scripts writes version 1, with an engine that streams events.
+Version 2 is the only handoff this release reads. Version 1 launched
+children that streamed events on stdout, a transport this package no longer
+has; a version 1 handoff raises `HandoffError`. A library older than version
+2 refuses a version 2 handoff (to it, `context()` is `None`), so a script
+pinned to such a release behaves as if it had no host rather than passing
+`{result_file}` to a child literally.
