@@ -180,11 +180,11 @@ async fn review() -> Unit {
       }
     },
   )
-  let reports = @workflow.parallel_all(
+  let reports = @workflow.parallel(
     batches.map(batch => {
       let pkg = batch.join(", ")
       () => {
-        let reviews = @workflow.parallel_all(
+        let reviews = @workflow.parallel(
           engines.map(engine => {
             () => {
               let result = @workflow.attempt(() => {

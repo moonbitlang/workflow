@@ -96,7 +96,7 @@ async test "the launch allowance ignores calls cancelled while queued" {
   // — only the launched agent counts, and the fallback below still fits.
   @async.with_task_group(group => {
     let work = group.spawn(() => {
-      @workflow.parallel_all([
+      @workflow.parallel([
         () => wf.agent(prompt="slow:a", kind="scout"),
         () => wf.agent(prompt="ok-b", kind="scout"),
         () => wf.agent(prompt="ok-c", kind="scout"),
@@ -150,8 +150,8 @@ async test "parallel keeps sibling successes when one agent fails" {
     fail("expected exactly the middle slot to fail")
   }
   assert_eq(@workflow.collect_ok(results).length(), 2)
-  assert_eq(@workflow.quorum(results, need=2).length(), 2)
-  let short : Array[Json] = @workflow.quorum(results, need=3) catch {
+  assert_eq(@workflow.collect_ok(results, min_ok=2).length(), 2)
+  let short : Array[Json] = @workflow.collect_ok(results, min_ok=3) catch {
     @workflow.QuorumNotReached(need=3, ok=2, of=3) => []
     _ => fail("expected QuorumNotReached(need=3, ok=2, of=3)")
   }
@@ -185,11 +185,11 @@ async test "an engine error is never demoted to a policy slot" {
 }
 
 ///|
-async test "parallel_all cancels a slow sibling and the workflow survives" {
+async test "parallel over raising thunks cancels a slow sibling and the workflow survives" {
   let slow_completed : Ref[Bool] = { val: false, }
   let events : Array[String] = []
   let wf = scripted_workflow(on_event=event => events.push(render(event)))
-  let _ : Array[Json] = @workflow.parallel_all([
+  let _ : Array[Json] = @workflow.parallel([
     () => wf.agent(prompt="fail:a", kind="scout"),
     () => {
       let value = wf.agent(prompt="slow:b", kind="scout")
@@ -438,7 +438,7 @@ async test "max_concurrent bounds in-flight agents" {
     Finished(value=Json::null(), attempt=attempt_for(call))
   })
   let wf = @workflow.Workflow(runner~, max_concurrent=1)
-  let _ = @workflow.parallel_all([
+  let _ = @workflow.parallel([
     () => wf.agent(prompt="a", kind="scout"),
     () => wf.agent(prompt="b", kind="scout"),
     () => wf.agent(prompt="c", kind="scout"),
@@ -451,12 +451,11 @@ async test "event brackets balance on success, failure, and engine error" {
   let events : Array[String] = []
   let wf = scripted_workflow(on_event=event => events.push(render(event)))
   wf.phase("Scan")
-  wf.log("starting")
   let _ = wf.agent(prompt="q", kind="scout", label="scout")
   let _ = @workflow.attempt(() => wf.agent(prompt="fail:x", kind="scout"))
   let _ = wf.agent(prompt="boom:y", kind="scout") catch { _ => Json::null() }
   assert_eq(events, [
-    "phase Scan", "log starting", "start scout scout Scan", "finish scout ok", "start fail:x scout Scan",
+    "phase Scan", "start scout scout Scan", "finish scout ok", "start fail:x scout Scan",
     "finish fail:x failed", "start boom:y scout Scan", "finish boom:y errored",
   ])
 }
@@ -518,7 +517,7 @@ async test "quorum boundaries: zero and negative thresholds collect" {
   let results = @workflow.parallel([
     () => @workflow.attempt(() => wf.agent(prompt="fail:a", kind="scout")),
   ])
-  assert_eq(@workflow.quorum(results, need=0).length(), 0)
+  assert_eq(@workflow.collect_ok(results, min_ok=0).length(), 0)
   assert_eq(@workflow.collect_ok(results, min_ok=-1).length(), 0)
 }
 
@@ -526,7 +525,6 @@ async test "quorum boundaries: zero and negative thresholds collect" {
 fn render(event : @workflow.WorkflowEvent) -> String {
   match event {
     @workflow.PhaseStarted(title) => "phase \{title}"
-    @workflow.Log(message) => "log \{message}"
     @workflow.AgentStarted(label~, kind~, phase~) =>
       "start \{label} \{kind} \{phase.unwrap_or("-")}"
     @workflow.AgentFinished(label~, disposition~) =>

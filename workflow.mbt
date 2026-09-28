@@ -14,12 +14,10 @@ pub enum AgentDisposition {
 
 ///|
 /// Progress the workflow narrates as it runs: phases group agents in a
-/// display, logs are one-line narrator messages, and the started/finished
-/// pair brackets each agent's lifetime — on every path, including
+/// display, and the started/finished pair brackets each agent's lifetime — on every path, including
 /// cancellation. Purely observational: no control flow rides on these.
 pub enum WorkflowEvent {
   PhaseStarted(String)
-  Log(String)
   AgentStarted(label~ : String, kind~ : String, phase~ : String?)
   AgentFinished(label~ : String, disposition~ : AgentDisposition)
   /// A journal hit: the result was served from a prior run — no launch,
@@ -282,12 +280,6 @@ fn Workflow::account(self : Workflow, outcome : AgentOutcome) -> Unit {
 pub fn Workflow::phase(self : Workflow, title : String) -> Unit {
   self.current_phase = Some(title)
   (self.on_event)(PhaseStarted(title))
-}
-
-///|
-/// Emit one narrator line.
-pub fn Workflow::log(self : Workflow, message : String) -> Unit {
-  (self.on_event)(Log(message))
 }
 
 ///|

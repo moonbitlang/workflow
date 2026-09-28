@@ -1,25 +1,19 @@
 ///|
-/// Run thunks concurrently, each already carrying its failure policy in
-/// its type: a thunk resolves to `Result[T, WorkflowError]` (wrap a call
-/// in `attempt`), so one agent's failure lands in its own slot without
-/// disturbing siblings — tokens already spent on the others stay spent.
-/// Anything a thunk RAISES is deliberately not caught: engine bugs and
-/// cancellation fail the task group and cancel every peer, never demoted
-/// to a slot a policy could quietly discard. Pair with `all_ok` /
-/// `collect_ok` / `quorum` to choose the policy in one identifier.
-pub async fn[T] parallel(
-  thunks : Array[async () -> Result[T, WorkflowError]],
-) -> Array[Result[T, WorkflowError]] {
-  @async.all(thunks)
-}
-
-///|
-/// Fail-fast fan-out: the first thunk to RAISE (an `agent` call
-/// propagating its `AgentFailed`, an engine bug, cancellation) cancels
-/// every sibling still in flight and propagates. The right shape when
-/// later work is worthless without ALL of this stage — otherwise prefer
-/// `parallel`, which keeps what succeeded.
-pub async fn[T] parallel_all(thunks : Array[async () -> T]) -> Array[T] {
+/// Run thunks concurrently and return their results in order. The failure
+/// policy rides each thunk's type:
+///
+/// - a thunk that resolves to `Result[T, WorkflowError]` (wrap a call in
+///   `attempt`) keeps one agent's failure in its own slot without disturbing
+///   siblings — tokens already spent on the others stay spent. Pair with
+///   `all_ok` / `collect_ok` to choose the policy afterwards;
+/// - a thunk that RAISES — a bare `agent` call propagating its
+///   `AgentFailed`, an engine bug, cancellation — cancels every sibling still
+///   in flight and propagates: fail-fast, the right shape when later work is
+///   worthless without ALL of this stage.
+///
+/// Engine bugs and cancellation always take the second path: they are never
+/// demoted to a slot a policy could quietly discard.
+pub async fn[T] parallel(thunks : Array[async () -> T]) -> Array[T] {
   @async.all(thunks)
 }
 
@@ -102,7 +96,7 @@ pub async fn[T] retry(
 ///|
 /// Policy: every slot must have succeeded; re-raise the first failure
 /// otherwise. Post-hoc fail-fast — siblings have already run to
-/// completion; use `parallel_all` when failure should cancel them instead.
+/// completion; `parallel` over raising thunks cancels them instead.
 pub fn[T] all_ok(
   results : Array[Result[T, WorkflowError]],
 ) -> Array[T] raise WorkflowError {
@@ -118,8 +112,9 @@ pub fn[T] all_ok(
 
 ///|
 /// Policy: keep the successes, requiring at least `min_ok` of them
-/// (`QuorumNotReached` otherwise). `min_ok=0` is pure best-effort
-/// collection; a negative `min_ok` is treated as 0.
+/// (`QuorumNotReached` otherwise) — the k-of-n gate of a vote panel or an
+/// adversarial verification. `min_ok=0` is pure best-effort collection; a
+/// negative `min_ok` is treated as 0.
 pub fn[T] collect_ok(
   results : Array[Result[T, WorkflowError]],
   min_ok? : Int = 0,
@@ -134,14 +129,4 @@ pub fn[T] collect_ok(
     raise QuorumNotReached(need=min_ok, ok=ok.length(), of=results.length())
   }
   ok
-}
-
-///|
-/// Policy: k-of-n agreement gates (adversarial verification, vote panels):
-/// at least `need` slots must have succeeded.
-pub fn[T] quorum(
-  results : Array[Result[T, WorkflowError]],
-  need~ : Int,
-) -> Array[T] raise WorkflowError {
-  collect_ok(results, min_ok=need)
 }

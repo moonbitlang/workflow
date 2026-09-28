@@ -15,11 +15,7 @@ pub fn[T] collect_ok(Array[Result[T, WorkflowError]], min_ok? : Int) -> Array[T]
 
 pub async fn[A, B] fan_out(Array[A], async (A) -> Result[B, WorkflowError]) -> Array[Result[B, WorkflowError]]
 
-pub async fn[T] parallel(Array[async () -> Result[T, WorkflowError]]) -> Array[Result[T, WorkflowError]]
-
-pub async fn[T] parallel_all(Array[async () -> T]) -> Array[T]
-
-pub fn[T] quorum(Array[Result[T, WorkflowError]], need~ : Int) -> Array[T] raise WorkflowError
+pub async fn[T] parallel(Array[async () -> T]) -> Array[T]
 
 pub async fn[T] retry(async () -> T, max_retry? : Int, backoff? : @async.RetryMethod, retriable? : (WorkflowError) -> Bool) -> T
 
@@ -116,13 +112,11 @@ pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : 
 pub fn Workflow::calls_made(Self) -> Int
 pub fn Workflow::calls_replayed(Self) -> Int
 pub fn Workflow::cost_usd(Self) -> Double
-pub fn Workflow::log(Self, String) -> Unit
 pub fn Workflow::phase(Self, String) -> Unit
 pub fn Workflow::tokens_spent(Self) -> Int
 
 pub enum WorkflowEvent {
   PhaseStarted(String)
-  Log(String)
   AgentStarted(label~ : String, kind~ : String, phase~ : String?)
   AgentFinished(label~ : String, disposition~ : AgentDisposition)
   AgentReplayed(label~ : String, disposition~ : AgentDisposition)
