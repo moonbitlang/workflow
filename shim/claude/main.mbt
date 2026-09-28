@@ -32,7 +32,7 @@ async fn run(
 ) -> @shim.ShimResult {
   // The call's own schema (request) wins; `--schema <file>` is the
   // deployment default for scripts that pass none.
-  let schema = match (envelope_schema(request), options.schema) {
+  let schema = match (request_schema(request), options.schema) {
     (Some(schema), _) => Some(schema)
     (None, Some(path)) =>
       Some(@utf8.decode_lossy(@fs.read_file(path).binary())) catch {
@@ -143,7 +143,7 @@ test "argv: read-only by default, writable for worker, extras before the tool li
 
 ///|
 /// The request's schema as the inline JSON text `--json-schema` takes.
-fn envelope_schema(request : @shim.Request) -> String? {
+fn request_schema(request : @shim.Request) -> String? {
   request.schema.map(schema => schema.stringify())
 }
 
@@ -156,12 +156,12 @@ test "the request's schema becomes the inline --json-schema text" {
     prompt="why?",
     schema={ "type": "object" },
   )
-  assert_eq(envelope_schema(request), Some("{\"type\":\"object\"}"))
+  assert_eq(request_schema(request), Some("{\"type\":\"object\"}"))
   let unshaped = @shim.Request(
     request_id="r",
     kind="explore",
     input=Json::null(),
     prompt="why?",
   )
-  assert_eq(envelope_schema(unshaped), None)
+  assert_eq(request_schema(unshaped), None)
 }
