@@ -49,7 +49,7 @@ For one agent call the runner:
    directory.
 
 Cancellation of the CALLER (the workflow's task group being torn down) is
-never folded into a terminal: the runner closes both pipes, terminates the
+never folded into an outcome: the runner closes both pipes, terminates the
 child, removes the directory, and re-raises the cancellation.
 
 A child therefore has three ways to end: it exits, the deadline closes its
@@ -109,34 +109,34 @@ description of the same document.
 
 ## 4. Classification
 
-The run resolves to one `ContractTerminal`:
+The run resolves to one `@workflow.AgentOutcome` — the same value the
+journal records — which `contract_run` returns as `ContractResult.outcome`
+beside the child's exit status:
 
-| Condition | Terminal |
+| Condition | Outcome |
 | --- | --- |
-| The child could not be launched: the argv names no `{result_file}`, or pipes, spawn, or the temporary directory failed | `Failed(reason)` |
-| `completed` (also when it lands in the grace window after the deadline) | `Captured`, report = `output` |
-| The deadline elapsed, and there is no `completed` result (none, a malformed or unreadable one, or another status) | `TimedOut` |
-| `no_report` / `max_steps_exhausted` / `context_yield` | `NoReport` / `MaxSteps` / `ContextYield` |
-| `aborted` / `interrupted` / `failed` | `Failed("aborted: …")` / `Failed("interrupted: …")` / `Failed(reason)` |
-| No result file | `Failed("the child exited N without writing a result")`, or the runner's own failure (a broken pipe, say) |
-| An unreadable or malformed file, a wrong `request_id`, an unknown `status` | `Failed(...)` |
+| The child could not be launched: the argv names no `{result_file}`, or pipes, spawn, or the temporary directory failed | `DidNotFinish(Failed(reason))` |
+| `completed` (also when it lands in the grace window after the deadline) | `Finished(value=output)` |
+| The deadline elapsed, and there is no `completed` result (none, a malformed or unreadable one, or another status) | `DidNotFinish(TimedOut)` |
+| `no_report` / `max_steps_exhausted` / `context_yield` | `DidNotFinish(NoReport)` / `DidNotFinish(MaxSteps)` / `DidNotFinish(ContextYield)` |
+| `aborted` / `interrupted` / `failed` | `DidNotFinish(Failed("aborted: …"))` / `DidNotFinish(Failed("interrupted: …"))` / `DidNotFinish(Failed(reason))` |
+| No result file | `DidNotFinish(Failed("the child exited N without writing a result"))`, or the runner's own failure (a broken pipe, say) |
+| An unreadable or malformed file, a wrong `request_id`, an unknown `status` | `DidNotFinish(Failed(...))` |
 
-A missing file never means success. `Captured` means a result arrived, not
+A missing file never means success. `Finished` means a result arrived, not
 that its content is acceptable — that is the caller's judgment, at the layer
 that knows the report schema (`Workflow::agent` returns it verbatim; even
-JSON `null` is a report). The exit status is kept beside the result
+JSON `null` is a report). The exit status is kept beside the outcome
 (`ContractResult.exit_code`) rather than overriding it: a `completed` result
-with a nonzero exit is still `Captured`, and the status says the exit was
+with a nonzero exit is still `Finished`, and the status says the exit was
 abnormal.
 
-`contract_runner` maps each terminal into the workflow's lossless
-`AgentOutcome`: `Captured` becomes `Finished(value, attempt)`; every other
-terminal becomes `DidNotFinish(failure, attempt)` with the matching
-`AgentFailure`. The attempt — id, steps, tokens, and cost — is attached on
-EVERY terminal, so a timed-out child's reported spend still reaches the
-budget and the journal. `attempt = None` is reserved for calls that never
-launched (a human `Skipped` refusal); a failed spawn spent nothing but WAS
-an attempt.
+The attempt — id (the request's `request_id`), steps, tokens, and cost — is
+attached to EVERY outcome `contract_run` returns, so a timed-out child's
+reported spend still reaches the budget and the journal, and
+`outcome.attempt()` is never `None` there. `attempt = None` is reserved for
+calls that never launched (a human `Skipped` refusal); a failed spawn spent
+nothing but WAS an attempt. `contract_runner` returns the outcome as it is.
 
 ## 5. Accounting
 
@@ -144,7 +144,7 @@ The counters, and the price when `usage.cost_usd` states one, come from the
 result's `usage` and `steps`. Nothing is observed while the child runs, so a
 caller cancelled mid-run sees none. When the runner has no account from the
 child (no file, a malformed file, or a result without `usage`),
-`ContractResult.unaccounted` and `AgentAttempt.unaccounted` say why, and the
+the attempt's `unaccounted` (`AgentAttempt.unaccounted`) says why, and the
 counters are zero. A failure before a child process started (the argv, pipes,
 spawn, the temporary directory) spent nothing and is not unaccounted; any
 failure after it is. `steps` is read even from a result without `usage`. A

@@ -69,9 +69,16 @@ async fn note(path : String?, line : Json) -> Unit {
 /// (`limits.max_steps`), which is where the contract already carries it — a template with
 /// an optional flag in it would need conditional groups to express "omit both
 /// tokens when unset".
-pub fn Context::runner(
+pub fn Context::runner(self : Context) -> @workflow.Runner {
+  self.runner_emitting(note)
+}
+
+///|
+/// `runner`, with the sidecar writer replaced — the seam a test observes the
+/// sidecar through.
+fn Context::runner_emitting(
   self : Context,
-  emit_line? : async (String?, Json) -> Unit = note,
+  emit_line : async (String?, Json) -> Unit,
 ) -> @workflow.Runner {
   let next = Ref(self.first_child)
   @workflow.Runner(call => {
@@ -111,70 +118,39 @@ pub fn Context::runner(
       }
       @async.protect_from_cancel(() => emit_line(self.events_path, finished))
     }
-    let result = @spawn.contract_run(
-      command=self.exe,
-      args=self.child_args.map(token => {
-        substitute(token, kind=call.kind, child~)
-      }),
-      input=call.input,
-      kind=call.kind,
-      id=child,
-      max_steps?=call.max_steps,
-      schema?=call.schema,
-      wall_deadline_ms=self.deadline_ms.unwrap_or(DefaultDeadlineMs),
-      cwd?=self.cwd,
-    )
-    let outcome = outcome_of(child, result)
+    // `attempt_id` is the CHILD ID, not an opaque counter: the request id
+    // `contract_run` echoes into the attempt. That is what lets a reader join
+    // a ledger row to the child's own record — the host knows how it renders
+    // a child id, so it can follow the row to whatever that child wrote.
+    let outcome = @spawn.contract_run(
+        command=self.exe,
+        args=self.child_args.map(token => {
+          substitute(token, kind=call.kind, child~)
+        }),
+        input=call.input,
+        kind=call.kind,
+        id=child,
+        max_steps?=call.max_steps,
+        schema?=call.schema,
+        wall_deadline_ms=self.deadline_ms.unwrap_or(DefaultDeadlineMs),
+        cwd?=self.cwd,
+      ).outcome
     let finished : Map[String, Json] = {
       "event": "agent_finished",
       "child": child,
       "status": status_of(outcome),
-      "steps": result.steps_used,
-      "tokens": result.prompt_tokens + result.completion_tokens,
     }
-    if result.unaccounted is Some(reason) {
+    let attempt = outcome.attempt()
+    finished["steps"] = Json(attempt.map(a => a.steps_used).unwrap_or(0))
+    finished["tokens"] = Json(
+      attempt.map(a => a.prompt_tokens + a.completion_tokens).unwrap_or(0),
+    )
+    if attempt.bind(a => a.unaccounted) is Some(reason) {
       finished["unaccounted"] = Json::string(reason)
     }
     emit_line(self.events_path, Json::object(finished))
     outcome
   })
-}
-
-///|
-/// Map a contract terminal into the lossless outcome envelope, so even a
-/// timed-out child's spend survives into the journal.
-///
-/// `attempt_id` is the CHILD ID, not an opaque counter. That is what lets a
-/// reader join a ledger row to the child's own record: the host knows how it
-/// renders a child id, so it can follow the row to whatever that child wrote.
-/// A runner that minted its own unrelated id would leave the ledger and the
-/// per-child view with nothing in common.
-fn outcome_of(
-  child : String,
-  result : @spawn.ContractResult,
-) -> @workflow.AgentOutcome {
-  let attempt = @workflow.AgentAttempt(
-    attempt_id=child,
-    steps_used=result.steps_used,
-    prompt_tokens=result.prompt_tokens,
-    completion_tokens=result.completion_tokens,
-    cost_usd?=result.cost_usd,
-    unaccounted?=result.unaccounted,
-  )
-  let failure = match result.terminal {
-    Captured =>
-      match result.report {
-        Some(value) => return @workflow.Finished(value~, attempt~)
-        // Refuse to dress an invariant violation up as a clean no-report terminal.
-        None => @workflow.Failed("captured terminal without a report value")
-      }
-    NoReport => @workflow.NoReport
-    MaxSteps => @workflow.MaxSteps
-    ContextYield => @workflow.ContextYield
-    TimedOut => @workflow.TimedOut
-    Failed(reason) => @workflow.Failed(reason)
-  }
-  @workflow.DidNotFinish(failure~, attempt=Some(attempt))
 }
 
 ///|

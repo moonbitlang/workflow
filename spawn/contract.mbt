@@ -20,7 +20,7 @@
 ///
 /// `openseek run` and this module's shims speak it; a shim around any other
 /// engine (a Rust CLI, a shell script) needs only to translate framing.
-/// External cancellation of the CALLER is never folded into a terminal: it
+/// External cancellation of the CALLER is never folded into an outcome: it
 /// re-raises after teardown, per structured concurrency.
 let default_cancel_grace_ms : Int = 5_000
 
@@ -31,37 +31,17 @@ let default_cancel_grace_ms : Int = 5_000
 pub const ResultFilePlaceholder : String = "{result_file}"
 
 ///|
-/// How a contract run ended. `Captured` means a `completed` result arrived
-/// — whether its CONTENT is acceptable is the caller's judgment, at the
-/// layer that knows the report schema.
-pub enum ContractTerminal {
-  Captured
-  NoReport
-  MaxSteps
-  ContextYield
-  TimedOut
-  Failed(String)
-} derive(Eq)
-
-///|
-/// One contract run's outcome: the RAW report (when a `completed` result
-/// arrived) plus the cost the child's result accounted for.
+/// One contract run: how the call resolved, and how the child exited.
 pub struct ContractResult {
-  report : Json?
-  terminal : ContractTerminal
-  steps_used : Int
-  prompt_tokens : Int
-  completion_tokens : Int
-  /// The result's `usage.cost_usd`: the engine's own price, `None` when it
-  /// stated none.
-  cost_usd : Double?
-  /// Why the counters above may fall short of what the child spent: `Some`
-  /// when a launched child left no usable result (it crashed, was killed,
-  /// or its file was malformed), or its result carried no usage. `None`
-  /// means the counters are the child's own account.
-  unaccounted : String?
+  /// `Finished` with the report for a `completed` result, `DidNotFinish`
+  /// otherwise. Whether the report's CONTENT is acceptable is the caller's
+  /// judgment, at the layer that knows its schema. The attempt is always
+  /// present — `attempt_id` is the request id, and the counters are the
+  /// child's own account or zero with `unaccounted` saying why — so
+  /// `outcome.attempt()` is never `None` here.
+  outcome : @workflow.AgentOutcome
   /// The child's exit status, when it exited within the runner's watch.
-  /// Kept beside a result, so an abnormal exit after a valid result stays
+  /// Kept beside the outcome, so an abnormal exit after a valid result stays
   /// visible instead of being masked by it.
   exit_code : Int?
 }
@@ -82,7 +62,7 @@ fn integral(value : Double) -> Int? {
 /// Run one child over the contract: spawn it, feed the request line, drain
 /// its stdout, enforce the wall deadline with its grace window, read its
 /// result file, and tear the child down on every path. Crash isolation is
-/// structural: a dead or unspawnable child is a `Failed` terminal, never a
+/// structural: a dead or unspawnable child is a `Failed` outcome, never a
 /// dead caller. External cancellation re-raises after teardown.
 pub async fn contract_run(
   command~ : String,
@@ -101,13 +81,15 @@ pub async fn contract_run(
   // like its own fault.
   guard args.any(arg => arg.contains(ResultFilePlaceholder)) else {
     return launch_failed(
+      id,
       "the argv must name \{ResultFilePlaceholder}, where the child writes its result",
     )
   }
   // A private directory per launch, so no other process can have left a file
   // at the path, and nothing of this one outlives the call.
   let result_dir = @fs.tmpdir(prefix="workflow-result-") catch {
-    error => return launch_failed("no directory for the result file: \{error}")
+    error =>
+      return launch_failed(id, "no directory for the result file: \{error}")
   }
   defer (@fs.rmdir(result_dir, recursive=true) catch { _ => () })
   let result_path = "\{result_dir}/result.json"
@@ -124,7 +106,7 @@ pub async fn contract_run(
   // ASYNCHRONOUSLY (the spawn's internal reaper task raising at group
   // exit, e.g. EAGAIN under fork pressure), bypassing the per-call
   // catches inside. Cancellation bypasses every catch and unwinds; anything
-  // else becomes a Failed terminal — a loaded machine must degrade the run, never
+  // else becomes a Failed outcome — a loaded machine must degrade the run, never
   // crash the caller.
   try
     @async.with_task_group() <| group => {
@@ -215,7 +197,7 @@ pub async fn contract_run(
       } catch {
         error => {
           // A pipe failure: the deferred teardown stops the child; fold the
-          // error into the terminal. Cancellation never reaches a `catch`;
+          // error into the outcome. Cancellation never reaches a `catch`;
           // it unwinds through the defers above.
           if failure is None {
             failure = Some("child stream failed: \{error}")
@@ -241,16 +223,14 @@ pub async fn contract_run(
 }
 
 ///|
-/// A run that failed before a child was launched: nothing was spent.
-fn launch_failed(reason : String) -> ContractResult {
+/// A run that failed before a child was launched: an attempt that spent
+/// nothing.
+fn launch_failed(id : String, reason : String) -> ContractResult {
   {
-    report: None,
-    terminal: Failed(reason),
-    steps_used: 0,
-    prompt_tokens: 0,
-    completion_tokens: 0,
-    cost_usd: None,
-    unaccounted: None,
+    outcome: DidNotFinish(
+      failure=Failed(reason),
+      attempt=Some(child_attempt(id, None, None, None)),
+    ),
     exit_code: None,
   }
 }
@@ -285,9 +265,8 @@ fn request_line(
 ///|
 /// A child's result, as far as this runner reads it.
 priv struct ChildResult {
-  status : String
-  output : Json?
-  reason : String?
+  /// The report of a `completed` result, or how the child said it ended.
+  ending : Result[Json, @workflow.AgentFailure]
   /// The child's account, when the result carried usage.
   usage : ChildUsage?
   /// Model requests, when the result said.
@@ -324,14 +303,19 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
     Some(String(reason)) => Some(reason)
     _ => None
   }
-  match status {
-    "completed" if fields.get("output") is None =>
-      return Err("a completed result without output")
-    "completed" | "no_report" | "max_steps_exhausted" => ()
-    "context_yield" | "aborted" | "interrupted" | "failed" if reason is None =>
+  let ending : Result[Json, @workflow.AgentFailure] = match
+    (status, fields.get("output"), reason) {
+    ("completed", Some(output), _) => Ok(output)
+    ("completed", None, _) => return Err("a completed result without output")
+    ("no_report", _, _) => Err(NoReport)
+    ("max_steps_exhausted", _, _) => Err(MaxSteps)
+    ("context_yield" | "aborted" | "interrupted" | "failed", _, None) =>
       return Err("a \{status} result without a reason")
-    "context_yield" | "aborted" | "interrupted" | "failed" => ()
-    other => return Err("unknown status \{other}")
+    ("context_yield", _, Some(_)) => Err(ContextYield)
+    ("aborted", _, Some(reason)) => Err(Failed("aborted: \{reason}"))
+    ("interrupted", _, Some(reason)) => Err(Failed("interrupted: \{reason}"))
+    ("failed", _, Some(reason)) => Err(Failed(reason))
+    (other, _, _) => return Err("unknown status \{other}")
   }
   // Usage is whole or absent: a partial or fractional counter voids it, and
   // so does a present `cost_usd` that is not a
@@ -385,7 +369,7 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
       }
     Some(_) => return Err("malformed steps")
   }
-  Ok({ status, output: fields.get("output"), reason, usage, steps, })
+  Ok({ ending, usage, steps, })
 }
 
 ///|
@@ -404,41 +388,31 @@ async fn result_file_outcome(
   exit_code~ : Int?,
 ) -> ContractResult {
   fn outcome(
-    terminal : ContractTerminal,
-    report : Json?,
+    ending : Result[Json, @workflow.AgentFailure],
     usage : ChildUsage?,
     steps : Int?,
     unaccounted : String?,
   ) -> ContractResult {
-    let (prompt, completion, cost_usd) = match usage {
-      Some(usage) =>
-        (usage.prompt_tokens, usage.completion_tokens, usage.cost_usd)
-      None => (0, 0, None)
+    let attempt = child_attempt(id, usage, steps, unaccounted)
+    let outcome : @workflow.AgentOutcome = match ending {
+      Ok(value) => Finished(value~, attempt~)
+      Err(failure) => DidNotFinish(failure~, attempt=Some(attempt))
     }
-    {
-      report,
-      terminal,
-      steps_used: steps.unwrap_or(0),
-      prompt_tokens: prompt,
-      completion_tokens: completion,
-      cost_usd,
-      unaccounted,
-      exit_code,
-    }
+    { outcome, exit_code, }
   }
   // Without a usable result: the deadline, else the runner's own failure,
   // else the reason there is no result.
   fn no_result(reason : String, unaccounted : String) -> ContractResult {
-    let terminal : ContractTerminal = match runner_failure {
+    let failure : @workflow.AgentFailure = match runner_failure {
       _ if timed_out => TimedOut
       Some(failure) => Failed(failure)
       None => Failed(reason)
     }
-    outcome(terminal, None, None, None, Some(unaccounted))
+    outcome(Err(failure), None, None, Some(unaccounted))
   }
   guard launched else {
     let reason = runner_failure.unwrap_or("the child was not launched")
-    return outcome(Failed(reason), None, None, None, None)
+    return outcome(Err(Failed(reason)), None, None, None)
   }
   let exited = match exit_code {
     Some(code) => "exited \{code}"
@@ -475,43 +449,54 @@ async fn result_file_outcome(
     Some(_) => None
     None => Some("the child's result carries no usage")
   }
-  let reason = result.reason.unwrap_or(result.status)
-  let terminal : ContractTerminal = match result.status {
-    "completed" =>
-      return outcome(
-        Captured,
-        result.output,
-        result.usage,
-        result.steps,
-        unaccounted,
-      )
-    _ if timed_out => TimedOut
-    "no_report" => NoReport
-    "max_steps_exhausted" => MaxSteps
-    "context_yield" => ContextYield
-    "aborted" => Failed("aborted: \{reason}")
-    "interrupted" => Failed("interrupted: \{reason}")
-    _ => Failed(reason)
+  // The deadline wins over anything but a `completed` result.
+  let ending = match result.ending {
+    Err(_) if timed_out => Err(@workflow.TimedOut)
+    ending => ending
   }
-  outcome(terminal, None, result.usage, result.steps, unaccounted)
+  outcome(ending, result.usage, result.steps, unaccounted)
+}
+
+///|
+/// The attempt a launch accounts for: the child's own counters when its
+/// result carried usage, zero otherwise (with `unaccounted` saying why, for
+/// a child that ran).
+fn child_attempt(
+  id : String,
+  usage : ChildUsage?,
+  steps : Int?,
+  unaccounted : String?,
+) -> @workflow.AgentAttempt {
+  let (prompt_tokens, completion_tokens, cost_usd) = match usage {
+    Some(usage) =>
+      (usage.prompt_tokens, usage.completion_tokens, usage.cost_usd)
+    None => (0, 0, None)
+  }
+  @workflow.AgentAttempt(
+    attempt_id=id,
+    steps_used=steps.unwrap_or(0),
+    prompt_tokens~,
+    completion_tokens~,
+    cost_usd?,
+    unaccounted?,
+  )
 }
 
 ///|
 /// HOW one call becomes a process: the executable, its argv, and the
-/// per-launch execution envelope. Everything a sandbox wrapper or a
-/// deployment would want to rewrite lives HERE, in one immutable value —
-/// never scattered across positional tuples.
+/// per-launch execution envelope, in one immutable value — never scattered
+/// across positional tuples.
 ///
-/// A `launch` callback BUILDS one through `LaunchSpec(...)` and only this
-/// package reads it, so the envelope can gain a knob without touching a
-/// single engine adapter.
-pub struct LaunchSpec {
+/// ABSTRACT: a `launch` callback BUILDS one through `LaunchSpec(...)` and
+/// only this package reads it, so the envelope can gain a knob without
+/// touching a single engine adapter.
+struct LaunchSpec {
   command : String
   args : Array[String]
   cwd : String?
   extra_env : Map[String, String]?
   deadline_ms : Int?
-} derive(Eq)
+}
 
 ///|
 /// A launch from its parts: the executable and its argv, which every
@@ -532,7 +517,7 @@ pub fn LaunchSpec::LaunchSpec(
 ///|
 /// A `Runner` for ANY engine speaking the child contract: `launch` turns
 /// each call into a `LaunchSpec`, the request carries the call's
-/// kind/limits/input/schema, and every terminal maps into the lossless
+/// kind/limits/input/schema, and each run resolves to the lossless
 /// `AgentOutcome` envelope. For engines whose reports are pure values
 /// this is the whole adapter — an openseek-independent codex shim plugs
 /// in right here. An engine whose reports name STATEFUL resources must
@@ -548,7 +533,7 @@ pub fn contract_runner(
     let spec = launch(call)
     ids.val += 1
     let id = "cr-\{ids.val}"
-    let result = contract_run(
+    contract_run(
       command=spec.command,
       args=spec.args,
       input=call.input,
@@ -559,31 +544,6 @@ pub fn contract_runner(
       wall_deadline_ms=spec.deadline_ms.unwrap_or(deadline_ms),
       cwd?=spec.cwd,
       extra_env?=spec.extra_env,
-    )
-    let attempt = @workflow.AgentAttempt(
-      attempt_id=id,
-      steps_used=result.steps_used,
-      prompt_tokens=result.prompt_tokens,
-      completion_tokens=result.completion_tokens,
-      cost_usd?=result.cost_usd,
-      unaccounted?=result.unaccounted,
-    )
-    match result.terminal {
-      Captured =>
-        match result.report {
-          Some(value) => Finished(value~, attempt~)
-          None =>
-            DidNotFinish(
-              failure=Failed("captured terminal without a report"),
-              attempt=Some(attempt),
-            )
-        }
-      NoReport => DidNotFinish(failure=NoReport, attempt=Some(attempt))
-      MaxSteps => DidNotFinish(failure=MaxSteps, attempt=Some(attempt))
-      ContextYield => DidNotFinish(failure=ContextYield, attempt=Some(attempt))
-      TimedOut => DidNotFinish(failure=TimedOut, attempt=Some(attempt))
-      Failed(reason) =>
-        DidNotFinish(failure=Failed(reason), attempt=Some(attempt))
-    }
+    ).outcome
   })
 }

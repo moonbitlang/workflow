@@ -12,8 +12,7 @@ drained unread. OpenSeek's `openseek run` and this module's
 [shims](../shim/README.mbt.md) speak the contract.
 
 Use `contract_runner` when building a workflow. Use `contract_run` when an
-adapter needs the raw terminal, its own request id, or the child's exit
-status. For a host-supplied launch configuration, see
+adapter needs its own request id or the child's exit status. For a host-supplied launch configuration, see
 [`hosted`](../hosted/README.mbt.md).
 
 ## Add a process runner
@@ -66,7 +65,7 @@ served by the workflow never invokes `launch`.
 
 | `LaunchSpec` field | Behavior |
 | --- | --- |
-| `command`, `args` | Required executable and argument array. Arguments are passed directly, without shell expansion. `args` must name `{result_file}`; a launch that does not is a `Failed` terminal, and nothing is spawned. |
+| `command`, `args` | Required executable and argument array. Arguments are passed directly, without shell expansion. `args` must name `{result_file}`; a launch that does not is a `Failed` outcome, and nothing is spawned. |
 | `cwd` | Child working directory; omitted means inherited. |
 | `extra_env` | Overrides or adds to the inherited environment. |
 | `deadline_ms` | Overrides the runner's deadline for this launch. |
@@ -134,9 +133,9 @@ These teardown periods mean a deadline is not a strict bound on the total
 duration of `contract_run`. The private directory is removed afterwards.
 
 External cancellation follows a different path: teardown completes and the
-cancellation is re-raised. It does not return `TimedOut` or another terminal.
+cancellation is re-raised. It does not return `TimedOut` or another outcome.
 
-## The result and its terminal
+## The result and its outcome
 
 When the child is done, its result file is the whole account: `status`
 (`completed` with `output`, `no_report`, `max_steps_exhausted`, or
@@ -145,34 +144,37 @@ optionally `usage` (the five counters, plus `cost_usd` when the engine
 prices its work) and `steps`. A result must echo the request's
 `request_id`.
 
-| Evidence | `ContractTerminal` |
+`contract_run` returns a `ContractResult`: the call's
+`@workflow.AgentOutcome` and the child's exit status.
+
+| Evidence | `outcome` |
 | --- | --- |
-| The argv names no `{result_file}`, or pipes, spawn, or the private directory failed | `Failed(reason)` |
-| `completed`, even in the deadline's grace window | `Captured`, with the `output` as the report |
-| The deadline elapsed, and there is no `completed` result | `TimedOut` |
-| `no_report` / `max_steps_exhausted` / `context_yield` | `NoReport` / `MaxSteps` / `ContextYield` |
-| `aborted` / `interrupted` / `failed` | `Failed(reason)` |
-| No file, an unreadable or malformed one, another request's, or an unknown status | `Failed(reason)` |
+| The argv names no `{result_file}`, or pipes, spawn, or the private directory failed | `DidNotFinish(Failed(reason))` |
+| `completed`, even in the deadline's grace window | `Finished(value=output)` |
+| The deadline elapsed, and there is no `completed` result | `DidNotFinish(TimedOut)` |
+| `no_report` / `max_steps_exhausted` / `context_yield` | `DidNotFinish(NoReport / MaxSteps / ContextYield)` |
+| `aborted` / `interrupted` / `failed` | `DidNotFinish(Failed(reason))` |
+| No file, an unreadable or malformed one, another request's, or an unknown status | `DidNotFinish(Failed(reason))` |
 
-A missing file never means success. `Captured` means a result arrived, not
-that its content passed validation; even JSON `null` is a report. The
-workflow adapter maps `Captured` to `Finished` and the other terminals to
-`DidNotFinish`, retaining the result's usage in either case. It assigns
-attempt ids `cr-1`, `cr-2`, and so on per runner instance; these are the
-requests' `request_id`s, not globally unique session ids.
+A missing file never means success. `Finished` means a result arrived, not
+that its content passed validation; even JSON `null` is a report.
+`contract_runner` returns the outcome as it is; it assigns request ids
+`cr-1`, `cr-2`, and so on per runner instance, which are also the attempt
+ids — not globally unique session ids.
 
-Nothing is observed while the child runs, so the counters are the result's
-`usage` and `steps`. When there is no account from the child (no file, a
-malformed file, or a result without `usage`), `ContractResult.unaccounted`
-says why; a failure before any child started spent nothing and is not
-unaccounted. `ContractResult.exit_code` keeps the exit status beside the
-result: a `completed` result with a nonzero exit is still `Captured`.
+Every outcome carries its attempt (`outcome.attempt()` is never `None`
+here). Nothing is observed while the child runs, so its counters are the
+result's `usage` and `steps`. When there is no account from the child (no
+file, a malformed file, or a result without `usage`), the attempt's
+`unaccounted` says why; a failure before any child started spent nothing and
+is not unaccounted. `ContractResult.exit_code` keeps the exit status beside
+the outcome: a `completed` result with a nonzero exit is still `Finished`.
 
 ## Using the lower-level API
 
 ```mbt check
 ///|
-async test "inspect a no-report terminal directly" {
+async test "inspect a no-report outcome directly" {
   let result = @spawn.contract_run(
     command="sh",
     args=[
@@ -186,9 +188,11 @@ async test "inspect a no-report terminal directly" {
     id="probe-1",
     wall_deadline_ms=5_000,
   )
-  assert_true(result.terminal is @spawn.NoReport)
-  assert_eq(result.report, None)
-  assert_eq(result.unaccounted, Some("the child's result carries no usage"))
+  guard result.outcome is DidNotFinish(failure=NoReport, attempt=Some(attempt)) else {
+    fail("expected an accounted NoReport")
+  }
+  assert_eq(attempt.attempt_id, "probe-1")
+  assert_eq(attempt.unaccounted, Some("the child's result carries no usage"))
   assert_eq(result.exit_code, Some(0))
 }
 ```

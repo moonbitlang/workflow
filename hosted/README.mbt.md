@@ -65,7 +65,6 @@ test "read a host's launch coordinates" {
   }
   assert_eq(ctx.child_capacity(), 32)
   assert_eq(ctx.journal_path(), Some("/store/run7.jsonl"))
-  assert_eq(ctx.events_path(), Some("/store/run7.events.jsonl"))
 }
 
 ///|
@@ -198,10 +197,9 @@ This package does not provision worker worktrees or integrate their changes.
 
 Use `ctx.runner()` to assemble your own `Workflow` when you need options
 such as `replay_scope`, `on_event`, or a replay policy implemented by a
-wrapping runner. You must then attach the journal yourself. Its optional
-`emit_line` callback replaces the sidecar writer; it receives the optional
-path and JSON event. Keep it best effort if reporting failures should not
-interrupt the workflow.
+wrapping runner. You must then attach the journal yourself, from
+`ctx.journal_path()` (`None` means the host named none). The runner still
+writes the sidecar the host named.
 
 ## Development
 

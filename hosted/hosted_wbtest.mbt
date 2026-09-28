@@ -167,7 +167,7 @@ async test "hosted failures retain child identity, usage and sidecar status" {
     })
     let events : Array[Json] = []
     let outcome = ctx
-      .runner(emit_line=(_, event) => events.push(event))
+      .runner_emitting((_, event) => events.push(event))
       .invoke(@workflow.AgentCall(kind="explore", input="q", label="fixture"))
     guard outcome is @workflow.DidNotFinish(failure~, attempt=Some(attempt)) else {
       fail("expected accounted failure")
@@ -196,7 +196,7 @@ async test "a child that leaves no result is failed, and its spend unaccounted" 
   let ctx = parse(handoff(dir, child="read line; exit 3"))
   let events : Array[Json] = []
   let outcome = ctx
-    .runner(emit_line=(_, event) => events.push(event))
+    .runner_emitting((_, event) => events.push(event))
     .invoke(@workflow.AgentCall(kind="explore", input="q", label="fixture"))
   guard outcome is @workflow.DidNotFinish(failure=Failed(reason), ..) else {
     fail("expected Failed")
@@ -259,10 +259,10 @@ test "a complete handoff reads; optional coordinates may be blank" {
     "deadline_ms": 1000,
   })
   assert_eq(ctx.child_capacity(), 32)
-  assert_eq(ctx.journal_path(), Some("/store/run7-wf-5.jsonl"))
+  assert_eq(ctx.journal_path, Some("/store/run7-wf-5.jsonl"))
   // The sidecar is optional: a host that wants only a ledger names no events
   // file (or a blank one), and the run still accounts for itself.
-  assert_eq(ctx.events_path(), None)
+  assert_eq(ctx.events_path, None)
   assert_eq(ctx.cwd, None)
   assert_eq(ctx.deadline_ms, Some(1000))
 }

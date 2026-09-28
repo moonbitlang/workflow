@@ -916,11 +916,7 @@ async fn write_report(
   let mut completion = 0
   {
     for entry in journal.recorded() {
-      let attempt = match entry.outcome {
-        Finished(attempt~, ..) => Some(attempt)
-        DidNotFinish(attempt~, ..) => attempt
-      }
-      if attempt is Some(attempt) {
+      if entry.outcome.attempt() is Some(attempt) {
         steps += attempt.steps_used
         prompt += attempt.prompt_tokens
         completion += attempt.completion_tokens

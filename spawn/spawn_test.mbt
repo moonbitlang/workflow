@@ -9,6 +9,24 @@ async fn can_spawn_sh() -> Bool {
 }
 
 ///|
+/// The attempt a contract run accounts for: `contract_run` always sets one.
+fn attempt_of(result : @spawn.ContractResult) -> @workflow.AgentAttempt raise {
+  guard result.outcome.attempt() is Some(attempt) else {
+    fail("contract_run returned an outcome without an attempt")
+  }
+  attempt
+}
+
+///|
+/// The report of a `Finished` outcome.
+fn report_of(result : @spawn.ContractResult) -> Json? {
+  match result.outcome {
+    Finished(value~, ..) => Some(value)
+    DidNotFinish(..) => None
+  }
+}
+
+///|
 async test "a spawn failure folds into Failed, never a crash" {
   let result = @spawn.contract_run(
     command="/nonexistent/engine-not-here",
@@ -18,7 +36,7 @@ async test "a spawn failure folds into Failed, never a crash" {
     id="test-2",
     wall_deadline_ms=2_000,
   )
-  guard result.terminal is Failed(_) else {
+  guard result.outcome is DidNotFinish(failure=Failed(_), ..) else {
     fail("expected the missing binary to degrade, not crash")
   }
 }
@@ -115,12 +133,12 @@ async test "a result file is the result, and stdout is not read" {
     #|printf '{"event":"usage","usage":{"prompt_tokens":999,"completion_tokens":1,"total_tokens":1000,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":999}}\n'
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":{"answer":42},"usage":{"prompt_tokens":90,"completion_tokens":10,"total_tokens":100,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":90},"steps":2}' > "$1"
   let result = run_script(script)
-  guard result.terminal is Captured else { fail("expected Captured") }
-  assert_eq(result.report, Some(({ "answer": 42 } : Json)))
-  assert_eq(result.steps_used, 2)
-  assert_eq(result.prompt_tokens, 90)
-  assert_eq(result.completion_tokens, 10)
-  assert_eq(result.unaccounted, None)
+  guard result.outcome is Finished(..) else { fail("expected Captured") }
+  assert_eq(report_of(result), Some(({ "answer": 42 } : Json)))
+  assert_eq(attempt_of(result).steps_used, 2)
+  assert_eq(attempt_of(result).prompt_tokens, 90)
+  assert_eq(attempt_of(result).completion_tokens, 10)
+  assert_eq(attempt_of(result).unaccounted, None)
   assert_eq(result.exit_code, Some(0))
 }
 
@@ -135,7 +153,7 @@ async test "the request names its id, kind, input, and limits" {
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":%s}' "$line" > "$1"
   let result = run_script(script, max_steps=7)
   assert_eq(
-    result.report,
+    report_of(result),
     Some(
       (
         {
@@ -156,11 +174,15 @@ async test "no result file is a failure whose spend is unaccounted" {
     return
   }
   let clean = run_script("read line")
-  guard clean.terminal is Failed(reason) else { fail("expected Failed") }
+  guard clean.outcome is DidNotFinish(failure=Failed(reason), ..) else {
+    fail("expected Failed")
+  }
   assert_eq(reason, "the child exited 0 without writing a result")
-  assert_eq(clean.unaccounted, Some("the child left no result"))
+  assert_eq(attempt_of(clean).unaccounted, Some("the child left no result"))
   let crashed = run_script("read line; exit 3")
-  guard crashed.terminal is Failed(reason) else { fail("expected Failed") }
+  guard crashed.outcome is DidNotFinish(failure=Failed(reason), ..) else {
+    fail("expected Failed")
+  }
   assert_true(reason.contains("exited 3"))
   assert_eq(crashed.exit_code, Some(3))
 }
@@ -174,7 +196,7 @@ async test "a result for another request, or a malformed one, is refused" {
   let other =
     #|read line
     #|printf '{"version":1,"request_id":"test-9","status":"completed","output":1}' > "$1"
-  guard run_script(other).terminal is Failed(reason) else {
+  guard run_script(other).outcome is DidNotFinish(failure=Failed(reason), ..) else {
     fail("expected Failed")
   }
   assert_eq(reason, "malformed result file: answers request test-9, not test-1")
@@ -182,9 +204,14 @@ async test "a result for another request, or a malformed one, is refused" {
     #|read line
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":1,"usage":{"prompt_tokens":1.5,"completion_tokens":0,"total_tokens":0,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":0}}' > "$1"
   let result = run_script(fractional)
-  guard result.terminal is Failed(reason) else { fail("expected Failed") }
+  guard result.outcome is DidNotFinish(failure=Failed(reason), ..) else {
+    fail("expected Failed")
+  }
   assert_eq(reason, "malformed result file: malformed usage")
-  assert_eq(result.unaccounted, Some("the result file is malformed"))
+  assert_eq(
+    attempt_of(result).unaccounted,
+    Some("the result file is malformed"),
+  )
 }
 
 ///|
@@ -197,20 +224,32 @@ async test "each non-completed status maps to its terminal" {
     "read line\nprintf '{\"version\":1,\"request_id\":\"test-1\",\"status\":\"\{status}\",\"reason\":\"why\"}' > \"$1\""
   }
   let max_steps = run_script(script("max_steps_exhausted"))
-  assert_true(max_steps.terminal is MaxSteps)
+  assert_true(max_steps.outcome is DidNotFinish(failure=MaxSteps, ..))
   // A result without usage leaves the counters unaccounted.
-  assert_eq(max_steps.unaccounted, Some("the child's result carries no usage"))
-  assert_true(run_script(script("no_report")).terminal is NoReport)
-  assert_true(run_script(script("context_yield")).terminal is ContextYield)
-  guard run_script(script("interrupted")).terminal is Failed(reason) else {
+  assert_eq(
+    attempt_of(max_steps).unaccounted,
+    Some("the child's result carries no usage"),
+  )
+  assert_true(
+    run_script(script("no_report")).outcome
+    is DidNotFinish(failure=NoReport, ..),
+  )
+  assert_true(
+    run_script(script("context_yield")).outcome
+    is DidNotFinish(failure=ContextYield, ..),
+  )
+  guard run_script(script("interrupted")).outcome
+    is DidNotFinish(failure=Failed(reason), ..) else {
     fail("expected Failed")
   }
   assert_eq(reason, "interrupted: why")
-  guard run_script(script("failed")).terminal is Failed(reason) else {
+  guard run_script(script("failed")).outcome
+    is DidNotFinish(failure=Failed(reason), ..) else {
     fail("expected Failed")
   }
   assert_eq(reason, "why")
-  guard run_script(script("finished")).terminal is Failed(reason) else {
+  guard run_script(script("finished")).outcome
+    is DidNotFinish(failure=Failed(reason), ..) else {
     fail("expected Failed")
   }
   assert_eq(reason, "malformed result file: unknown status finished")
@@ -228,10 +267,12 @@ async test "at the deadline stdin closes, and the child's own account still coun
     #|while read more; do :; done
     #|printf '{"version":1,"request_id":"test-1","status":"interrupted","reason":"cancelled","usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":5},"steps":1}' > "$1"
   let result = run_script(script, wall_deadline_ms=300)
-  guard result.terminal is TimedOut else { fail("expected TimedOut") }
-  assert_eq(result.prompt_tokens, 5)
-  assert_eq(result.steps_used, 1)
-  assert_eq(result.unaccounted, None)
+  guard result.outcome is DidNotFinish(failure=TimedOut, ..) else {
+    fail("expected TimedOut")
+  }
+  assert_eq(attempt_of(result).prompt_tokens, 5)
+  assert_eq(attempt_of(result).steps_used, 1)
+  assert_eq(attempt_of(result).unaccounted, None)
 }
 
 ///|
@@ -245,7 +286,7 @@ async test "a completed result stands beside an abnormal exit" {
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":"done"}' > "$1"
     #|exit 4
   let result = run_script(script)
-  assert_true(result.terminal is Captured)
+  assert_true(result.outcome is Finished(..))
   assert_eq(result.exit_code, Some(4))
 }
 
@@ -259,12 +300,14 @@ async test "an argv that names no result file is a launch failure" {
     id="test-1",
     wall_deadline_ms=10_000,
   )
-  guard missing.terminal is Failed(reason) else { fail("expected Failed") }
+  guard missing.outcome is DidNotFinish(failure=Failed(reason), ..) else {
+    fail("expected Failed")
+  }
   assert_eq(
     reason, "the argv must name {result_file}, where the child writes its result",
   )
   // Nothing was launched, so nothing is unaccounted.
-  assert_eq(missing.unaccounted, None)
+  assert_eq(attempt_of(missing).unaccounted, None)
   assert_eq(missing.exit_code, None)
 }
 
@@ -279,8 +322,8 @@ async test "result-file stdout is opaque bytes, not lines" {
     #|printf '\377\376 not utf-8\n'
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":"ok"}' > "$1"
   let result = run_script(script)
-  guard result.terminal is Captured else { fail("expected Captured") }
-  assert_eq(result.report, Some(Json::string("ok")))
+  guard result.outcome is Finished(..) else { fail("expected Captured") }
+  assert_eq(report_of(result), Some(Json::string("ok")))
 }
 
 ///|
@@ -293,9 +336,12 @@ async test "steps survive a result without usage" {
     #|read line
     #|printf '{"version":1,"request_id":"test-1","status":"max_steps_exhausted","steps":7}' > "$1"
   let result = run_script(script)
-  assert_true(result.terminal is MaxSteps)
-  assert_eq(result.steps_used, 7)
-  assert_eq(result.unaccounted, Some("the child's result carries no usage"))
+  assert_true(result.outcome is DidNotFinish(failure=MaxSteps, ..))
+  assert_eq(attempt_of(result).steps_used, 7)
+  assert_eq(
+    attempt_of(result).unaccounted,
+    Some("the child's result carries no usage"),
+  )
 }
 
 ///|
@@ -309,8 +355,11 @@ async test "the deadline wins over a malformed result" {
     #|while read more; do :; done
     #|printf 'not json' > "$1"
   let result = run_script(script, wall_deadline_ms=300)
-  assert_true(result.terminal is TimedOut)
-  assert_eq(result.unaccounted, Some("the result file is malformed"))
+  assert_true(result.outcome is DidNotFinish(failure=TimedOut, ..))
+  assert_eq(
+    attempt_of(result).unaccounted,
+    Some("the result file is malformed"),
+  )
 }
 
 ///|
@@ -325,7 +374,7 @@ async test "an exit status in the grace window is kept" {
     #|printf '{"version":1,"request_id":"test-1","status":"completed","output":1}' > "$1"
     #|exit 4
   let result = run_script(script, wall_deadline_ms=300)
-  assert_true(result.terminal is Captured)
+  assert_true(result.outcome is Finished(..))
   assert_eq(result.exit_code, Some(4))
 }
 
@@ -352,7 +401,7 @@ async test "the grace window bounds the wind-down, exit wait included" {
     wall_deadline_ms=100,
     cancel_grace_ms=100,
   )
-  assert_true(result.terminal is TimedOut)
+  assert_true(result.outcome is DidNotFinish(failure=TimedOut, ..))
 }
 
 ///|
@@ -365,12 +414,12 @@ async test "a result's usage.cost_usd is the attempt's price; absent means unkno
     "read line\nprintf '{\"version\":1,\"request_id\":\"test-1\",\"status\":\"completed\",\"output\":1,\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":1,\"total_tokens\":10,\"prompt_cache_hit_tokens\":0,\"prompt_cache_miss_tokens\":9\{cost}}}' > \"$1\""
   }
   let priced = run_script(script(",\"cost_usd\":0.25"))
-  assert_true(priced.terminal is Captured)
-  assert_eq(priced.prompt_tokens, 9)
-  assert_eq(priced.cost_usd, Some(0.25))
+  assert_true(priced.outcome is Finished(..))
+  assert_eq(attempt_of(priced).prompt_tokens, 9)
+  assert_eq(attempt_of(priced).cost_usd, Some(0.25))
   let unpriced = run_script(script(""))
-  assert_eq(unpriced.prompt_tokens, 9)
-  assert_eq(unpriced.cost_usd, None)
+  assert_eq(attempt_of(unpriced).prompt_tokens, 9)
+  assert_eq(attempt_of(unpriced).cost_usd, None)
   // A present price that is not a finite, non-negative number voids the
   // usage whole, as a bad token counter does.
   for
@@ -378,10 +427,15 @@ async test "a result's usage.cost_usd is the attempt's price; absent means unkno
       ",\"cost_usd\":\"0.25\"", ",\"cost_usd\":-1", ",\"cost_usd\":1e999",
     ] {
     let result = run_script(script(cost))
-    guard result.terminal is Failed(reason) else { fail("expected Failed") }
+    guard result.outcome is DidNotFinish(failure=Failed(reason), ..) else {
+      fail("expected Failed")
+    }
     assert_eq(reason, "malformed result file: malformed usage")
-    assert_eq(result.prompt_tokens, 0)
-    assert_eq(result.cost_usd, None)
-    assert_eq(result.unaccounted, Some("the result file is malformed"))
+    assert_eq(attempt_of(result).prompt_tokens, 0)
+    assert_eq(attempt_of(result).cost_usd, None)
+    assert_eq(
+      attempt_of(result).unaccounted,
+      Some("the result file is malformed"),
+    )
   }
 }

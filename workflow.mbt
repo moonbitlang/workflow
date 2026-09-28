@@ -267,11 +267,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
 /// timed-out or truncated child spent real tokens, and a budget that
 /// missed them would systematically understate cost.
 fn Workflow::account(self : Workflow, outcome : AgentOutcome) -> Unit {
-  let attempt = match outcome {
-    Finished(attempt~, ..) => Some(attempt)
-    DidNotFinish(attempt~, ..) => attempt
-  }
-  if attempt is Some(attempt) {
+  if outcome.attempt() is Some(attempt) {
     self.prompt_tokens += attempt.prompt_tokens
     self.completion_tokens += attempt.completion_tokens
     if attempt.cost_usd is Some(cost) {
