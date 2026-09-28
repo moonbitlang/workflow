@@ -13,14 +13,6 @@ pub enum AgentDisposition {
 } derive(Eq)
 
 ///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend AgentDisposition with Eq::{equal, not_equal}
-
-///|
 /// Progress the workflow narrates as it runs: phases group agents in a
 /// display, logs are one-line narrator messages, and the started/finished
 /// pair brackets each agent's lifetime — on every path, including

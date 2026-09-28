@@ -13,14 +13,6 @@ pub(all) enum Verdict {
 } derive(Eq)
 
 ///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend Verdict with Eq::{equal, not_equal}
-
-///|
 /// How a CLI run ended, from the shim's side. `Cancelled` is the parent's
 /// stdin EOF: the run is `interrupted`, and the parent is already winding
 /// down. `Stopped` is the observer's own decision (a step ceiling).
@@ -32,14 +24,6 @@ pub(all) enum CliExit {
   Cancelled
   Failed(String)
 } derive(Eq)
-
-///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend CliExit with Eq::{equal, not_equal}
 
 ///|
 /// Run the CLI: spawn it with its stdin already at EOF (the prompt rides
