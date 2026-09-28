@@ -8,9 +8,10 @@ example of [`workflow`](../../README.mbt.md) with
 
 ## Run the keyless probe
 
-From the repository root, give it an executable that accepts
-`subrun <kind>` and speaks the [child contract](../../docs/child-contract.md).
-For example, with OpenSeek installed:
+From the repository root, give it an executable that accepts OpenSeek's
+`run --input-format json --cancel-on-stdin-eof --kind <kind> --result-file
+<path>` and speaks the [child contract](../../docs/child-contract.md)'s
+transport 2. For example, with OpenSeek installed:
 
 ```sh
 moon run examples/scout -- /absolute/path/to/openseek --journal scout.jsonl
@@ -30,8 +31,8 @@ moonx moonbitlang/workflow/examples/scout /absolute/path/to/openseek --journal s
 
 The engine is external: this example does not install or build it. Although
 the transport is engine-independent, the example's argv builder assumes
-the OpenSeek-style `subrun` command and flags. It cannot point directly at
-the Claude or Codex shim; use their documented `LaunchSpec` instead.
+OpenSeek's `run` command and flags. It cannot point directly at the Claude
+or Codex shim; use their documented `LaunchSpec` instead.
 
 ## Run a model-backed scout
 
@@ -40,8 +41,8 @@ moon run examples/scout -- /absolute/path/to/openseek --kind explore --journal e
 ```
 
 Any non-`echo` kind takes the single-scout path. Its prompt asks where
-`openseek subrun` dispatches kinds, with a hint to `cmd/openseek/subrun.mbt`
-and a step request of 24. Run it with the intended source tree as the
+`openseek run --kind` dispatches its presets, with a hint to
+`internal/openseek/run` and a step request of 24. Run it with the intended source tree as the
 engine's working directory; the published command can be invoked from that
 tree. The engine inherits the working directory and provider credentials
 from the environment. Model-backed calls may incur usage charges.
@@ -53,8 +54,8 @@ from the environment. Model-backed calls may incur usage charges.
 | `--kind KIND` | `echo`; only this kind fans out the three keyless probes. |
 | `--model NAME` | Optional `--model` flag passed to the engine. |
 
-The launcher forwards `kind`, any `max_steps`, and the chosen model as argv
-in addition to the contract request envelope. It uses the runner's default
+The request carries `kind` and any `max_steps`; the launcher also names the
+kind on argv (OpenSeek checks the two agree) and forwards the chosen model. It uses the runner's default
 10-minute deadline, workflow concurrency 4, and a maximum of 16 live calls.
 Those settings are in source, not command-line options.
 

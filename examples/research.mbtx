@@ -23,13 +23,16 @@ async fn main {
 async fn research() -> Unit {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(
-      launch=_ => {
-        command: "openseek",
-        args: ["subrun", "explore"],
-        // Children inherit this script's cwd: run me from the repo root.
-        cwd: None,
-        extra_env: None,
-        deadline_ms: None,
+      // Children inherit this script's cwd: run me from the repo root.
+      launch=call => {
+        @spawn.LaunchSpec(
+          command="openseek",
+          args=[
+            "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
+            "--result-file", @spawn.ResultFilePlaceholder,
+          ],
+          transport=ResultFile,
+        )
       },
       deadline_ms=600_000,
     ),

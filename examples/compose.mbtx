@@ -8,7 +8,9 @@ import {
 ///|
 /// Composing ENGINES: one workflow, three agents. The runner routes by
 /// KIND — `claude` launches the Claude Code shim, `codex` the Codex shim,
-/// anything else is an `openseek subrun <kind>` — so the script mixes them
+/// anything else is an `openseek run --kind <kind>` preset — every one a
+/// child writing one result file (`transport=ResultFile`) — so the script
+/// mixes them
 /// freely: a keyless openseek `echo` probe, Claude and Codex answering the
 /// same question in parallel, and Claude judging both answers (its prompt
 /// EMBEDS them, so the journal's dataflow graph shows the two edges).
@@ -35,29 +37,34 @@ async fn compose() -> Unit {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => match call.kind {
       "claude" =>
-        {
-          command: "moonx",
-          args: ["\{shim}/claude", "--model", claude_model],
-          cwd: None,
-          extra_env: None,
-          deadline_ms: Some(180_000),
-        }
+        @spawn.LaunchSpec(
+          command="moonx",
+          args=[
+            "\{shim}/claude", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+            claude_model,
+          ],
+          deadline_ms=180_000,
+          transport=ResultFile,
+        )
       "codex" =>
-        {
-          command: "moonx",
-          args: ["\{shim}/codex", "--model", codex_model],
-          cwd: None,
-          extra_env: None,
-          deadline_ms: Some(180_000),
-        }
+        @spawn.LaunchSpec(
+          command="moonx",
+          args=[
+            "\{shim}/codex", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+            codex_model,
+          ],
+          deadline_ms=180_000,
+          transport=ResultFile,
+        )
       kind =>
-        {
-          command: "openseek",
-          args: ["subrun", kind],
-          cwd: None,
-          extra_env: None,
-          deadline_ms: None,
-        }
+        @spawn.LaunchSpec(
+          command="openseek",
+          args=[
+            "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", kind,
+            "--result-file", @spawn.ResultFilePlaceholder,
+          ],
+          transport=ResultFile,
+        )
     }),
     journal=@workflow.Journal::load("compose.jsonl"),
     max_concurrent=2,

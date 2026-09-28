@@ -48,7 +48,7 @@ import {
 ///
 /// Engines (`--engine`, default `explore`): `claude` and `codex` run
 /// through this module's published shims (via `moonx`), anything else is an
-/// `openseek subrun <kind>` scout. `--model` overrides the chosen
+/// `openseek run --kind <kind>` scout; every child writes one result file. `--model` overrides the chosen
 /// engine's default; without it, DOC_AUDIT_CLAUDE (claude-sonnet-5),
 /// DOC_AUDIT_CODEX (gpt-5.3-codex-spark), DOC_AUDIT_DEEPSEEK
 /// (deepseek-v4-flash). `--max-calls` caps live launches for the run.
@@ -332,37 +332,40 @@ async fn audit() -> Unit {
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
         "claude" =>
-          {
-            command: "moonx",
-            args: ["\{shim}/claude", "--model", claude_model, "--cwd", repo],
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=[
+              "\{shim}/claude", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+              claude_model, "--cwd", repo,
+            ],
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
         "codex" =>
-          {
-            command: "moonx",
-            args: ["\{shim}/codex", "--model", codex_model, "--cwd", repo],
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
-        kind => {
-          // openseek reads kind and the step ceiling from ARGV
-          // (docs/child-contract.md §7.1): mirror them.
-          let argv = ["subrun", kind, "--model", deepseek_model]
-          if call.max_steps is Some(steps) {
-            argv.push("--max-steps")
-            argv.push("\{steps}")
-          }
-          {
-            command: "openseek",
-            args: argv,
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
-        }
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=[
+              "\{shim}/codex", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+              codex_model, "--cwd", repo,
+            ],
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
+        kind =>
+          // The request carries the kind and the step ceiling: argv names
+          // the kind only because `run` checks the two agree.
+          @spawn.LaunchSpec(
+            command="openseek",
+            args=[
+              "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", kind,
+              "--result-file", @spawn.ResultFilePlaceholder, "--model", deepseek_model,
+            ],
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
       }
     }),
     journal~,
@@ -389,7 +392,7 @@ async fn audit() -> Unit {
       kind=engine,
       label~,
       max_steps=steps_for(engine),
-      schema=audit_schema,
+      schema?=schema_for(engine, audit_schema),
     ))
     // One retry, at double the ceiling. A slice that ran out of steps and
     // a slice that answered in prose carrying no object are the same
@@ -404,7 +407,7 @@ async fn audit() -> Unit {
         kind=engine,
         label="\{label} (retry)",
         max_steps=steps_for(engine) * 2,
-        schema=audit_schema,
+        schema?=schema_for(engine, audit_schema),
       ))
       if second is Ok(report) && structured(report) is Some(_) {
         second
@@ -641,6 +644,17 @@ fn part_of(slice : Slice) -> String {
 // ---- Reading the answers ---------------------------------------------
 
 ///|
+/// The schema a call to `engine` carries: the shims enforce one, and
+/// openseek refuses any (it cannot hold its scout's report to a caller's
+/// shape), so its calls carry none.
+fn schema_for(engine : String, schema : Json) -> Json? {
+  match engine {
+    "claude" | "codex" => Some(schema)
+    _ => None
+  }
+}
+
+///|
 /// The shims enforce the schema; openseek's scout answers in prose, so it
 /// is told to answer with the JSON object alone. Its own line in the
 /// prompt, so an empty hint costs nothing but a blank one.
@@ -663,8 +677,8 @@ fn format_hint(engine : String) -> String {
 
 ///|
 /// The structured answer of a report. The shims constrain their CLI to
-/// the schema and hand back a JSON value; openseek IGNORES the schema
-/// (docs/child-contract.md §7.1) and answers with a string, so a prose
+/// the schema and hand back a JSON value; openseek takes no schema
+/// (`schema_for`) and answers with a string, so a prose
 /// engine's answer is mined for the object it was asked for — whole
 /// first, then from the outermost braces narration wrapped it in.
 fn structured(report : Json) -> Json? {

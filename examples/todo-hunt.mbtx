@@ -24,12 +24,15 @@ async fn main {
 ///|
 async fn hunt() -> Unit {
   let wf = @workflow.Workflow(
-    runner=@spawn.contract_runner(launch=_ => {
-      command: "openseek",
-      args: ["subrun", "explore"],
-      cwd: None,
-      extra_env: None,
-      deadline_ms: None,
+    runner=@spawn.contract_runner(launch=call => {
+      @spawn.LaunchSpec(
+        command="openseek",
+        args=[
+          "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
+          "--result-file", @spawn.ResultFilePlaceholder,
+        ],
+        transport=ResultFile,
+      )
     }),
     journal=@workflow.Journal::load("todo-hunt.jsonl"),
   )

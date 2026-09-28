@@ -306,47 +306,48 @@ async fn shrink() -> Unit {
     runner=@spawn.contract_runner(launch=call => {
       match call.kind {
         "claude" =>
-          {
-            command: "moonx",
-            args: [
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=[
               "\{shim}/claude",
+              "--result-file",
+              @spawn.ResultFilePlaceholder,
               "--model",
               model.unwrap_or("claude-sonnet-5"),
               "--cwd",
               repo,
             ],
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
         "codex" =>
-          {
-            command: "moonx",
-            args: [
+          @spawn.LaunchSpec(
+            command="moonx",
+            args=[
               "\{shim}/codex",
+              "--result-file",
+              @spawn.ResultFilePlaceholder,
               "--model",
               model.unwrap_or("gpt-5.3-codex-spark"),
               "--cwd",
               repo,
             ],
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
-        kind => {
-          let argv = ["subrun", kind]
-          if call.max_steps is Some(steps) {
-            argv.push("--max-steps")
-            argv.push("\{steps}")
-          }
-          {
-            command: "openseek",
-            args: argv,
-            cwd: Some(repo),
-            extra_env: None,
-            deadline_ms: Some(600_000),
-          }
-        }
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
+        kind =>
+          @spawn.LaunchSpec(
+            command="openseek",
+            args=[
+              "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", kind,
+              "--result-file", @spawn.ResultFilePlaceholder,
+            ],
+            cwd=repo,
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
       }
     }),
     journal=@workflow.Journal::load(value(args, "journal", "shrink-api.jsonl")),
@@ -493,7 +494,7 @@ async fn judge(
         kind=engine,
         label="judge:\{name}",
         max_steps=40,
-        schema=judgement_schema,
+        schema?=schema_for(engine, judgement_schema),
       )
     })
   })
@@ -676,12 +677,23 @@ async fn read_text(path : String) -> String {
 }
 
 ///|
+/// The schema a call to `engine` carries: the shims enforce one, and
+/// openseek refuses any (it cannot hold its scout's report to a caller's
+/// shape), so its calls carry none.
+fn schema_for(engine : String, schema : Json) -> Json? {
+  match engine {
+    "claude" | "codex" => Some(schema)
+    _ => None
+  }
+}
+
+///|
 /// The verdicts a scout returned, as rows.
 fn verdicts_of(pkg : String, report : Json) -> Array[Judgement] {
   let rows : Array[Judgement] = []
-  // The report is the CHILD CONTRACT's envelope — `{"answer": …}` — not
-  // the answer itself, and an engine that was told a schema may still
-  // hand the object back as fenced text. Unwrap before reading.
+  // The report is the engine's wrapper — `{"answer": …}` — not the answer
+  // itself, and an engine that was told a schema may still hand the object
+  // back as fenced text. Unwrap before reading.
   guard structured(report) is Some({ "verdicts": Array(items), .. }) else {
     return rows
   }
@@ -1062,9 +1074,9 @@ fn unexport(line : String, narrow~ : Bool) -> String? {
 }
 
 ///|
-/// The ANSWER inside a child-contract report, as an object: the engine
-/// was told a schema, but a report still arrives wrapped, and a model
-/// told to answer in JSON may still fence it or talk around it.
+/// The ANSWER inside a child-contract report, as an object: a shim was
+/// told a schema, but a report still arrives wrapped, and a model told to
+/// answer in JSON may still fence it or talk around it.
 fn structured(report : Json) -> Json? {
   match report {
     { "answer": String(text), .. } => {
