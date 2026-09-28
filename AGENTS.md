@@ -8,7 +8,7 @@ This is a [MoonBit](https://docs.moonbitlang.com) module: `moonbitlang/workflow`
 - The wire contract every engine must speak is `docs/child-contract.md`.
   Changing anything the `spawn` package reads or writes on the wire is a
   contract change: update that document in the same change, and bump the
-  `workflow_contract` major when the change is not additive.
+  request/result document `version` when the change is not additive.
 - Gates: `just check` and `just test` (both `native` and `wasm` targets).
   Finish with `just tidy` (`moon info && moon fmt`) and review the
   `pkg.generated.mbti` diff — an unchanged interface means an internal

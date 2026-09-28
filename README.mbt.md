@@ -104,8 +104,9 @@ Everything else follows from three decisions:
 - **Cancellation propagates.** Engine bugs `raise` through; cancellation
   is a signal that bypasses `catch` and unwinds through `defer`/`errdefer`.
   Either way the task group is cancelled and no journalled outcome is
-  produced. Usage from an interrupted call is not added to the core counters;
-  adapters that need it during teardown can use `spawn.ContractProgress`.
+  produced. Usage from an interrupted call is not added to the core counters:
+  a child reports its spend in its result, which a cancelled call never
+  reads, so the hosted sidecar marks such a launch `unaccounted`.
 
 ## A workflow, end to end
 
@@ -271,7 +272,7 @@ async test "fan a worker kind out through its own input shape" {
 When the script wants a TYPE rather than JSON, decode at the boundary:
 `agent_as` runs the same call and turns a report that does not satisfy
 the type into a typed `AgentFailed(Failed("report rejected: …"))` carrying
-the decoder's path. A `schema` rides the request envelope so an engine
+the decoder's path. A `schema` rides the request so an engine
 that can constrain its model to the shape does (the Claude and Codex
 shims do); decoding still runs, because the engine is not trusted to
 validate, and the schema is part of the call's replay identity:
@@ -437,10 +438,9 @@ cancellation and unexpected infrastructure errors.
 
 The checked examples above use in-process runners. To run a process, use
 [`spawn.contract_runner`](spawn/README.mbt.md): its `launch` callback returns
-an executable, argv, and a transport, and the package handles the child
-contract, accounting, deadlines, and teardown. Launch a child with
-`transport=ResultFile` and `{result_file}` in its argv: it then writes one
-result file, as OpenSeek's `openseek run` and this module's shims do. A `Runner::invoke` call is useful for
+an executable and argv naming `{result_file}`, and the package handles the
+child contract, accounting, deadlines, and teardown: the child writes one
+result file there, as OpenSeek's `openseek run` and this module's shims do. A `Runner::invoke` call is useful for
 routing one runner to another; it does not itself add workflow limits,
 journalling, or replay.
 
@@ -462,9 +462,8 @@ reservation allocation; this handoff does not implement a sandbox.
 [Host handoff](docs/host-handoff.md) defines the configuration protocol.
 
 The two executable adapters make existing agent CLIs speak the
-[child contract](docs/child-contract.md)'s result-file transport; launch one
-as `moonx moonbitlang/workflow/shim/claude --result-file {result_file} …`
-with `transport=ResultFile`:
+[child contract](docs/child-contract.md); launch one as
+`moonx moonbitlang/workflow/shim/claude --result-file {result_file} …`:
 
 | Adapter | Default tool policy | Step definition | Report |
 | --- | --- | --- | --- |
