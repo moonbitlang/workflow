@@ -16,7 +16,7 @@ description = "Engine-agnostic multi-agent workflow orchestration with journaled
 
 preferred_target = "native"
 
-warnings = "+missing_doc+unnecessary_view_op+test_unqualified_package+unused_default_value+implicit_impl_as_method"
+warnings = "+missing_doc+unnecessary_view_op+test_unqualified_package+unused_default_value-implicit_impl_as_method"
 
 options(
   exclude: [ "justfile", "AGENTS.md" ],

@@ -44,14 +44,6 @@ pub enum ContractTerminal {
 } derive(Eq)
 
 ///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend ContractTerminal with Eq::{equal, not_equal}
-
-///|
 /// One contract run's outcome: the RAW report (when a `completed` result
 /// arrived) plus the cost the child's result accounted for.
 pub struct ContractResult {
@@ -536,14 +528,6 @@ pub fn LaunchSpec::LaunchSpec(
 ) -> LaunchSpec {
   { command, args, cwd, extra_env, deadline_ms, }
 }
-
-///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend LaunchSpec with Eq::{equal, not_equal}
 
 ///|
 /// A `Runner` for ANY engine speaking the child contract: `launch` turns

@@ -22,30 +22,6 @@ pub struct JournalEntry {
 } derive(Eq)
 
 ///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend JournalEntry with Eq::{equal, not_equal}
-
-///|
-/// The dot-callable form of the entry's storage codec is a migration
-/// convenience, not API: serialize with `Json(value)` or
-/// `ToJson::to_json(value)` instead.
-#deprecated("Use Json(value) or ToJson::to_json(value) instead of the attached to_json method")
-#doc(hidden)
-pub extend JournalEntry with ToJson::{to_json}
-
-///|
-/// The dot-callable form of the entry's storage codec is a migration
-/// convenience, not API: decode through the `@json.FromJson` trait
-/// (`@json.from_json`) instead.
-#deprecated("Use @json.from_json or FromJson::from_json(json, path) instead of the attached from_json method")
-#doc(hidden)
-pub extend JournalEntry with FromJson::{from_json}
-
-///|
 /// An entry from its parts. Attribution is optional, so a caller seeding a
 /// journal by hand (tests, migrations) names only what it knows.
 pub fn JournalEntry::JournalEntry(
@@ -143,14 +119,6 @@ fn millis(
 pub suberror JournalCorrupted {
   JournalCorrupted(path~ : String, line~ : Int)
 }
-
-///|
-/// The dot-callable form of the Show methods is a migration convenience,
-/// not API: format with interpolation (`\{value}`) or `Show::to_string` /
-/// `Show::output` instead.
-#deprecated("Use the Show trait (interpolation, Show::to_string, or Show::output) instead of the attached to_string/output method")
-#doc(hidden)
-pub extend JournalCorrupted with Show::{to_string, output}
 
 ///|
 pub impl Show for JournalCorrupted with fn output(self, logger) {
