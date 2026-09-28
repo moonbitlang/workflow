@@ -199,7 +199,7 @@ presets:
 | --- | --- | --- | --- | --- |
 | `echo` | no | any JSON | the input, echoed back verbatim; no model call | — |
 | `explore` | yes | `{"query": string, "hints"?: string}` — `query` non-blank | `{"schema_version": 1, "answer": string ≤ 8 000 chars, "citations": [{"file", "line"?, "note"?}] ≤ 20, "unresolved"?: string}` | 100 |
-| `review` | yes | `{"goal": string, "sha"?: string, "dirty"?: bool}` — `goal` non-blank; `sha`+`dirty` describe the baseline the goal was set against | `{"schema_version", "scope": {"base", "head", "files"}, "findings": [{"file", "line"?, "severity", "category", "title", "detail", "suggestion"?}], "summary", "stats": {"files_reviewed", "findings", "build", "tests"}}` | 100 |
+| `review` | yes | exactly one of `{"goal": string, "sha"?: string, "dirty"?: bool}` — audit the current worktree against a non-blank `goal`; `sha`+`dirty` describe the baseline the goal was set against — or `{"base": string}` — review the committed diff `base...HEAD` against a non-blank ref | `{"schema_version", "scope": {"base", "head", "files"}, "findings": [{"file", "line"?, "severity", "category", "title", "detail", "suggestion"?}], "summary", "stats": {"files_reviewed", "findings", "build", "tests"}}` | 100 (`goal`), 120 (`base`) |
 | `worker` | yes | `{"task", "context"?, "worker_root", "worker_admin_dir", "deny_roots": [abs paths], "allowed_paths": [non-empty], "base_oid"}` — all paths absolute, arrays non-empty | `{"schema_version", "status", "summary", "verification"}` | 300 |
 
 Settings it takes from argv or the environment: `--model` (or
