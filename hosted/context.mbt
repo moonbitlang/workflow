@@ -228,15 +228,11 @@ fn optional_string(
 }
 
 ///|
-/// The journal the host told this run to write, when it named one.
+/// The journal the host told this run to write, when it named one. `run`
+/// attaches it; a caller that builds its own `Workflow` around `runner()`
+/// must attach it too, or its calls would never reach the host's ledger.
 pub fn Context::journal_path(self : Context) -> String? {
   self.journal_path
-}
-
-///|
-/// The sidecar the host told this run to write, when it named one.
-pub fn Context::events_path(self : Context) -> String? {
-  self.events_path
 }
 
 ///|

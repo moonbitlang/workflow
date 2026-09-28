@@ -6,7 +6,6 @@ package "moonbitlang/workflow/shim/claude"
 // Errors
 
 // Types and methods
-type Claude
 
 // Type aliases
 

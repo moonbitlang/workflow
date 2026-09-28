@@ -3,6 +3,7 @@ package "moonbitlang/workflow/shim"
 
 import {
   "moonbitlang/async/signal",
+  "moonbitlang/core/debug",
 }
 
 // Values
@@ -43,7 +44,7 @@ pub struct Request {
 }
 pub fn Request::Request(request_id~ : String, kind~ : String, input~ : Json, prompt~ : String, max_steps? : Int, schema? : Json) -> Self
 
-type ShimResult
+type ShimResult derive(Eq, @debug.Debug)
 pub fn ShimResult::ShimResult(Status, usage? : Usage, steps? : Int) -> Self
 pub fn ShimResult::to_json(Self, request_id~ : String) -> Json
 
@@ -53,7 +54,7 @@ pub(all) enum Status {
   MaxStepsExhausted
   Interrupted(String)
   Failed(String)
-}
+} derive(Eq, @debug.Debug)
 
 pub struct Usage {
   prompt_tokens : Int
@@ -61,7 +62,7 @@ pub struct Usage {
   cache_hit_tokens : Int
   cache_miss_tokens : Int
   cost_usd : Double?
-}
+} derive(Eq, @debug.Debug)
 pub fn Usage::Usage(prompt_tokens~ : Int, completion_tokens~ : Int, cache_hit_tokens~ : Int, cache_miss_tokens~ : Int, cost_usd? : Double) -> Self
 pub fn Usage::add(Self, Self) -> Self
 
