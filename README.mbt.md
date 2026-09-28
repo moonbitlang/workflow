@@ -153,7 +153,7 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
       )
     })
   })
-  let confirmed = @workflow.quorum(results, need=2)
+  let confirmed = @workflow.collect_ok(results, min_ok=2)
     .filter(v => v is { "confirmed": True, .. })
     .length()
   assert_eq(confirmed, 2)
@@ -164,21 +164,21 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
 
 `fan_out` gives every item its own `Result` slot — one lost verifier
 never poisons its siblings, and the tokens they spent stay spent. When
-later work is worthless without ALL of a stage, use `parallel_all`
-instead: the first failure cancels every sibling still in flight. The
-policies are one identifier each: `all_ok`, `collect_ok(min_ok?)`,
-`quorum(need~)`. Both fan-outs are one task group: a raise inside one
-cancels the rest and unwinds the whole stage, so nothing outlives it.
+later work is worthless without ALL of a stage, give `parallel` thunks
+that raise instead (bare `wf.agent` calls, no `attempt`): the first failure
+cancels every sibling still in flight. The policies are one identifier each:
+`all_ok` and `collect_ok(min_ok?)`. Both fan-outs are one task group: a raise
+inside one cancels the rest and unwinds the whole stage, so nothing outlives
+it.
 
 | Policy | When to use it |
 | --- | --- |
 | `parallel` / `fan_out` with `attempt` | Keep a `Result` for each input, in input order. Typed workflow failures stay in their own slots. |
-| `parallel_all` | Every branch is required; a raise cancels siblings still running. |
+| `parallel` with raising thunks | Every branch is required; a raise cancels siblings still running. |
 | `all_ok` | Require all already-collected results to succeed; raises the first error in array order. |
-| `collect_ok(min_ok=0)` | Keep successes, optionally requiring a minimum count. |
-| `quorum(need~)` | Require a count of successful calls; it does not compare answers for agreement. |
+| `collect_ok(min_ok=0)` | Keep successes, optionally requiring a minimum count (a quorum); it does not compare answers for agreement. |
 
-`all_ok`, `collect_ok`, and `quorum` inspect completed results; they do not
+`all_ok` and `collect_ok` inspect completed results; they do not
 cancel work early. `attempt` captures only `WorkflowError`, including
 `AgentFailed`, `CallBudgetExhausted`, and `QuorumNotReached`.
 
@@ -422,7 +422,7 @@ instances of one stage by the prefix before the first colon.
 
 ## Observability
 
-`@workflow.Workflow(on_event=...)` narrates the run: `PhaseStarted`, `Log`, and an
+`@workflow.Workflow(on_event=...)` narrates the run: `PhaseStarted` and an
 `AgentStarted`/`AgentFinished` bracket that balances on EVERY path —
 success, typed failure, cancellation (`Interrupted`), and infrastructure
 error (`Errored`) — plus `AgentReplayed` for journal hits. Purely

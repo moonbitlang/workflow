@@ -62,7 +62,7 @@ async fn showcase() -> Unit {
     () => @workflow.attempt(() => wf.agent(prompt="vote on the finding", kind="echo", label="voter-2")),
     () => @workflow.attempt(() => wf.agent(prompt="vote on the finding", kind="echo", label="voter-3")),
   ])
-  let agreed = @workflow.quorum(votes, need=2) catch {
+  let agreed = @workflow.collect_ok(votes, min_ok=2) catch {
     @workflow.QuorumNotReached(need~, ok~, of~) => {
       println("quorum failed: \{ok}/\{of}, needed \{need}")
       return
