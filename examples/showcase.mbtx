@@ -13,7 +13,8 @@ import {
 ///
 ///   moon run examples/showcase.mbtx     (twice; needs `openseek` on PATH)
 ///
-/// Keyless: it drives the engine's modelless `echo` kind.
+/// Keyless: it drives the engine's modelless `echo` preset, one
+/// `openseek run` child per call, each writing one result file.
 async fn main {
   showcase() catch {
     error => println("workflow failed: \{error}")
@@ -24,12 +25,15 @@ async fn main {
 async fn showcase() -> Unit {
   let resuming = @fs.exists("showcase.jsonl")
   let journal = @workflow.Journal::load("showcase.jsonl")
-  let runner = @spawn.contract_runner(launch=_ => {
-    command: "openseek",
-    args: ["subrun", "echo"],
-    cwd: None,
-    extra_env: None,
-    deadline_ms: None,
+  let runner = @spawn.contract_runner(launch=call => {
+    @spawn.LaunchSpec(
+      command="openseek",
+      args=[
+        "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
+        "--result-file", @spawn.ResultFilePlaceholder,
+      ],
+      transport=ResultFile,
+    )
   })
   let wf = @workflow.Workflow(runner~, journal~, max_concurrent=4)
 

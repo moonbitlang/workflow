@@ -1,9 +1,9 @@
 import {
-  "moonbitlang/async@0.22.4",
-  "moonbitlang/async@0.22.4/fs",
-  "moonbitlang/workflow@0.8.0",
-  "moonbitlang/workflow@0.8.0/spawn",
-  "moonbitlang/workflow@0.8.0/hosted",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/workflow",
+  "moonbitlang/workflow/spawn",
+  "moonbitlang/workflow/hosted",
   "moonbitlang/core/argparse",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -38,11 +38,17 @@ import {
 /// scope by construction — this workflow proposes rewrites a reviewer can
 /// confirm by reading, not refactors.
 ///
-/// Runs either way round. Inside a host (an `mbtx` snippet launched with
-/// `subrun: true`, see docs/host-handoff.md) it takes the host's runner,
-/// so its children get durable transcripts and show up in the host's UI;
-/// standalone it spawns `openseek subrun explore` itself. The workflow
-/// body is identical — only the runner differs.
+/// Runs either way round. Inside a host (a script launched with a
+/// `WORKFLOW_HOST` handoff, see docs/host-handoff.md) it takes the host's
+/// runner, so its children get durable transcripts and show up in the
+/// host's UI; standalone it spawns `openseek run --kind explore` children
+/// itself, each writing one result file. The workflow body is identical —
+/// only the runner differs.
+///
+/// Every call carries a JSON Schema its report must satisfy, so the engine
+/// must honour one: `openseek run` refuses a request with a schema, and
+/// reports each such call `failed`, rather than answer in a shape this
+/// script cannot read.
 ///
 /// Journal: simplify.jsonl (`moon run viz -- simplify.jsonl` draws it).
 async fn main {
@@ -263,8 +269,15 @@ async fn sweep() -> Unit {
     Some(ctx) => ctx.run(body, max_concurrent=jobs)
     None => {
       let wf = @workflow.Workflow(
-        runner=@spawn.contract_runner(launch=_ => {
-          @spawn.LaunchSpec(command="openseek", args=["subrun", "explore"])
+        runner=@spawn.contract_runner(launch=call => {
+          @spawn.LaunchSpec(
+            command="openseek",
+            args=[
+              "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind",
+              call.kind, "--result-file", @spawn.ResultFilePlaceholder,
+            ],
+            transport=ResultFile,
+          )
         }),
         journal=@workflow.Journal::load(value(args, "journal", "simplify.jsonl")),
         replay_scope=repo,

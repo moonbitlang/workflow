@@ -29,7 +29,8 @@ import {
 ///
 /// Engines (CROSS_REVIEW_ENGINES, default `claude,codex`; `explore` adds
 /// openseek's read-only scout on DeepSeek): `claude` and `codex` run
-/// through this module's shims, `explore` through `openseek subrun`.
+/// through this module's shims, `explore` through `openseek run`; every
+/// child writes one result file (`transport=ResultFile`).
 /// Models: CROSS_REVIEW_CLAUDE (claude-sonnet-5), CROSS_REVIEW_CODEX
 /// (gpt-5.3-codex-spark), CROSS_REVIEW_DEEPSEEK (deepseek-v4-flash).
 async fn main {
@@ -171,8 +172,10 @@ async fn review() -> Unit {
     "reviewing \{head} against \{base} with \{engines.join("+")}: \{diff.length()} chars in \{chunks.length()} chunk(s)\n\{stat}",
   )
 
-  // The schemas ride each call's envelope (`schema=`): the shims hand them
-  // to their CLI's structured-output flag; explore is told the shape inline.
+  // The schemas ride each shim call's request (`schema=`): the shims hand
+  // them to their CLI's structured-output flag. openseek refuses a schema it
+  // cannot hold its report to, so explore gets none and is told the shape
+  // inline (`format_hint`).
 
   // Routing: KIND picks the engine.
   // The PUBLISHED shims, run by coordinate: no build step and no path to
@@ -187,27 +190,34 @@ async fn review() -> Unit {
           @spawn.LaunchSpec(
             command="moonx",
             args=[
-              "\{shim}/claude", "--model", claude_model, "--", "--max-budget-usd",
-              "0.60",
+              "\{shim}/claude", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+              claude_model, "--", "--max-budget-usd", "0.60",
             ],
             deadline_ms=600_000,
+            transport=ResultFile,
           )
         "codex" =>
           @spawn.LaunchSpec(
             command="moonx",
-            args=["\{shim}/codex", "--model", codex_model],
+            args=[
+              "\{shim}/codex", "--result-file", @spawn.ResultFilePlaceholder, "--model",
+              codex_model,
+            ],
             deadline_ms=600_000,
+            transport=ResultFile,
           )
-        kind => {
-          // openseek reads kind and the step ceiling from ARGV
-          // (docs/child-contract.md §7.1): mirror them.
-          let argv = ["subrun", kind, "--model", deepseek_model]
-          if call.max_steps is Some(steps) {
-            argv.push("--max-steps")
-            argv.push("\{steps}")
-          }
-          @spawn.LaunchSpec(command="openseek", args=argv, deadline_ms=600_000)
-        }
+        kind =>
+          // The request carries the kind and the step ceiling: argv names
+          // the kind only because `run` checks the two agree.
+          @spawn.LaunchSpec(
+            command="openseek",
+            args=[
+              "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", kind,
+              "--result-file", @spawn.ResultFilePlaceholder, "--model", deepseek_model,
+            ],
+            deadline_ms=600_000,
+            transport=ResultFile,
+          )
       }
     }),
     journal~,
@@ -252,7 +262,7 @@ async fn review() -> Unit {
       kind=engine,
       label="review:\{engine}:\{index + 1}",
       max_steps=steps_for(engine, review=true),
-      schema=findings_schema,
+      schema?=schema_for(engine, findings_schema),
     ))
   })
   let findings : Array[Finding] = []
@@ -304,7 +314,7 @@ async fn review() -> Unit {
       kind=verifier,
       label="verify:\{finding.file}:\{finding.line}",
       max_steps=steps_for(verifier, review=false),
-      schema=verdict_schema,
+      schema?=schema_for(verifier, verdict_schema),
     ))
   })
   let rows : Array[(Finding, String, String, String)] = []
@@ -335,6 +345,17 @@ fn next_engine(engines : Array[String], raiser : String) -> String {
     }
   }
   engines[0]
+}
+
+///|
+/// The schema a call to `engine` carries: the shims enforce one, and
+/// openseek refuses any (it cannot hold its scout's report to a caller's
+/// shape), so its calls carry none.
+fn schema_for(engine : String, schema : Json) -> Json? {
+  match engine {
+    "claude" | "codex" => Some(schema)
+    _ => None
+  }
 }
 
 ///|

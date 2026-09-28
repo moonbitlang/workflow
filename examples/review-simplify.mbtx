@@ -251,7 +251,11 @@ async fn engine_launch(
   } else {
     ["moonbitlang/workflow/shim/\{engine}"]
   }
-  argv.push_iter(["--cwd", repo].iter())
+  // Every child writes one result file; the shim's own options, this one
+  // included, go before any `--` passthrough.
+  argv.push_iter(
+    ["--result-file", @spawn.ResultFilePlaceholder, "--cwd", repo].iter(),
+  )
   if args.values.get("\{engine}-model") is Some([model, ..]) {
     argv.push_iter(["--model", model].iter())
   }
@@ -273,6 +277,7 @@ async fn engine_launch(
     args=argv,
     cwd=repo,
     deadline_ms=deadline,
+    transport=ResultFile,
   )
 }
 

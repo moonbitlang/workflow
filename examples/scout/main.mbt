@@ -6,7 +6,7 @@
 ///
 ///   moon run workflow/examples/scout -- <engine> [--journal j.jsonl] [--kind k] [--model m]
 ///
-/// With no kind, three `subrun echo` probes run keylessly. With
+/// With no kind, three `run --kind echo` probes run keylessly. With
 /// `--kind explore` (and optionally a model name), one real read-only
 /// scout answers a question about the repository — the provider key rides
 /// the inherited environment, exactly as the contract prescribes. Run
@@ -51,19 +51,26 @@ async fn main {
   let model = first(args, "model")
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=call => {
-      // The script owns its launch: the request ENVELOPE already carries
-      // kind and the step ceiling, so argv holds only engine settings.
-      // The API key is NEVER here — it rides the inherited environment.
-      let argv = ["subrun", call.kind]
-      if call.max_steps is Some(steps) {
-        argv.push("--max-steps")
-        argv.push("\{steps}")
-      }
+      // The script owns its launch: the REQUEST already carries the kind
+      // and the step ceiling, so argv holds only engine settings — and the
+      // kind, which `openseek run` checks against the request's. The API
+      // key is NEVER here — it rides the inherited environment. Each child
+      // writes one result file where the runner puts `{result_file}`.
+      let argv = [
+        "run",
+        "--input-format",
+        "json",
+        "--cancel-on-stdin-eof",
+        "--kind",
+        call.kind,
+        "--result-file",
+        @spawn.ResultFilePlaceholder,
+      ]
       if model is Some(model) {
         argv.push("--model")
         argv.push(model)
       }
-      @spawn.LaunchSpec(command=exe, args=argv)
+      @spawn.LaunchSpec(command=exe, args=argv, transport=ResultFile)
     }),
     max_concurrent=4,
     max_calls=16,
@@ -91,10 +98,10 @@ async fn main {
     [
       @workflow.attempt(() => {
         wf.agent(
-          prompt="What kinds does `openseek subrun` dispatch, and where is the dispatch? Answer in one sentence.",
+          prompt="What presets does `openseek run --kind` dispatch, and where is the dispatch? Answer in one sentence.",
           kind~,
-          hints="cmd/openseek/subrun.mbt",
-          label="scout:subrun-kinds",
+          hints="internal/openseek/run",
+          label="scout:run-kinds",
           max_steps=24,
         )
       }),
