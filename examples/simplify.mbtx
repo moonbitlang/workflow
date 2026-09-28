@@ -205,8 +205,11 @@ async fn sweep() -> Unit {
       // errored, timed out, or came back malformed has not cleared the
       // finding, and treating "no answer" as "fine" is how an unverified
       // rewrite reaches a branch.
+      // The verdict must be whole: a bare `{"refuted": false}` with no
+      // reason has not shown its checking, and does not clear a finding.
       if outcome is Ok(report) &&
-        structured(report) is Some({ "refuted": False, .. }) {
+        structured(report) is Some({ "refuted": False, "why": String(why), .. }) &&
+        !why.is_blank() {
         confirmed.push(kept[index])
       }
     }
