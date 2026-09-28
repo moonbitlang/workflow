@@ -45,10 +45,11 @@ import {
 /// itself, each writing one result file. The workflow body is identical —
 /// only the runner differs.
 ///
-/// Every call carries a JSON Schema its report must satisfy, so the engine
-/// must honour one: `openseek run` refuses a request with a schema, and
-/// reports each such call `failed`, rather than answer in a shape this
-/// script cannot read.
+/// Each scout is told to answer with ONE JSON object of a stated shape,
+/// and the script parses it out of the scout's answer: openseek's scouts
+/// answer in prose and refuse a request schema, so the shape rides the
+/// prompt, and a reply that does not parse is simply a scout that found
+/// nothing usable.
 ///
 /// Journal: simplify.jsonl (`moon run viz -- simplify.jsonl` draws it).
 async fn main {
@@ -68,53 +69,6 @@ let slice_size : Int = 6
 /// Findings kept after triage. The tail of a ranked list is where the
 /// speculative proposals collect, and each one costs a verification call.
 let verify_budget : Int = 24
-
-///|
-let survey_schema : Json = {
-  "type": "object",
-  "properties": {
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "file": { "type": "string" },
-          "line": { "type": "integer" },
-          "category": {
-            "type": "string",
-            "enum": [
-              "pattern-match", "comprehension", "functional-loop", "stdlib-reuse",
-              "dedupe-code", "dedupe-test",
-            ],
-          },
-          "title": { "type": "string" },
-          "current": { "type": "string" },
-          "proposed": { "type": "string" },
-          "lines_saved": { "type": "integer" },
-          "evidence": { "type": "string" },
-        },
-        "required": [
-          "file", "line", "category", "title", "current", "proposed",
-          "lines_saved", "evidence",
-        ],
-        "additionalProperties": false,
-      },
-    },
-  },
-  "required": ["findings"],
-  "additionalProperties": false,
-}
-
-///|
-let verdict_schema : Json = {
-  "type": "object",
-  "properties": {
-    "refuted": { "type": "boolean" },
-    "why": { "type": "string" },
-  },
-  "required": ["refuted", "why"],
-  "additionalProperties": false,
-}
 
 ///|
 /// One proposal, as it travels from survey through triage to verification.
@@ -214,7 +168,6 @@ async fn sweep() -> Unit {
           kind="explore",
           label="survey \{group[0]}",
           max_steps=30,
-          schema=survey_schema,
         ))),
     )
     let raw : Array[Finding] = []
@@ -244,7 +197,6 @@ async fn sweep() -> Unit {
           kind="explore",
           label="refute \{finding.file}:\{finding.line}",
           max_steps=20,
-          schema=verdict_schema,
         ))),
     )
     let confirmed : Array[Finding] = []
@@ -253,7 +205,8 @@ async fn sweep() -> Unit {
       // errored, timed out, or came back malformed has not cleared the
       // finding, and treating "no answer" as "fine" is how an unverified
       // rewrite reaches a branch.
-      if outcome is Ok({ "refuted": False, .. }) {
+      if outcome is Ok(report) &&
+        structured(report) is Some({ "refuted": False, .. }) {
         confirmed.push(kept[index])
       }
     }
@@ -278,6 +231,8 @@ async fn sweep() -> Unit {
               "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind",
               call.kind, "--result-file", @spawn.ResultFilePlaceholder,
             ],
+            // A scout explores the workspace it runs in: the repository.
+            cwd=repo,
           )
         }),
         journal=@workflow.Journal::load(value(args, "journal", "simplify.jsonl")),
@@ -355,8 +310,7 @@ fn survey_prompt(repo : String, group : Array[String]) -> String {
     $|you confirmed the replacement exists and behaves the same — a
     $|signature you read in a `.mbti`, a `moon ide doc` result, a
     $|`file:line`. A finding whose evidence you cannot state is a finding
-    $|you have not made; leave it out. `current` must be copied verbatim
-    $|from the file.
+    $|you have not made; leave it out.
     $|
     $|Out of scope: generated files, prompt text, anything that changes
     $|behaviour or a public signature, and deleting an explanatory
@@ -364,6 +318,12 @@ fn survey_prompt(repo : String, group : Array[String]) -> String {
     $|compile error is deliberate — collapsing it to `_` is a regression.
     $|
     $|Prefer five findings you are certain of to twenty you are not.
+    $|
+    $|Answer with ONLY a JSON object, no prose and no code fences, of the
+    $|shape {"findings": [{"file", "line", "category", "title",
+    $|"lines_saved", "evidence"}]}: `line` and `lines_saved` are integers,
+    $|`category` is one of the six kinds above. No findings is
+    $|{"findings": []}.
   )
 }
 
@@ -392,10 +352,11 @@ fn refute_prompt(repo : String, finding : Finding) -> String {
     $|signature — read the `.mbti` or ask `moon ide doc`. A hallucinated
     $|stdlib function is the most common way one of these is wrong.
     $|
-    $|Return refuted=true if you found a difference, if the API is not
-    $|what was claimed, or if you could not settle it. Return
-    $|refuted=false ONLY if you checked and they agree. Say which in
-    $|`why`, with the evidence you read.
+    $|Answer with ONLY a JSON object, no prose and no code fences, of the
+    $|shape {"refuted": true|false, "why": "..."}. Return refuted=true if
+    $|you found a difference, if the API is not what was claimed, or if you
+    $|could not settle it. Return refuted=false ONLY if you checked and they
+    $|agree. Say which in `why`, with the evidence you read.
   )
 }
 
@@ -507,7 +468,9 @@ fn slice(packages : Array[String], size : Int) -> Array[Array[String]] {
 /// than failing the slice: one bad object should not cost the other
 /// findings in the same reply.
 fn decode_findings(report : Json) -> Array[Finding] {
-  guard report is { "findings": Array(entries), .. } else { return [] }
+  guard structured(report) is Some({ "findings": Array(entries), .. }) else {
+    return []
+  }
   let findings : Array[Finding] = []
   for entry in entries {
     guard entry
@@ -552,4 +515,36 @@ fn count(args : @argparse.Matches, name : String, fallback : Int) -> Int {
   } else {
     fallback
   }
+}
+
+///|
+/// The JSON object a scout was asked to answer with, parsed out of its
+/// report's `answer`; `None` when the answer is not one. A model that
+/// wraps the object in a code fence anyway still counts.
+fn structured(report : Json) -> Json? {
+  match report {
+    { "answer": String(text), .. } =>
+      Some(@json.parse(strip_fences(text))) catch {
+        _ => None
+      }
+    _ => None
+  }
+}
+
+///|
+/// `text` without a surrounding Markdown code fence, if it has one.
+fn strip_fences(text : String) -> String {
+  let trimmed = text.trim()
+  guard trimmed.has_prefix("```") else { return trimmed.to_owned() }
+  // The fence is whatever run of backticks opened the block, and the
+  // closing fence is exactly that run — STRIPPED, not trimmed away, so an
+  // answer whose own last character is a backtick keeps it.
+  let opened = trimmed.trim_start(chars="`")
+  let fence = trimmed.clamped_view(end=trimmed.length() - opened.length())
+  // Everything up to the first newline is the info string ("json").
+  let body = match opened.find("\n") {
+    Some(index) => opened.clamped_view(start=index + 1)
+    None => opened
+  }
+  body.strip_suffix(fence).unwrap_or(body).trim().to_owned()
 }
