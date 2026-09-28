@@ -47,7 +47,7 @@ pub fn Usage::add(self : Usage, other : Usage) -> Usage {
 
 ///|
 /// How a shim run ended: the result-file statuses a shim can reach
-/// (`docs/child-contract.md` §10.3). The engine-side statuses a CLI shim
+/// (`docs/child-contract.md` §3). The engine-side statuses a CLI shim
 /// cannot observe (`context_yield`, `aborted`) have no variant.
 pub(all) enum Status {
   /// The CLI finished; the payload is the report, the result's `output`.

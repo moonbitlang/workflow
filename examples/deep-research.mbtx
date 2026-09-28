@@ -40,7 +40,6 @@ async fn research() -> Unit {
           "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
           "--result-file", @spawn.ResultFilePlaceholder,
         ],
-        transport=ResultFile,
       )
     }),
     journal=@workflow.Journal::load("deep-research.jsonl"),

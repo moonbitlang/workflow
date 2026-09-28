@@ -1,68 +1,38 @@
 ///|
-/// THE CHILD CONTRACT, and its one implementation.
+/// THE CHILD CONTRACT, and its one implementation (`docs/child-contract.md`).
 ///
-/// A workflow agent can be any process that speaks this wire contract. The
-/// runner writes ONE JSON request line on the child's stdin and holds the
-/// pipe open — closing it is the graceful-cancel signal, not the end of
-/// input. The request is self-contained, so it never depends on
-/// engine-specific argv (argv remains deployment configuration). After
-/// `wall_deadline_ms` the runner closes stdin and grants `cancel_grace_ms`
-/// to flush and exit — a result landing in the grace window still counts —
-/// then terminates the child. How the child hands back its result is the
-/// launch's `Transport`:
+/// A workflow agent can be any process that speaks it:
 ///
-/// - `ResultFile` (transport 2): the request is the document
-///   `{"version": 1, "request_id", "kind", "input", "limits"?, "schema"?}`,
-///   and the child writes ONE result file at the path the runner puts in
-///   its argv; stdout is drained unread. `openseek run` and the shims in
-///   this module speak it.
-/// - `StdoutEvents` (transport 1): the request is the envelope
-///   `{"workflow_contract": 1, "id", "kind", "max_steps"?, "schema"?,
-///   "input"}`, and the child emits JSONL on stdout: event lines (an
-///   object with an `event` tag — `usage` and `agent_step` are
-///   summed/maxed for exact cost accounting; `max_steps_exhausted`,
-///   `context_yield`, `turn_failed`, `agent_setup_failed`,
-///   `command_error`, and `agent_aborted` classify how a run degraded)
-///   and, last, ONE distinguished `{"subrun_report": ...}` line carrying
-///   the result. Non-JSON stdout lines are skipped (a leaky tool
-///   subprocess must not poison the run).
+/// - the launch names `{result_file}` in the child's argv; the runner
+///   replaces it with a fresh path in a private directory of its own;
+/// - the runner writes ONE request line on the child's stdin — the request
+///   document `{"version": 1, "request_id", "kind", "input", "limits"?:
+///   {"max_steps"}, "schema"?}` — and holds the pipe open: closing it is
+///   the graceful-cancel signal, not the end of input. The request is
+///   self-contained, so it never depends on engine-specific argv (argv
+///   remains deployment configuration);
+/// - the child writes ONE result file at that path when it is over. Its
+///   stdout is drained unread — it is for humans — so nothing a child (or a
+///   leaky tool) prints can pose as a result;
+/// - after `wall_deadline_ms` the runner closes stdin and grants
+///   `cancel_grace_ms` to flush and exit — a `completed` result landing in
+///   the grace window still counts — then terminates the child.
 ///
-/// A shim around any other engine (a Rust CLI, a shell script) needs only
-/// to translate framing. External cancellation of the CALLER is never
-/// folded into a terminal: it re-raises after teardown, per structured
-/// concurrency.
+/// `openseek run` and this module's shims speak it; a shim around any other
+/// engine (a Rust CLI, a shell script) needs only to translate framing.
+/// External cancellation of the CALLER is never folded into a terminal: it
+/// re-raises after teardown, per structured concurrency.
 let default_cancel_grace_ms : Int = 5_000
 
 ///|
-/// How a child hands back its result. The launch configuration chooses it;
-/// the runner never guesses a transport from what the child prints.
-pub(all) enum Transport {
-  /// Contract transport 1: JSONL events on stdout and a final
-  /// `{"subrun_report": ...}` line, as described above.
-  StdoutEvents
-  /// Contract transport 2: the child writes ONE result file, whose path the
-  /// runner substitutes for `{result_file}` in the argv, and its stdout is
-  /// drained but never read — it is for humans. See docs/child-contract.md.
-  ResultFile
-} derive(Eq)
-
-///|
-/// The dot-callable form of the derived equality methods is a migration
-/// convenience, not API: compare with `==` / `!=` (through the `Eq`
-/// trait) instead.
-#deprecated("Use == / != (the Eq trait) instead of the attached equal/not_equal method")
-#doc(hidden)
-pub extend Transport with Eq::{equal, not_equal}
-
-///|
-/// The argv placeholder the runner replaces with the result file's path under
-/// `ResultFile`. An argv that carries it under `StdoutEvents` (or lacks it
-/// under `ResultFile`) is a launch error, reported as `Failed`.
+/// The argv placeholder the runner replaces with the result file's path. A
+/// launch whose argv does not name it is a launch error, reported as
+/// `Failed`: the child would have nowhere to write its result.
 pub const ResultFilePlaceholder : String = "{result_file}"
 
 ///|
-/// How a contract run ended. `Captured` means a report line arrived —
-/// whether its CONTENT is acceptable is the caller's judgment, at the
+/// How a contract run ended. `Captured` means a `completed` result arrived
+/// — whether its CONTENT is acceptable is the caller's judgment, at the
 /// layer that knows the report schema.
 pub enum ContractTerminal {
   Captured
@@ -82,118 +52,26 @@ pub enum ContractTerminal {
 pub extend ContractTerminal with Eq::{equal, not_equal}
 
 ///|
-/// One contract run's outcome: the RAW report (when one arrived) plus the
-/// cost observed from the child's own event stream.
+/// One contract run's outcome: the RAW report (when a `completed` result
+/// arrived) plus the cost the child's result accounted for.
 pub struct ContractResult {
   report : Json?
   terminal : ContractTerminal
   steps_used : Int
   prompt_tokens : Int
   completion_tokens : Int
-  /// Summed `usage.cost_usd` across usage lines that carried a valid
-  /// price; `None` until one is charged — a present-but-invalid price
-  /// voids the whole line, so it does not count as carried.
+  /// The result's `usage.cost_usd`: the engine's own price, `None` when it
+  /// stated none.
   cost_usd : Double?
   /// Why the counters above may fall short of what the child spent: `Some`
-  /// when a `ResultFile` child left no usable result (it crashed, was
-  /// killed, or its file was malformed), or its result carried no usage.
-  /// `None` means the counters are the child's own account.
+  /// when a launched child left no usable result (it crashed, was killed,
+  /// or its file was malformed), or its result carried no usage. `None`
+  /// means the counters are the child's own account.
   unaccounted : String?
   /// The child's exit status, when it exited within the runner's watch.
   /// Kept beside a result, so an abnormal exit after a valid result stays
   /// visible instead of being masked by it.
   exit_code : Int?
-}
-
-///|
-priv struct Observations {
-  /// `false` under `ResultFile`: stdout is then drained unread, so nothing
-  /// a child (or a leaky tool) prints can pose as a result.
-  interpret : Bool
-  progress : ContractProgress
-  observe_line : ((Json) -> Unit)?
-  mut max_steps_exhausted : Bool
-  mut context_yield : Bool
-  mut failure : String?
-  mut report : Json?
-}
-
-///|
-/// Classify one child stdout line, structurally — the tags are the wire
-/// contract, not any engine's type vocabulary.
-fn Observations::observe(self : Observations, line : String) -> Unit {
-  guard self.interpret else { return }
-  let trimmed = line.trim(chars="\r\n")
-  if trimmed == "" {
-    return
-  }
-  let json = @json.parse(trimmed) catch { _ => return }
-  if self.observe_line is Some(hook) {
-    hook(json)
-  }
-  if json is { "subrun_report": report, .. } {
-    self.report = Some(report)
-    return
-  }
-  match json {
-    { "event": "agent_step", "step": Number(step, ..), .. } =>
-      if integral(step) is Some(step) {
-        self.progress.steps = self.progress.steps.max(step)
-      }
-    {
-      "event": "usage",
-      "usage": {
-        "prompt_tokens": Number(prompt, ..),
-        "completion_tokens": Number(completion, ..),
-        "total_tokens": Number(total, ..),
-        "prompt_cache_hit_tokens": Number(cache_hit, ..),
-        "prompt_cache_miss_tokens": Number(cache_miss, ..),
-        ..
-      },
-      ..
-    } => {
-      // Integral-only and whole-object, exactly as the engine's typed
-      // decoder: a counter of 1.5 is not a token count, and a malformed
-      // usage line is ignored WHOLE — never partially charged.
-      // Money is optional and fractional by nature — the integral rule
-      // covers token counts, not prices — but a PRESENT price that is not a
-      // non-negative number is as malformed as a bad token field, and the
-      // whole line is ignored rather than charged in part.
-      let price : Double? = match json {
-        { "usage": { "cost_usd": Number(cost, ..), .. }, .. } if cost >= 0.0 &&
-          !cost.is_inf() &&
-          !cost.is_nan() => Some(cost)
-        { "usage": { "cost_usd": _, .. }, .. } => return
-        _ => None
-      }
-      if integral(prompt) is Some(prompt) &&
-        integral(completion) is Some(completion) &&
-        integral(total) is Some(_) &&
-        integral(cache_hit) is Some(_) &&
-        integral(cache_miss) is Some(_) {
-        self.progress.prompt_tokens += prompt
-        self.progress.completion_tokens += completion
-        if price is Some(cost) {
-          self.progress.cost_usd = Some(
-            self.progress.cost_usd.unwrap_or(0.0) + cost,
-          )
-        }
-      }
-    }
-    { "event": "max_steps_exhausted", .. } => self.max_steps_exhausted = true
-    {
-      "event": "context_yield",
-      "to_sequence": Number(to_sequence, ..),
-      "answer": String(_),
-      ..
-    } => if integral(to_sequence) is Some(_) { self.context_yield = true }
-    { "event": "turn_failed", "error": String(error), .. }
-    | { "event": "agent_setup_failed", "error": String(error), .. }
-    | { "event": "command_error", "error": String(error), .. }
-    | { "event": "agent_aborted", "reason": String(error), .. } =>
-      self.failure = Some(error)
-    _ => ()
-  }
 }
 
 ///|
@@ -209,11 +87,11 @@ fn integral(value : Double) -> Int? {
 }
 
 ///|
-/// Run one child over the contract: spawn, feed the input line, drain and
-/// account the event stream, enforce the wall deadline with its grace
-/// window, and tear the child down on every path. Crash isolation is
-/// structural: a dead or unspawnable child is a `Failed` terminal, never
-/// a dead caller. External cancellation re-raises after teardown.
+/// Run one child over the contract: spawn it, feed the request line, drain
+/// its stdout, enforce the wall deadline with its grace window, read its
+/// result file, and tear the child down on every path. Crash isolation is
+/// structural: a dead or unspawnable child is a `Failed` terminal, never a
+/// dead caller. External cancellation re-raises after teardown.
 pub async fn contract_run(
   command~ : String,
   args~ : Array[String],
@@ -226,67 +104,29 @@ pub async fn contract_run(
   cancel_grace_ms? : Int = default_cancel_grace_ms,
   cwd? : String,
   extra_env? : Map[String, String],
-  progress? : ContractProgress,
-  observe_line? : (Json) -> Unit,
-  transport? : Transport = StdoutEvents,
 ) -> ContractResult {
-  let progress = match progress {
-    Some(progress) => progress
-    None => ContractProgress()
-  }
-  // The launch configuration and the transport must agree: a placeholder
-  // passed through literally, or a result nobody was told where to write,
-  // would each fail in a way that looks like the child's fault.
-  let names_result_file = args.any(arg => arg.contains(ResultFilePlaceholder))
-  let result_dir = match (transport, names_result_file) {
-    (StdoutEvents, false) => None
-    (StdoutEvents, true) =>
-      return launch_failed(
-        progress,
-        "the argv names \{ResultFilePlaceholder}, but the transport is StdoutEvents",
-      )
-    (ResultFile, false) =>
-      return launch_failed(
-        progress,
-        "the ResultFile transport needs \{ResultFilePlaceholder} in the argv",
-      )
-    (ResultFile, true) =>
-      Some(
-        @fs.tmpdir(prefix="workflow-result-") catch {
-          error =>
-            return launch_failed(
-              progress,
-              "no directory for the result file: \{error}",
-            )
-        },
-      )
+  // A child told nowhere to write its result would fail in a way that looks
+  // like its own fault.
+  guard args.any(arg => arg.contains(ResultFilePlaceholder)) else {
+    return launch_failed(
+      "the argv must name \{ResultFilePlaceholder}, where the child writes its result",
+    )
   }
   // A private directory per launch, so no other process can have left a file
   // at the path, and nothing of this one outlives the call.
-  defer (if result_dir is Some(dir) {
-    @fs.rmdir(dir, recursive=true) catch {
-      _ => ()
-    }
-  })
-  let result_path = result_dir.map(dir => "\{dir}/result.json")
-  let args = match result_path {
-    Some(path) =>
-      args.map(arg => arg.replace_all(old=ResultFilePlaceholder, new=path))
-    None => args
+  let result_dir = @fs.tmpdir(prefix="workflow-result-") catch {
+    error => return launch_failed("no directory for the result file: \{error}")
   }
+  defer (@fs.rmdir(result_dir, recursive=true) catch { _ => () })
+  let result_path = "\{result_dir}/result.json"
+  let args = args.map(arg => {
+    arg.replace_all(old=ResultFilePlaceholder, new=result_path)
+  })
   let mut exit_code : Int? = None
   // Whether a child process started: a failure before that spent nothing, one
   // after it may have spent anything.
   let mut launched = false
-  let observations : Observations = {
-    interpret: transport is StdoutEvents,
-    progress,
-    observe_line,
-    max_steps_exhausted: false,
-    context_yield: false,
-    failure: None,
-    report: None,
-  }
+  let mut failure : String? = None
   let mut timed_out = false
   // The group call is itself fold-guarded: a spawn failure can surface
   // ASYNCHRONOUSLY (the spawn's internal reaper task raising at group
@@ -298,7 +138,7 @@ pub async fn contract_run(
     @async.with_task_group() <| group => {
       let (child_stdin, stdin_writer) = @process.write_to_process() catch {
         error => {
-          observations.failure = Some("child pipes unavailable: \{error}")
+          failure = Some("child pipes unavailable: \{error}")
           return
         }
       }
@@ -309,7 +149,7 @@ pub async fn contract_run(
       defer stdin_writer.close()
       let (stdout_reader, child_stdout) = @process.read_from_process() catch {
         error => {
-          observations.failure = Some("child pipes unavailable: \{error}")
+          failure = Some("child pipes unavailable: \{error}")
           return
         }
       }
@@ -331,66 +171,43 @@ pub async fn contract_run(
         no_wait=true,
       ) catch {
         error => {
-          observations.failure = Some("child spawn failed: \{error}")
+          failure = Some("child spawn failed: \{error}")
           return
         }
       }
       defer process.cancel()
       launched = true
+      // Opaque bytes: a line reader would reject output that is not UTF-8,
+      // and this stdout is not the protocol. Draining keeps the child from
+      // blocking on a full pipe.
       async fn drain() -> Unit {
-        if transport is ResultFile {
-          // Opaque bytes: a line reader would reject output that is not
-          // UTF-8, and this stdout is not the protocol.
-          while stdout_reader.read_some(max_len=4096) is Some(_) {
+        while stdout_reader.read_some(max_len=4096) is Some(_) {
 
-          }
-          return
-        }
-        while stdout_reader.read_until("\n") is Some(line) {
-          observations.observe(line)
         }
       }
       async fn feed_and_drain() -> Unit {
-        // One input line — the v1 request envelope; the pipe stays open,
-        // EOF is the cancel signal, not the end of input. The write sits
-        // INSIDE the deadline scope: an input larger than the pipe
-        // capacity against a child that never reads must hit the wall
-        // deadline, not block forever.
-        let request = request_line(
-          transport,
-          id~,
-          kind~,
-          input~,
-          max_steps?,
-          schema?,
-        )
+        // One request line; the pipe stays open, EOF is the cancel signal,
+        // not the end of input. The write sits INSIDE the deadline scope: a
+        // request larger than the pipe capacity against a child that never
+        // reads must hit the wall deadline, not block forever.
+        let request = request_line(id~, kind~, input~, max_steps?, schema?)
         stdin_writer.write("\{request.stringify()}\n")
         drain()
       }
       try {
         match @async.with_timeout_opt(wall_deadline_ms, feed_and_drain) {
           Some(_) =>
-            // Clean EOF: the child closed stdout. Read its exit status — a
-            // crash-class failure (panic, signal, nonzero exit) emits no
-            // failure event, and without this the runner is structurally
-            // blind to it and would misclassify the run as NoReport.
-            // Bounded: a child that closed stdout but lingers falls
-            // through to the cancel below.
+            // Clean EOF: the child closed stdout. Keep its exit status beside
+            // the result. Bounded: a child that closed stdout but lingers
+            // falls through to the cancel below.
             match @async.with_timeout_opt(2_000, () => process.wait()) {
-              Some(code) => {
-                exit_code = Some(code)
-                if transport is StdoutEvents &&
-                  code != 0 &&
-                  observations.report is None &&
-                  observations.failure is None {
-                  observations.failure = Some("child exited \{code}")
-                }
-              }
+              Some(code) => exit_code = Some(code)
               None => ()
             }
           None => {
             // Deadline: graceful cancel first — close stdin, let the child
-            // flush; a report arriving in the grace window still counts.
+            // flush; a completed result written in the grace window still
+            // counts.
             timed_out = true
             stdin_writer.close()
             // The grace window bounds the whole wind-down: flushing, and the
@@ -408,8 +225,8 @@ pub async fn contract_run(
           // A pipe failure: the deferred teardown stops the child; fold the
           // error into the terminal. Cancellation never reaches a `catch`;
           // it unwinds through the defers above.
-          if observations.failure is None {
-            observations.failure = Some("child stream failed: \{error}")
+          if failure is None {
+            failure = Some("child stream failed: \{error}")
           }
           return
         }
@@ -417,95 +234,55 @@ pub async fn contract_run(
     }
   catch {
     error =>
-      if observations.failure is None {
-        observations.failure = Some("child runner failed: \{error}")
+      if failure is None {
+        failure = Some("child runner failed: \{error}")
       }
   }
-  if result_path is Some(path) {
-    return result_file_outcome(
-      path,
-      id~,
-      timed_out~,
-      launched~,
-      runner_failure=observations.failure,
-      exit_code~,
-    )
-  }
-  let terminal = match observations.report {
-    Some(_) => Captured
-    None =>
-      match observations.failure {
-        Some(error) => Failed(error)
-        None if timed_out => TimedOut
-        None if observations.max_steps_exhausted => MaxSteps
-        None if observations.context_yield => ContextYield
-        None => NoReport
-      }
-  }
-  {
-    report: observations.report,
-    terminal,
-    steps_used: progress.steps,
-    prompt_tokens: progress.prompt_tokens,
-    completion_tokens: progress.completion_tokens,
-    cost_usd: progress.cost_usd,
-    unaccounted: None,
-    exit_code,
-  }
+  result_file_outcome(
+    result_path,
+    id~,
+    timed_out~,
+    launched~,
+    runner_failure=failure,
+    exit_code~,
+  )
 }
 
 ///|
 /// A run that failed before a child was launched: nothing was spent.
-fn launch_failed(
-  progress : ContractProgress,
-  reason : String,
-) -> ContractResult {
+fn launch_failed(reason : String) -> ContractResult {
   {
     report: None,
     terminal: Failed(reason),
-    steps_used: progress.steps,
-    prompt_tokens: progress.prompt_tokens,
-    completion_tokens: progress.completion_tokens,
-    cost_usd: progress.cost_usd,
+    steps_used: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    cost_usd: None,
     unaccounted: None,
     exit_code: None,
   }
 }
 
 ///|
-/// The one request line for `transport`. Transport 1 writes the
-/// `workflow_contract: 1` envelope. Transport 2 writes the request document
-/// (`version: 1`) whose `request_id` the child echoes in its result; `schema`
-/// rides along only when the caller passed one, and an engine that cannot
-/// honour it must refuse the request rather than ignore it.
+/// The one request line: the request document (`version: 1`) whose
+/// `request_id` the child echoes in its result. `schema` rides along only
+/// when the caller passed one, and an engine that cannot honour it must
+/// refuse the request rather than ignore it.
 fn request_line(
-  transport : Transport,
   id~ : String,
   kind~ : String,
   input~ : Json,
   max_steps? : Int,
   schema? : Json,
 ) -> Json {
-  let fields : Map[String, Json] = match transport {
-    StdoutEvents =>
-      {
-        "workflow_contract": 1,
-        "id": Json(id),
-        "kind": Json(kind),
-        "input": input,
-      }
-    ResultFile =>
-      {
-        "version": 1,
-        "request_id": Json(id),
-        "kind": Json(kind),
-        "input": input,
-      }
+  let fields : Map[String, Json] = {
+    "version": 1,
+    "request_id": Json(id),
+    "kind": Json(kind),
+    "input": input,
   }
-  match (transport, max_steps) {
-    (_, None) => ()
-    (StdoutEvents, Some(steps)) => fields["max_steps"] = Json(steps)
-    (ResultFile, Some(steps)) => fields["limits"] = { "max_steps": Json(steps) }
+  if max_steps is Some(steps) {
+    fields["limits"] = { "max_steps": Json(steps) }
   }
   if schema is Some(schema) {
     fields["schema"] = schema
@@ -514,7 +291,7 @@ fn request_line(
 }
 
 ///|
-/// A transport-2 child's result, as far as this runner reads it.
+/// A child's result, as far as this runner reads it.
 priv struct ChildResult {
   status : String
   output : Json?
@@ -564,8 +341,8 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
     "context_yield" | "aborted" | "interrupted" | "failed" => ()
     other => return Err("unknown status \{other}")
   }
-  // Usage is whole or absent: a partial or fractional counter voids it, as
-  // on the event stream, and so does a present `cost_usd` that is not a
+  // Usage is whole or absent: a partial or fractional counter voids it, and
+  // so does a present `cost_usd` that is not a
   // finite, non-negative number. Steps are independent of it.
   let usage = match fields.get("usage") {
     None => None
@@ -620,7 +397,7 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
 }
 
 ///|
-/// Classify a transport-2 run from its result file. The file is authoritative:
+/// Classify a run from its result file. The file is authoritative:
 /// a missing one means the child did not finish, never success. The deadline
 /// wins over anything but a `completed` result, which still counts when it
 /// lands in the grace window. `launched` says a child process started: a
@@ -742,25 +519,22 @@ pub struct LaunchSpec {
   cwd : String?
   extra_env : Map[String, String]?
   deadline_ms : Int?
-  /// How the child hands back its result; see `Transport`.
-  transport : Transport
 } derive(Eq)
 
 ///|
 /// A launch from its parts: the executable and its argv, which every
-/// launch names. The execution envelope is optional — omit `cwd` and
-/// `extra_env` to inherit the workflow's own, and `deadline_ms` to take
-/// `contract_runner`'s. `transport` defaults to the event stream; a
-/// `ResultFile` launch names `{result_file}` in its argv.
+/// launch names — and the argv must name `ResultFilePlaceholder`, where the
+/// child writes its result. The execution envelope is optional — omit `cwd`
+/// and `extra_env` to inherit the workflow's own, and `deadline_ms` to take
+/// `contract_runner`'s.
 pub fn LaunchSpec::LaunchSpec(
   command~ : String,
   args~ : Array[String],
   cwd? : String,
   extra_env? : Map[String, String],
   deadline_ms? : Int,
-  transport? : Transport = StdoutEvents,
 ) -> LaunchSpec {
-  { command, args, cwd, extra_env, deadline_ms, transport, }
+  { command, args, cwd, extra_env, deadline_ms, }
 }
 
 ///|
@@ -773,8 +547,8 @@ pub extend LaunchSpec with Eq::{equal, not_equal}
 
 ///|
 /// A `Runner` for ANY engine speaking the child contract: `launch` turns
-/// each call into a `LaunchSpec`, the request envelope carries the
-/// call's kind/limits/input, and every terminal maps into the lossless
+/// each call into a `LaunchSpec`, the request carries the call's
+/// kind/limits/input/schema, and every terminal maps into the lossless
 /// `AgentOutcome` envelope. For engines whose reports are pure values
 /// this is the whole adapter — an openseek-independent codex shim plugs
 /// in right here. An engine whose reports name STATEFUL resources must
@@ -801,7 +575,6 @@ pub fn contract_runner(
       wall_deadline_ms=spec.deadline_ms.unwrap_or(deadline_ms),
       cwd?=spec.cwd,
       extra_env?=spec.extra_env,
-      transport=spec.transport,
     )
     let attempt = @workflow.AgentAttempt(
       attempt_id=id,

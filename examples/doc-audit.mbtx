@@ -340,7 +340,6 @@ async fn audit() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         "codex" =>
           @spawn.LaunchSpec(
@@ -351,7 +350,6 @@ async fn audit() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         kind =>
           // The request carries the kind and the step ceiling: argv names
@@ -364,7 +362,6 @@ async fn audit() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
       }
     }),

@@ -264,7 +264,9 @@ async fn sweep() -> Unit {
   }
   // The host owns the children when there is one: its runner mints their
   // session ids, so they get durable transcripts and appear in its UI.
-  // Standalone, the workflow spawns them itself and keeps its own journal.
+  // Standalone (no handoff at all), the workflow spawns them itself and
+  // keeps its own journal. A handoff that is present but unusable raises
+  // instead: falling back would launch children the host cannot see.
   match @hosted.context() {
     Some(ctx) => ctx.run(body, max_concurrent=jobs)
     None => {
@@ -276,7 +278,6 @@ async fn sweep() -> Unit {
               "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind",
               call.kind, "--result-file", @spawn.ResultFilePlaceholder,
             ],
-            transport=ResultFile,
           )
         }),
         journal=@workflow.Journal::load(value(args, "journal", "simplify.jsonl")),

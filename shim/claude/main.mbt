@@ -1,6 +1,6 @@
 ///|
 /// A PROCESS SHIM: Claude Code as a workflow engine. Speaks the child
-/// contract's transport 2 (`docs/child-contract.md` §10): one request line
+/// contract (`docs/child-contract.md`): one request line
 /// on stdin, one result file at `--result-file`. It drives
 /// `claude -p --output-format stream-json` underneath and reads that stream
 /// for the answer, the usage, and the steps. Point a `LaunchSpec` at the
@@ -8,8 +8,7 @@
 ///
 ///   moonx moonbitlang/workflow/shim/claude --result-file {result_file} [--model m] [--cwd d] [--writable] [--schema f] [-- claude args...]
 ///
-/// with `transport=ResultFile`, so the runner substitutes a fresh path for
-/// `{result_file}`. `moonx` runs the wasm build, which this shim fully
+/// The runner substitutes a fresh path for `{result_file}`. `moonx` runs the wasm build, which this shim fully
 /// supports: it spawns the CLI, keeps the parent's stdin-EOF cancel channel
 /// live, and writes the result exactly as the native build does. Building
 /// locally (`just shims`) is for developing THIS shim, where the published

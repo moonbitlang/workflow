@@ -32,7 +32,6 @@ async fn showcase() -> Unit {
         "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
         "--result-file", @spawn.ResultFilePlaceholder,
       ],
-      transport=ResultFile,
     )
   })
   let wf = @workflow.Workflow(runner~, journal~, max_concurrent=4)

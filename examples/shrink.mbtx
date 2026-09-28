@@ -319,7 +319,6 @@ async fn shrink() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         "codex" =>
           @spawn.LaunchSpec(
@@ -335,7 +334,6 @@ async fn shrink() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         kind =>
           @spawn.LaunchSpec(
@@ -346,7 +344,6 @@ async fn shrink() -> Unit {
             ],
             cwd=repo,
             deadline_ms=600_000,
-            transport=ResultFile,
           )
       }
     }),

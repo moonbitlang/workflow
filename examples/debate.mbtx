@@ -34,7 +34,6 @@ async fn debate() -> Unit {
           "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
           "--result-file", @spawn.ResultFilePlaceholder,
         ],
-        transport=ResultFile,
       )
     }),
     journal=@workflow.Journal::load("debate.jsonl"),

@@ -24,7 +24,7 @@ pub struct AgentCall {
   /// revision, tenant, workspace. Empty means "unscoped".
   scope : String
   /// A JSON Schema the report must satisfy, when the caller asked for one.
-  /// It rides the request envelope so an engine that can constrain the
+  /// It rides the request so an engine that can constrain the
   /// model does, and it is part of the work identity: the same question
   /// under a different shape is different work. Absent from the journal
   /// line when `None`, so pre-schema journals load unchanged.
@@ -103,7 +103,7 @@ pub fn AgentAttempt::AgentAttempt(
 /// appear here: retrying those is the engine's job, below this seam. What
 /// a script retries is a whole AGENT that came back with nothing usable —
 /// `retry`, whose default policy is written against this vocabulary.
-/// Mirrors `@agent_subrun.SubrunTerminal` minus `Captured` (that one is the
+/// Mirrors the child contract's non-`Captured` terminals (`Captured` is the
 /// success path), plus `Skipped` (a human declined the call — replay keeps
 /// it declined rather than overriding the decision).
 pub(all) enum AgentFailure {

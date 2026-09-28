@@ -1,6 +1,6 @@
 ///|
-/// One request as the runner sent it: the transport-2 request document
-/// (`docs/child-contract.md` §10.2). `prompt` is derived from `input` the
+/// One request as the runner sent it: the request document
+/// (`docs/child-contract.md` §2). `prompt` is derived from `input` the
 /// way `Workflow::agent` builds it: a `query` plus optional `hints`.
 ///
 /// A shim READS one; `serve` gets it off the wire. A caller fabricating one

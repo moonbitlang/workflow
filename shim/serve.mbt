@@ -15,7 +15,7 @@ impl Show for NoResult with fn output(self, logger) {
 ///|
 /// A whole shim, as `main`: parse argv into `Options`, read the request
 /// line from stdin, hand both to `run`, and write the `ShimResult` it
-/// returns to the `--result-file` path (contract transport 2). stdin stays
+/// returns to the `--result-file` path (the child contract). stdin stays
 /// open afterwards as the parent's cancel channel, which `run_cli` watches.
 ///
 /// Every ending the shim controls writes a result: an error `run` raises is

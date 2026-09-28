@@ -24,9 +24,14 @@ After adding the module, import `moonbitlang/workflow/hosted` in your
 combinators by name.
 
 `context()` parses the `WORKFLOW_HOST` environment variable. It returns
-`None` for an absent, malformed, incomplete, or unsupported handoff. If
-hosting is required, treat `None` as a configuration error; if your program
-also supports standalone execution, choose that path explicitly.
+`None` when the variable is unset or blank: this process was given no
+handoff. A handoff that was supplied but cannot be used — not JSON, another
+handoff version or transport, or a coordinate missing or malformed — raises
+`HandoffError` with the reason; it never reads as `None`, so a program never
+mistakes a broken host for no host. If hosting is required, treat `None` as
+a configuration error too; if your program also supports standalone
+execution, choose that path only on `None`. Let a `HandoffError` escape
+`main` and it prints `unusable WORKFLOW_HOST handoff: <reason>`.
 
 A `Context` comes only from that variable. The package deliberately exposes
 no way to build one from JSON a script wrote itself, so the coordinates a
@@ -64,25 +69,32 @@ test "read a host's launch coordinates" {
 }
 
 ///|
-test "an incomplete or unknown handoff reads as no handoff" {
+test "no handoff is None; a broken one is an error" {
+  @env.unset_env_var("WORKFLOW_HOST")
+  assert_true(@hosted.context() is None)
   @env.set_env_var("WORKFLOW_HOST", "{\"v\":2}")
   defer @env.unset_env_var("WORKFLOW_HOST")
-  assert_true(@hosted.context() is None)
+  let reason = try @hosted.context() catch {
+    @hosted.HandoffError(reason) => reason
+  } noraise {
+    _ => "read"
+  }
+  assert_eq(reason, "no `transport`")
 }
 ```
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `v` | Yes | Handoff version: 2, or 1 (which always means `stdout_events`). |
-| `transport` | With `v: 2` | `"result_file"` (each child writes one result file) or `"stdout_events"`. |
+| `v` | Yes | The handoff document's version: `2`. (Not this package's version, and not the version `1` of the request and result documents a child reads and writes.) |
+| `transport` | Yes | `"result_file"`: each child writes one result file (the [child contract](../docs/child-contract.md)). |
 | `exe` | Yes | Nonempty executable path or name. |
-| `child_args` | Yes | Nonempty array of argv strings; substitutes `{kind}` and `{child}` in each token. With `result_file` it must name `{result_file}`, which becomes a fresh path per launch; with `stdout_events` it must not. |
+| `child_args` | Yes | Nonempty array of argv strings; substitutes `{kind}` and `{child}` in each token. It must name `{result_file}`, which becomes a fresh path per launch. |
 | `child_id` | Yes | Template containing `{n}`, replaced by the reserved ordinal. |
-| `ids` | Yes | `[first, count]`, both positive; supply whole-number ordinals and counts. |
-| `journal` | No | Append-only journal path; omitted uses an in-memory journal. |
-| `events` | No | Sidecar JSONL path; omitted disables file-based sidecar output. |
-| `cwd` | No | Child working directory; omitted inherits the current directory. |
-| `deadline_ms` | No | Per-child wall deadline; default 600,000 ms. |
+| `ids` | Yes | `[first, count]`, both positive integers. |
+| `journal` | No | Append-only journal path; omitted, null, or empty uses an in-memory journal. |
+| `events` | No | Sidecar JSONL path; omitted, null, or empty disables file-based sidecar output. |
+| `cwd` | No | Child working directory; omitted, null, or empty inherits the current directory. |
+| `deadline_ms` | No | Per-child wall deadline, a positive integer; default 600,000 ms. |
 
 The example reserves ordinals 5 through 36. Reading checks the document's
 structure; it does not check executable availability, create output
@@ -158,8 +170,10 @@ after calls resolve. These are distinct from the core's in-process
 
 Finish statuses include `captured`, `no_report`, `max_steps`, `context_yield`,
 `timed_out`, `failed`, and `cancelled`. On caller cancellation, the runner
-tears down the child, attempts a finish event with observed usage under
-cancellation protection, and re-raises. No cancelled outcome is journalled.
+tears down the child, attempts a finish event under cancellation protection,
+and re-raises. A cancelled child's spend is in the result nobody read, so its
+finish event carries zero counters and an `unaccounted` reason; so does any
+finish whose child left no usable result. No cancelled outcome is journalled.
 The default sidecar writer is best effort; hard termination or a write
 failure can leave an incomplete pair.
 
@@ -177,8 +191,9 @@ create multiple runners can reuse child ids. The handoff is an accounting
 protocol, not an operating-system sandbox; process permissions and trust in
 the supplied environment remain the host's responsibility.
 
-Only `{kind}` and `{child}` are argv substitutions. `max_steps` and `schema`
-travel in the request envelope; choose a child that honors those fields.
+`{kind}`, `{child}`, and `{result_file}` are the argv substitutions.
+`max_steps` and `schema` travel in the request; choose a child that honors
+those fields.
 This package does not provision worker worktrees or integrate their changes.
 
 Use `ctx.runner()` to assemble your own `Workflow` when you need options

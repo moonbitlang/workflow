@@ -349,7 +349,7 @@ test "anything but a whole version 1 request is a typed refusal" {
     ),
     "unsupported request version 2",
   )
-  // The transport-1 envelope is not a request any more.
+  // The retired `workflow_contract` envelope is not a request.
   assert_eq(
     refusal(
       "{\"workflow_contract\":1,\"id\":\"cr-1\",\"kind\":\"explore\",\"input\":\"q\"}",

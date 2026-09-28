@@ -1,7 +1,7 @@
 # moonbitlang/workflow/shim/codex
 
 Run Codex as a workflow child. This executable speaks the
-[child contract](../../docs/child-contract.md)'s transport 2: it reads one
+[child contract](../../docs/child-contract.md): it reads one
 request line on stdin, drives `codex exec --json`, reads completed items and
 turns for the steps, usage, and answer, and writes one result file. It
 supports native and wasm and exposes no callable library API.
@@ -22,15 +22,11 @@ This example invokes a real agent, so documentation tests do not run it:
 async fn main {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      @spawn.LaunchSpec(
-        command="moonx",
-        args=[
-          "moonbitlang/workflow/shim/codex",
-          "--result-file",
-          @spawn.ResultFilePlaceholder,
-        ],
-        transport=ResultFile,
-      )
+      @spawn.LaunchSpec(command="moonx", args=[
+        "moonbitlang/workflow/shim/codex",
+        "--result-file",
+        @spawn.ResultFilePlaceholder,
+      ])
     }),
     max_calls=1,
   )

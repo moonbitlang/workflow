@@ -31,7 +31,6 @@ async fn hunt() -> Unit {
           "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
           "--result-file", @spawn.ResultFilePlaceholder,
         ],
-        transport=ResultFile,
       )
     }),
     journal=@workflow.Journal::load("todo-hunt.jsonl"),

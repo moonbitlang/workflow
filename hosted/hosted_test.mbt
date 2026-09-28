@@ -6,13 +6,20 @@
 /// README's checked examples do; a script itself never writes it.
 async test "the handoff reads from WORKFLOW_HOST, and only from it" {
   // A script run outside a host has nothing to delegate to. That is ordinary,
-  // not an error: `context()` returns None and the script does its own work.
+  // not an error: `context()` returns None, for an unset variable and for a
+  // blank one alike.
   @env.unset_env_var("WORKFLOW_HOST")
   guard @hosted.context() is None else { fail("no variable, no context") }
+  @env.set_env_var("WORKFLOW_HOST", " ")
+  guard @hosted.context() is None else { fail("a blank variable, no context") }
   let document : Json = {
-    "v": 1,
+    "v": 2,
+    "transport": "result_file",
     "exe": "/opt/engine",
-    "child_args": ["subrun", "{kind}", "--session", "{child}"],
+    "child_args": [
+      "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", "{kind}",
+      "--result-file", "{result_file}", "--session", "{child}",
+    ],
     "child_id": "run7-sr-{n}",
     "ids": [5, 3],
     "journal": "/store/run7.jsonl",
@@ -33,14 +40,36 @@ async test "the handoff reads from WORKFLOW_HOST, and only from it" {
   assert_eq(ctx.extension("custom"), Some([1, "two"]))
   assert_eq(ctx.extension("missing"), None)
   assert_eq(ctx.extension("exe"), None)
+  assert_eq(ctx.extension("transport"), None)
   assert_eq(ctx.child_capacity(), 3)
   assert_eq(ctx.journal_path(), Some("/store/run7.jsonl"))
   // The sidecar is optional: a host that named no events file gets none.
   assert_eq(ctx.events_path(), None)
-  // Fail closed on a version this release does not know, and on input that is
-  // not a document at all.
+}
+
+///|
+test "a supplied handoff that cannot be used is an error, never no handoff" {
+  // Falling back to standalone work on a bad handoff would launch children
+  // the host never reserved and cannot see.
+  defer @env.unset_env_var("WORKFLOW_HOST")
+  for raw in ["not json", "{\"v\":2}", "{\"v\":1,\"exe\":\"/e\"}"] {
+    @env.set_env_var("WORKFLOW_HOST", raw)
+    let message = try @hosted.context() catch {
+      error => {
+        // What a script's `main` prints when it lets the error escape.
+        let escaped : Error = error
+        escaped.to_string()
+      }
+    } noraise {
+      _ => "no error"
+    }
+    assert_true(message.has_prefix("unusable WORKFLOW_HOST handoff: "))
+  }
   @env.set_env_var("WORKFLOW_HOST", "{\"v\":2}")
-  assert_true(@hosted.context() is None)
-  @env.set_env_var("WORKFLOW_HOST", "not json")
-  assert_true(@hosted.context() is None)
+  let raised = try @hosted.context() catch {
+    @hosted.HandoffError(reason) => reason
+  } noraise {
+    _ => "no error"
+  }
+  assert_eq(raised, "no `transport`")
 }

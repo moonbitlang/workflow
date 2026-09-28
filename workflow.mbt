@@ -144,7 +144,7 @@ pub async fn Workflow::agent_call(
   // Phase attribution is invocation-time, not launch-time: a call issued
   // under phase A that waits out the queue into phase B still belongs to A.
   let phase = self.current_phase
-  // `Some(null)` is no schema: the envelope would carry `"schema": null`,
+  // `Some(null)` is no schema: the request would carry `"schema": null`,
   // which every engine reads as none, so the identity says none too.
   let schema = match schema {
     Some(Null) => None
@@ -249,7 +249,7 @@ pub async fn Workflow::agent_call(
 /// `FromJson`, or the call fails as `AgentFailed` with
 /// `Failed("report rejected: …")` carrying the decoder's message and path —
 /// the feedback a retry wants. `schema` (a JSON Schema) additionally rides
-/// the envelope so an engine that can constrain the model to the shape
+/// the request so an engine that can constrain the model to the shape
 /// does; decoding still runs, because the engine is not trusted to
 /// validate. The raw report is journaled as returned, so a rejection
 /// replays as the same rejection.

@@ -30,7 +30,7 @@ import {
 /// Engines (CROSS_REVIEW_ENGINES, default `claude,codex`; `explore` adds
 /// openseek's read-only scout on DeepSeek): `claude` and `codex` run
 /// through this module's shims, `explore` through `openseek run`; every
-/// child writes one result file (`transport=ResultFile`).
+/// child writes one result file.
 /// Models: CROSS_REVIEW_CLAUDE (claude-sonnet-5), CROSS_REVIEW_CODEX
 /// (gpt-5.3-codex-spark), CROSS_REVIEW_DEEPSEEK (deepseek-v4-flash).
 async fn main {
@@ -194,7 +194,6 @@ async fn review() -> Unit {
               claude_model, "--", "--max-budget-usd", "0.60",
             ],
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         "codex" =>
           @spawn.LaunchSpec(
@@ -204,7 +203,6 @@ async fn review() -> Unit {
               codex_model,
             ],
             deadline_ms=600_000,
-            transport=ResultFile,
           )
         kind =>
           // The request carries the kind and the step ceiling: argv names
@@ -216,7 +214,6 @@ async fn review() -> Unit {
               "--result-file", @spawn.ResultFilePlaceholder, "--model", deepseek_model,
             ],
             deadline_ms=600_000,
-            transport=ResultFile,
           )
       }
     }),
