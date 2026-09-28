@@ -437,8 +437,10 @@ cancellation and unexpected infrastructure errors.
 
 The checked examples above use in-process runners. To run a process, use
 [`spawn.contract_runner`](spawn/README.mbt.md): its `launch` callback returns
-an executable and argv, and the package handles the child contract,
-accounting, deadlines, and teardown. A `Runner::invoke` call is useful for
+an executable, argv, and a transport, and the package handles the child
+contract, accounting, deadlines, and teardown. Launch a child with
+`transport=ResultFile` and `{result_file}` in its argv: it then writes one
+result file, as OpenSeek's `openseek run` and this module's shims do. A `Runner::invoke` call is useful for
 routing one runner to another; it does not itself add workflow limits,
 journalling, or replay.
 
@@ -460,7 +462,9 @@ reservation allocation; this handoff does not implement a sandbox.
 [Host handoff](docs/host-handoff.md) defines the configuration protocol.
 
 The two executable adapters make existing agent CLIs speak the
-[child contract](docs/child-contract.md):
+[child contract](docs/child-contract.md)'s result-file transport; launch one
+as `moonx moonbitlang/workflow/shim/claude --result-file {result_file} …`
+with `transport=ResultFile`:
 
 | Adapter | Default tool policy | Step definition | Report |
 | --- | --- | --- | --- |

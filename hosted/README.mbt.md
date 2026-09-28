@@ -41,9 +41,13 @@ to read its inherited configuration.
 ///|
 test "read a host's launch coordinates" {
   let document : Json = {
-    "v": 1,
+    "v": 2,
+    "transport": "result_file",
     "exe": "/opt/engine",
-    "child_args": ["subrun", "{kind}", "--session", "{child}"],
+    "child_args": [
+      "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", "{kind}",
+      "--result-file", "{result_file}", "--session", "{child}",
+    ],
     "child_id": "run7-sr-{n}",
     "ids": [5, 32],
     "journal": "/store/run7.jsonl",
@@ -69,9 +73,10 @@ test "an incomplete or unknown handoff reads as no handoff" {
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `v` | Yes | Handoff version, currently 1. |
+| `v` | Yes | Handoff version: 2, or 1 (which always means `stdout_events`). |
+| `transport` | With `v: 2` | `"result_file"` (each child writes one result file) or `"stdout_events"`. |
 | `exe` | Yes | Nonempty executable path or name. |
-| `child_args` | Yes | Nonempty array of argv strings; substitutes `{kind}` and `{child}` in each token. |
+| `child_args` | Yes | Nonempty array of argv strings; substitutes `{kind}` and `{child}` in each token. With `result_file` it must name `{result_file}`, which becomes a fresh path per launch; with `stdout_events` it must not. |
 | `child_id` | Yes | Template containing `{n}`, replaced by the reserved ordinal. |
 | `ids` | Yes | `[first, count]`, both positive; supply whole-number ordinals and counts. |
 | `journal` | No | Append-only journal path; omitted uses an in-memory journal. |
@@ -96,13 +101,16 @@ This checked example uses `sh` as a local engine and needs no credentials:
 ```mbt check
 ///|
 async test "run within a one-child reservation" {
+  // The child id is the request id its result must echo: `demo-1`, the one
+  // ordinal reserved. The result path arrives as `$1`.
   let child =
     #|read request
-    #|printf '%s\n' '{"subrun_report":{"answer":"ready"}}'
+    #|printf '{"version":1,"request_id":"demo-1","status":"completed","output":{"answer":"ready"}}' > "$1"
   let document : Json = {
-    "v": 1,
+    "v": 2,
+    "transport": "result_file",
     "exe": "sh",
-    "child_args": ["-c", child],
+    "child_args": ["-c", child, "sh", "{result_file}"],
     "child_id": "demo-{n}",
     "ids": [1, 1],
   }

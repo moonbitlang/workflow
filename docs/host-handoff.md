@@ -20,9 +20,10 @@ partial one.
 
 ```json
 {
-  "v": 1,
+  "v": 2,
+  "transport": "result_file",
   "exe": "/opt/engine",
-  "child_args": ["subrun", "{kind}", "--session", "{child}", "--session-root", "/store"],
+  "child_args": ["run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", "{kind}", "--result-file", "{result_file}", "--session", "{child}", "--session-root", "/store"],
   "child_id": "run7-sr-{n}",
   "ids": [5, 32],
   "journal": "/store/run7-wf-5.jsonl",
@@ -54,7 +55,7 @@ validation. The library preserves arbitrary JSON values without interpreting
 them. Missing fields return `None`; explicit `null` returns `Some(Null)`.
 Reserved fields in the table above are not extensions and are never returned
 by this accessor. Hosts should use their own namespace to avoid collisions
-with future common fields. Existing handoffs need no changes; `v` remains 1.
+with future common fields. Adding an extension needs no new `v`.
 
 ## What the host must guarantee
 
@@ -118,29 +119,31 @@ nothing, because the runner had to mint the ordinal anyway.
 
 ## Per-call `max_steps`
 
-Not in `child_args`. It rides the request envelope on the child's stdin, where
-the [child contract](child-contract.md) already carries it. A template with an
-optional flag in it would need conditional groups to express "omit both tokens
-when unset"; the envelope needs nothing. An engine that reads `max_steps` only
-from argv should learn to read it from the envelope instead.
+Not in `child_args`. It rides the request on the child's stdin
+(`limits.max_steps`), where the [child contract](child-contract.md) already
+carries it. A template with an optional flag in it would need conditional
+groups to express "omit both tokens when unset"; the request needs nothing.
+An engine that reads `max_steps` only from argv should learn to read it from
+the request instead.
 
-## Version 2
+## Versions
 
-Version 2 adds `transport`, so a host can launch children that write a result
-file instead of streaming events:
+Version 2 added `transport`, so a host can launch children that write a
+result file — the transport the reference engine and the shims speak.
+Version 1 has no `transport` field and always means `stdout_events`, for
+engines that still stream events:
 
 ```json
 {
-  "v": 2,
-  "transport": "result_file",
+  "v": 1,
   "exe": "/opt/engine",
-  "child_args": ["run", "--kind", "{kind}", "--input-format", "json", "--cancel-on-stdin-eof", "--result-file", "{result_file}", "--session", "{child}"],
+  "child_args": ["{kind}", "--session", "{child}"],
   "child_id": "run7-sr-{n}",
   "ids": [5, 32]
 }
 ```
 
-A library older than version 2 refuses this handoff: `context()` returns
-`None`, so a script behaves as if it had no host rather than passing
-`{result_file}` to a child literally. A host that must serve older scripts
-keeps writing version 1.
+A library older than version 2 refuses a version 2 handoff: `context()`
+returns `None`, so a script behaves as if it had no host rather than passing
+`{result_file}` to a child literally. A host that must serve such older
+scripts writes version 1, with an engine that streams events.

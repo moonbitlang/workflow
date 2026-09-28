@@ -14,11 +14,15 @@ the part of the contract that was implicit until now.
 The dependency points engine → framework: this module never learns that any
 particular engine exists. Everything an engine must know is on this page.
 
-There are two transports. **Transport 1** (§1–§9) streams JSONL events on
-stdout and ends with a report line. **Transport 2** (§10) writes one result
-file and leaves stdout to humans. The launch configuration chooses
-(`LaunchSpec.transport`, `contract_run(transport=…)`, or the host handoff's
-`transport`); the runner never guesses from what a child prints.
+There are two transports. **Transport 2** (§10) writes one result file and
+leaves stdout to humans; it is the one to launch with — `openseek run`, the
+`shim/claude` and `shim/codex` executables, and every example in this module
+speak it. **Transport 1** (§1–§9) streams JSONL events on stdout and ends
+with a report line; it remains for engines that have not moved yet. §10
+builds on §1 and §6 and says where transport 2 differs. The launch
+configuration chooses (`LaunchSpec.transport`,
+`contract_run(transport=…)`, or the host handoff's `transport`); the runner
+never guesses from what a child prints.
 
 ## 1. Process lifecycle
 
@@ -173,8 +177,9 @@ attempt.
 
 > This section records openseek engines before `subrun` was retired
 > (openseek#1767): current openseek speaks only transport 2, as
-> `openseek run` (§10.6). It stays as the reference for launching those
-> older engines over transport 1.
+> `openseek run` (§10.6), and has no `subrun` command. It stays only as the
+> reference for those older engines over transport 1; do not use it for a
+> new launch.
 
 `openseek subrun <kind>` (source: `cmd/openseek/subrun.mbt` in the openseek
 repository; parent-side wrapper `agent_subrun.run_subrun`) speaks this
@@ -329,12 +334,9 @@ examples of the terminals a child can drive on its own — `Captured`,
 runner's and the engine's to raise); openseek's `tests/cram/run-requests.md`
 pins the reference engine's transport-2 results, refusals, and cancellation
 byte for byte.
-The `shim/claude` and `shim/codex` executables in this module are two
-further conforming engines: each wraps a foreign CLI, reads the envelope
-through the shared `shim` package, and additionally enforces the request's
-`max_steps` itself (§7.1's argv caveat does not apply to them — they read
-`kind` and `max_steps` from the envelope).
-The smallest conforming engine is a shell script:
+(The `shim/claude` and `shim/codex` executables in this module speak
+transport 2; see §10.7.)
+The smallest conforming transport-1 engine is a shell script:
 
 ```sh
 read line
@@ -421,8 +423,8 @@ was abnormal. The exit status is collected in the grace window too.
 ### 10.5 Accounting
 
 The counters, and the price when `usage.cost_usd` states one, come from the
-result's `usage` and `steps`, and nothing is
-observed while the child runs, so a caller cancelled mid-run sees none. When
+result's `usage` and `steps`, and nothing is observed while the child runs,
+so a caller cancelled mid-run sees none. When
 the runner has no account from the child (no file, a malformed file, or a
 result without `usage`), `ContractResult.unaccounted` and
 `AgentAttempt.unaccounted` say why, and the counters are only what was
@@ -439,3 +441,41 @@ cancelled mid-run writes `unaccounted` on its `agent_finished` sidecar line.
 `limits.max_steps` from the request (an explicit `--max-steps` wins), refuses
 a `schema`, and rejects a `--kind` that disagrees with the request. A child
 launched this way delegates no further. See openseek's `docs/run-result.md`.
+
+### 10.7 Conformance for a transport-2 engine
+
+An executable is a transport-2 workflow engine when it:
+
+1. takes the result path from its argv (the launch passes `{result_file}`
+   where the engine expects it) and writes nothing else there;
+2. reads one request line from stdin, refuses any `version` but 1, and
+   keeps running after it, treating stdin EOF as graceful cancel;
+3. writes exactly one result, once, when it is over — a sibling renamed
+   into place — echoing the `request_id`, on every ending it controls:
+   `interrupted` for the parent's cancel, `failed` with a reason for its
+   own failures and for a request it cannot run;
+4. reports `usage` as its cumulative totals, and omits it rather than
+   report an unknown spend as zero.
+
+A request it cannot parse at all has no `request_id` to echo: the engine
+writes nothing, explains on stderr, and exits nonzero, and the runner
+reports that the child left no result.
+
+The `shim/claude` and `shim/codex` executables are two conforming engines.
+Each wraps a foreign CLI through the shared `shim` package (`serve` reads
+the request and writes the result), takes `--result-file PATH` on its argv,
+and enforces `limits.max_steps` itself. A cancelled shim tears its CLI down
+gracefully, settles the usage it observed, and writes `interrupted`.
+`spawn/spawn_test.mbt` drives scripted `sh` children through each
+classification; `shim/shim_wbtest.mbt` drives the shim runtime through
+every ending it writes.
+
+The smallest conforming engine is a shell script launched as
+`sh -c SCRIPT sh {result_file}`:
+
+```sh
+read request
+id=$(printf '%s' "$request" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+printf '{"version":1,"request_id":"%s","status":"completed","output":{"answer":42}}' "$id" > "$1.tmp"
+mv "$1.tmp" "$1"
+```

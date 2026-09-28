@@ -1,9 +1,16 @@
 # moonbitlang/workflow/spawn
 
 Run a child process as a workflow agent. This package owns the parent side
-of the [child contract](../docs/child-contract.md): send one request, account
-the child's streamed events, capture its report, and tear it down on timeout
-or cancellation. It supports native and wasm.
+of the [child contract](../docs/child-contract.md): send one request, read
+the child's result and account its usage, and tear it down on timeout or
+cancellation. It supports native and wasm.
+
+A child hands back its result over one of two transports, which the launch
+chooses. With `transport=ResultFile` it writes ONE result file, whose path
+the runner substitutes for `{result_file}` in its argv, and its stdout is
+for humans; OpenSeek's `openseek run` and this module's
+[shims](../shim/README.mbt.md) speak it. The default, `StdoutEvents`,
+streams JSONL events and a final report line on stdout instead.
 
 Use `contract_runner` when building a workflow. Use `contract_run` when an
 adapter needs the raw terminal, its own request id, live progress counters,
@@ -24,19 +31,24 @@ supported_targets = "native+wasm"
 ```
 
 This checked example uses only `sh` and its builtins. It launches a real
-child, accounts its usage, and returns its report without model credentials.
+child, which echoes the request's id in the result file it writes; the
+runner accounts its usage and returns its report without model credentials.
 
 ```mbt check
 ///|
 async test "a shell child returns an accounted workflow report" {
+  // `sh -c CHILD sh {result_file}`: the result path arrives as `$1`.
   let child =
     #|read request
-    #|printf '%s\n' '{"event":"agent_step","step":1}'
-    #|printf '%s\n' '{"event":"usage","usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":7}}'
-    #|printf '%s\n' '{"subrun_report":{"answer":"ready"}}'
+    #|id=$(printf '%s' "$request" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+    #|printf '{"version":1,"request_id":"%s","status":"completed","output":{"answer":"ready"},"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":7},"steps":1}' "$id" > "$1"
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      @spawn.LaunchSpec(command="sh", args=["-c", child])
+      @spawn.LaunchSpec(
+        command="sh",
+        args=["-c", child, "sh", @spawn.ResultFilePlaceholder],
+        transport=ResultFile,
+      )
     }),
     max_calls=1,
   )
@@ -58,13 +70,60 @@ served by the workflow never invokes `launch`.
 | `cwd` | Child working directory; omitted means inherited. |
 | `extra_env` | Overrides or adds to the inherited environment. |
 | `deadline_ms` | Overrides the runner's deadline for this launch. |
+| `transport` | `ResultFile` (argv must name `{result_file}`) or the default `StdoutEvents` (argv must not). A mismatch is a `Failed` launch. |
 
 The runner default is `deadline_ms=600_000` (10 minutes). Credentials belong
 in the environment. A CLI that does not speak the contract needs an adapter,
 such as [`shim/claude`](../shim/claude/README.mbt.md) or
 [`shim/codex`](../shim/codex/README.mbt.md).
 
-## Request and lifetime
+For example, OpenSeek's presets, one `openseek run` child per call:
+
+```moonbit nocheck
+///|
+let runner : @workflow.Runner = @spawn.contract_runner(launch=call => {
+  @spawn.LaunchSpec(
+    command="openseek",
+    args=[
+      "run",
+      "--input-format",
+      "json",
+      "--cancel-on-stdin-eof",
+      "--kind",
+      call.kind,
+      "--result-file",
+      @spawn.ResultFilePlaceholder,
+    ],
+    transport=ResultFile,
+  )
+})
+```
+
+The request carries the kind, the input, and `limits.max_steps`; argv holds
+only engine settings (OpenSeek also checks `--kind` against the request).
+
+## The result-file transport
+
+The runner creates a private directory per launch, substitutes its
+`result.json` for `{result_file}`, and writes one request line on stdin:
+`{"version": 1, "request_id", "kind", "input", "limits"?: {"max_steps"},
+"schema"?}`. stdin stays open; EOF is the cancellation signal. stdout is
+drained unread. When the child is done, the result file is the whole
+account: `status` (`completed` with `output`, `no_report`,
+`max_steps_exhausted`, or `context_yield` / `aborted` / `interrupted` /
+`failed` with a `reason`), and optionally `usage` (the five counters, plus
+`cost_usd` when the engine prices its work) and `steps`. A result must echo
+the request's `request_id`.
+
+A `completed` result is `Captured`, even when it lands in the deadline's
+grace window; otherwise the deadline wins, as `TimedOut`. No file, or an
+unreadable or malformed one, is `Failed` — never success. Because nothing is
+observed while the child runs, a result without `usage` (or no result at
+all) leaves the spend unknown, and `ContractResult.unaccounted` says why.
+[Contract §10](../docs/child-contract.md#10-transport-2-the-result-file)
+specifies the documents.
+
+## The event-stream transport
 
 ```mermaid
 sequenceDiagram
@@ -85,8 +144,8 @@ sequenceDiagram
   R-->>W: AgentOutcome with observed usage
 ```
 
-The request includes `workflow_contract: 1`, `id`, `kind`, `input`, and
-optional `max_steps` and `schema`. Engine options remain in argv. `max_steps`
+Under `StdoutEvents`, the request includes `workflow_contract: 1`, `id`,
+`kind`, `input`, and optional `max_steps` and `schema`. Engine options remain in argv. `max_steps`
 is forwarded for the child to enforce; this runner enforces elapsed time.
 Never make a child wait for stdin EOF before processing the request: EOF is
 the cancellation signal. Diagnostics may go to stderr, which is inherited.
@@ -100,9 +159,10 @@ duration of `contract_run`.
 External cancellation follows a different path: teardown completes and the
 cancellation is re-raised. It does not return `TimedOut` or another terminal.
 
-## Terminal precedence and accounting
+### Terminal precedence and accounting
 
-If multiple signals arrive, the first applicable row determines the result:
+Under `StdoutEvents`, if multiple signals arrive, the first applicable row
+determines the result:
 
 | Priority | `ContractTerminal` | Evidence |
 | --- | --- | --- |
