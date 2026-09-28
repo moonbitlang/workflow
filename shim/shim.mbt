@@ -1,6 +1,6 @@
 ///|
 /// THE SHIM SIDE OF THE CHILD CONTRACT — what every process shim around a
-/// foreign agent CLI needs, over contract transport 2 (the result file):
+/// foreign agent CLI needs (one request line in, one result file out):
 /// `serve` parses the shim's argv and the one request line the runner
 /// writes, and writes the one result file; `run_cli` runs the CLI while
 /// the parent's stdin-EOF cancel signal stays live. `shim/claude` and

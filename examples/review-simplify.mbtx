@@ -277,7 +277,6 @@ async fn engine_launch(
     args=argv,
     cwd=repo,
     deadline_ms=deadline,
-    transport=ResultFile,
   )
 }
 

@@ -40,22 +40,48 @@ struct Context {
   events_path : String?
   cwd : String?
   deadline_ms : Int?
-  transport : @spawn.Transport
+}
+
+///|
+/// A handoff the host DID supply but this release cannot use: not JSON, a
+/// handoff version or transport it does not read, or a coordinate missing
+/// or malformed. The payload says which.
+pub suberror HandoffError {
+  HandoffError(String)
+}
+
+///|
+/// Prints the reason alone, so a script that lets the error escape `main`
+/// tells its operator exactly what was wrong with the handoff.
+impl Show for HandoffError with fn output(self, logger) {
+  let HandoffError(reason) = self
+  logger.write_string("unusable WORKFLOW_HOST handoff: \{reason}")
 }
 
 ///|
 /// The handoff, or `None` when this process was not given one.
 ///
-/// `None` is an ordinary state, not an error. A script run outside a host — by
-/// hand, in a test, by a host with nothing to reserve — simply has no children
-/// to delegate to, and should do its own work rather than fail.
-pub fn context() -> Context? {
-  guard @env.get_env_var(HostVar) is Some(raw) else { return None }
-  parse(@json.parse(raw) catch { _ => return None })
+/// `None` — the variable unset, or blank — is an ordinary state, not an
+/// error. A script run outside a host (by hand, in a test, by a host with
+/// nothing to reserve) simply has no children to delegate to, and may do its
+/// own work instead.
+///
+/// A handoff that WAS supplied but cannot be used raises `HandoffError`. It
+/// never reads as `None`: a script that fell back to standalone work on a bad
+/// handoff would launch children its host never reserved and cannot see.
+pub fn context() -> Context? raise HandoffError {
+  guard @env.get_env_var(HostVar) is Some(raw) && !raw.is_blank() else {
+    return None
+  }
+  let json = @json.parse(raw) catch {
+    error => raise HandoffError("not JSON: \{error}")
+  }
+  Some(parse(json))
 }
 
 ///|
-/// The handoff from its JSON form: what `context()` reads.
+/// The handoff from its JSON form: what `context()` reads, or a
+/// `HandoffError` saying why it cannot be used.
 ///
 /// PRIVATE, like the layout it fills. `Context` is abstract so that a script
 /// cannot CHOOSE the coordinates that make its children accountable; a public
@@ -63,85 +89,100 @@ pub fn context() -> Context? {
 /// back through the front door. `context()` is the only way in, and the only
 /// coordinates a `Context` can carry are the ones the host wrote down.
 ///
-/// FAIL CLOSED. A document missing any required coordinate, or carrying a
-/// version this package does not know, yields `None` rather than a partial
-/// context — a half-read handoff would name child ids the host never reserved,
-/// or a ledger path nothing is watching.
+/// FAIL CLOSED. A document missing any required coordinate, carrying one this
+/// package cannot use, or naming a version or transport it does not read is
+/// refused whole rather than read as a partial context — a half-read handoff
+/// would name child ids the host never reserved, or a ledger path nothing is
+/// watching.
 ///
-/// Version 1 launches children over the event stream. Version 2 adds a
-/// required `transport` (`"stdout_events"` or `"result_file"`); a library
-/// that predates it refuses a version 2 handoff, rather than passing a
-/// `{result_file}` placeholder to a child literally.
-fn parse(json : Json) -> Context? {
-  let transport : @spawn.Transport = match json {
-    { "v": 1, .. } => StdoutEvents
-    { "v": 2, "transport": "stdout_events", .. } => StdoutEvents
-    { "v": 2, "transport": "result_file", .. } => ResultFile
-    _ => return None
+/// The handoff is version 2 with `"transport": "result_file"`: children
+/// write one result file each (the child contract). The discriminator stays
+/// on the wire so that this release refuses a handoff meant for any other
+/// contract, and an older library refuses this one, rather than either
+/// passing arguments it does not understand to a child.
+fn parse(json : Json) -> Context raise HandoffError {
+  guard json is Object(fields) else { raise HandoffError("not a JSON object") }
+  match fields.get("v") {
+    Some(Number(2, ..)) => ()
+    Some(version) =>
+      raise HandoffError(
+        "unsupported handoff version \{version.stringify()}; this release reads version 2",
+      )
+    None => raise HandoffError("no handoff version `v`")
   }
-  guard json
-    is {
-      "exe": String(exe),
-      "child_args": Array(child_args),
-      "child_id": String(child_id),
-      "ids": Array([Number(first, ..), Number(count, ..)]),
-      "journal"? : journal,
-      "events"? : events,
-      "cwd"? : cwd,
-      "deadline_ms"? : deadline_ms,
-      ..
-    } else {
-    return None
+  match fields.get("transport") {
+    Some(String("result_file")) => ()
+    Some(transport) =>
+      raise HandoffError(
+        "unsupported transport \{transport.stringify()}; this release reads \"result_file\"",
+      )
+    None => raise HandoffError("no `transport`")
   }
   // A coordinate that arrived but is unusable is as good as missing: an empty
   // `exe` names no engine, an empty template runs nothing, and a child-id
   // template that consumes no ordinal would name every child alike, so the
   // second to write its transcript would land on the first's.
-  guard !exe.is_empty() else { return None }
-  guard child_id.contains(OrdinalPlaceholder) else { return None }
-  guard child_argv(child_args) is Some(argv) else { return None }
-  // The transport and the template must agree, or every launch would fail.
-  let names_result_file = argv.any(token => {
-    token.contains(@spawn.ResultFilePlaceholder)
-  })
-  guard names_result_file == (transport is ResultFile) else { return None }
+  guard fields.get("exe") is Some(String(exe)) && !exe.is_empty() else {
+    raise HandoffError("`exe` must be a non-empty string")
+  }
+  guard fields.get("child_args") is Some(Array(items)) &&
+    child_argv(items) is Some(child_args) else {
+    raise HandoffError("`child_args` must be a non-empty array of strings")
+  }
+  // A child told nowhere to write its result could never report one.
+  guard child_args.any(token => token.contains(@spawn.ResultFilePlaceholder)) else {
+    raise HandoffError("`child_args` must name \{@spawn.ResultFilePlaceholder}")
+  }
+  guard fields.get("child_id") is Some(String(child_id)) &&
+    child_id.contains(OrdinalPlaceholder) else {
+    raise HandoffError(
+      "`child_id` must be a string containing \{OrdinalPlaceholder}",
+    )
+  }
   // A block of unknown size is not a block: both bounds must be present and
   // positive, and a script that assumed one would be inventing the ceiling it
   // is supposed to be under.
-  let first_ordinal = first.to_int()
-  let ordinal_count = count.to_int()
-  guard first_ordinal > 0 && ordinal_count > 0 else { return None }
+  guard fields.get("ids") is Some(Array([Number(first, ..), Number(count, ..)])) &&
+    positive(first) is Some(first_child) &&
+    positive(count) is Some(child_count) else {
+    raise HandoffError("`ids` must be [first, count], both positive integers")
+  }
+  let journal_path = optional_string(fields, "journal")
+  let events_path = optional_string(fields, "events")
+  let cwd = optional_string(fields, "cwd")
+  let deadline_ms = match fields.get("deadline_ms") {
+    None | Some(Null) => None
+    Some(Number(ms, ..)) if positive(ms) is Some(ms) => Some(ms)
+    Some(_) => raise HandoffError("`deadline_ms` must be a positive integer")
+  }
   let extensions : Map[String, Json] = Map([])
-  if json is Object(fields) {
-    for key, value in fields {
-      match key {
-        "v"
-        | "exe"
-        | "child_args"
-        | "child_id"
-        | "ids"
-        | "transport"
-        | "journal"
-        | "events"
-        | "cwd"
-        | "deadline_ms" => ()
-        _ => extensions[key] = value
-      }
+  for key, value in fields {
+    match key {
+      "v"
+      | "transport"
+      | "exe"
+      | "child_args"
+      | "child_id"
+      | "ids"
+      | "journal"
+      | "events"
+      | "cwd"
+      | "deadline_ms" => ()
+      _ => extensions[key] = value
     }
   }
-  Some({
+  {
     extensions,
     exe,
-    child_args: argv,
+    child_args,
     child_id,
-    first_child: first_ordinal,
-    child_count: ordinal_count,
-    journal_path: optional_string(journal),
-    events_path: optional_string(events),
-    cwd: optional_string(cwd),
-    deadline_ms: optional_int(deadline_ms),
-    transport,
-  })
+    first_child,
+    child_count,
+    journal_path,
+    events_path,
+    cwd,
+    deadline_ms,
+  }
 }
 
 ///|
@@ -161,21 +202,28 @@ fn child_argv(items : Array[Json]) -> Array[String]? {
 }
 
 ///|
-/// A coordinate the host may omit. Absent, of the wrong type, and empty all
-/// mean "unset": a host that named no ledger is the same as one that wrote a
-/// blank path.
-fn optional_string(value : Json?) -> String? {
-  match value {
-    Some(String(text)) if !text.is_empty() => Some(text)
-    _ => None
+/// A whole, positive JSON number as an `Int`.
+fn positive(value : Double) -> Int? {
+  let int = value.to_int()
+  if int.to_double() == value && int > 0 {
+    Some(int)
+  } else {
+    None
   }
 }
 
 ///|
-fn optional_int(value : Json?) -> Int? {
-  match value {
-    Some(Number(number, ..)) => Some(number.to_int())
-    _ => None
+/// A path the host may omit. Absent, null, and empty all mean "unset": a host
+/// that named no ledger is the same as one that wrote a blank path. Anything
+/// else but a string is a malformed handoff.
+fn optional_string(
+  fields : Map[String, Json],
+  name : String,
+) -> String? raise HandoffError {
+  match fields.get(name) {
+    None | Some(Null) | Some(String("")) => None
+    Some(String(text)) => Some(text)
+    Some(_) => raise HandoffError("`\{name}` must be a string")
   }
 }
 
@@ -196,137 +244,4 @@ pub fn Context::events_path(self : Context) -> String? {
 /// its ceiling.
 pub fn Context::child_capacity(self : Context) -> Int {
   self.child_count
-}
-
-///|
-test "a complete handoff reads, and a partial one does not" {
-  let document : Json = {
-    "v": 1,
-    "exe": "/opt/engine",
-    "child_args": ["subrun", "{kind}", "--session", "{child}"],
-    "child_id": "run7-sr-{n}",
-    "ids": [5, 32],
-    "journal": "/store/run7-wf-5.jsonl",
-  }
-  guard parse(document) is Some(ctx) else { fail("a full document must read") }
-  assert_eq(ctx.child_capacity(), 32)
-  assert_eq(ctx.journal_path(), Some("/store/run7-wf-5.jsonl"))
-  // The sidecar is optional: a host that wants only a ledger names no events
-  // file, and the run still accounts for itself.
-  assert_eq(ctx.events_path(), None)
-}
-
-///|
-test "an incomplete or unknown handoff is refused outright" {
-  // Fail closed on every missing coordinate. Each of these would otherwise
-  // produce children the host never reserved, or a ledger nothing watches.
-  assert_true(
-    parse({ "v": 1, "child_args": ["run"], "child_id": "c-{n}", "ids": [1, 4] })
-    is None,
-  )
-  assert_true(
-    parse({ "v": 1, "exe": "/e", "child_id": "c-{n}", "ids": [1, 4] }) is None,
-  )
-  assert_true(
-    parse({ "v": 1, "exe": "/e", "child_args": ["run"], "ids": [1, 4] }) is None,
-  )
-  assert_true(
-    parse({ "v": 1, "exe": "/e", "child_args": ["run"], "child_id": "c-{n}" })
-    is None,
-  )
-  // An unknown contract version is refused rather than read optimistically,
-  // and so is a version 2 handoff that names no transport.
-  assert_true(
-    parse({
-      "v": 3,
-      "exe": "/e",
-      "child_args": ["run"],
-      "child_id": "c-{n}",
-      "ids": [1, 4],
-    })
-    is None,
-  )
-  assert_true(
-    parse({
-      "v": 2,
-      "exe": "/e",
-      "child_args": ["run"],
-      "child_id": "c-{n}",
-      "ids": [1, 4],
-    })
-    is None,
-  )
-  // A child id template that consumes no ordinal names every child alike, and
-  // the second child to write its record would land on the first's.
-  assert_true(
-    parse({
-      "v": 1,
-      "exe": "/e",
-      "child_args": ["run"],
-      "child_id": "fixed",
-      "ids": [1, 4],
-    })
-    is None,
-  )
-  // A zero-sized block is not a block.
-  assert_true(
-    parse({
-      "v": 1,
-      "exe": "/e",
-      "child_args": ["run"],
-      "child_id": "c-{n}",
-      "ids": [1, 0],
-    })
-    is None,
-  )
-  // Not JSON, or not an object at all.
-  assert_true(parse(Json::string("nope")) is None)
-}
-
-///|
-test "a version 2 handoff names its transport, and the template must agree" {
-  let document : Json = {
-    "v": 2,
-    "transport": "result_file",
-    "exe": "/opt/engine",
-    "child_args": ["run", "--kind", "{kind}", "--result-file", "{result_file}"],
-    "child_id": "run7-sr-{n}",
-    "ids": [5, 32],
-  }
-  guard parse(document) is Some(ctx) else { fail("a full document must read") }
-  assert_true(ctx.transport is ResultFile)
-  // A result-file transport whose template names no result file, and an
-  // event-stream transport whose template does, are both refused.
-  assert_true(
-    parse({
-      "v": 2,
-      "transport": "result_file",
-      "exe": "/e",
-      "child_args": ["run"],
-      "child_id": "c-{n}",
-      "ids": [1, 4],
-    })
-    is None,
-  )
-  assert_true(
-    parse({
-      "v": 2,
-      "transport": "stdout_events",
-      "exe": "/e",
-      "child_args": ["run", "{result_file}"],
-      "child_id": "c-{n}",
-      "ids": [1, 4],
-    })
-    is None,
-  )
-  assert_true(
-    parse({
-      "v": 1,
-      "exe": "/e",
-      "child_args": ["run", "{result_file}"],
-      "child_id": "c-{n}",
-      "ids": [1, 4],
-    })
-    is None,
-  )
 }

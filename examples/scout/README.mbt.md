@@ -10,8 +10,8 @@ example of [`workflow`](../../README.mbt.md) with
 
 From the repository root, give it an executable that accepts OpenSeek's
 `run --input-format json --cancel-on-stdin-eof --kind <kind> --result-file
-<path>` and speaks the [child contract](../../docs/child-contract.md)'s
-transport 2. For example, with OpenSeek installed:
+<path>` and speaks the [child contract](../../docs/child-contract.md).
+For example, with OpenSeek installed:
 
 ```sh
 moon run examples/scout -- /absolute/path/to/openseek --journal scout.jsonl
@@ -30,7 +30,7 @@ moonx moonbitlang/workflow/examples/scout /absolute/path/to/openseek --journal s
 ```
 
 The engine is external: this example does not install or build it. Although
-the transport is engine-independent, the example's argv builder assumes
+the contract is engine-independent, the example's argv builder assumes
 OpenSeek's `run` command and flags. It cannot point directly at the Claude
 or Codex shim; use their documented `LaunchSpec` instead.
 

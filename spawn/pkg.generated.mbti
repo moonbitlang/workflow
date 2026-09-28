@@ -8,21 +8,13 @@ import {
 // Values
 pub const ResultFilePlaceholder : String = "{result_file}"
 
-pub async fn contract_run(command~ : String, args~ : Array[String], input~ : Json, kind~ : String, id~ : String, max_steps? : Int, schema? : Json, wall_deadline_ms~ : Int, cancel_grace_ms? : Int, cwd? : String, extra_env? : Map[String, String], progress? : ContractProgress, observe_line? : (Json) -> Unit, transport? : Transport) -> ContractResult
+pub async fn contract_run(command~ : String, args~ : Array[String], input~ : Json, kind~ : String, id~ : String, max_steps? : Int, schema? : Json, wall_deadline_ms~ : Int, cancel_grace_ms? : Int, cwd? : String, extra_env? : Map[String, String]) -> ContractResult
 
 pub fn contract_runner(launch~ : (@workflow.AgentCall) -> LaunchSpec, deadline_ms? : Int, validate_replay? : async (@workflow.AgentCall, @workflow.AgentOutcome) -> @workflow.ReplayDecision) -> @workflow.Runner
 
 // Errors
 
 // Types and methods
-pub struct ContractProgress {
-  mut steps : Int
-  mut prompt_tokens : Int
-  mut completion_tokens : Int
-  mut cost_usd : Double?
-}
-pub fn ContractProgress::ContractProgress() -> Self
-
 pub struct ContractResult {
   report : Json?
   terminal : ContractTerminal
@@ -49,14 +41,8 @@ pub struct LaunchSpec {
   cwd : String?
   extra_env : Map[String, String]?
   deadline_ms : Int?
-  transport : Transport
 } derive(Eq)
-pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int, transport? : Transport) -> Self
-
-pub(all) enum Transport {
-  StdoutEvents
-  ResultFile
-} derive(Eq)
+pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int) -> Self
 
 // Type aliases
 

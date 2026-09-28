@@ -1,7 +1,7 @@
 # moonbitlang/workflow/shim/claude
 
 Run Claude Code as a workflow child. This executable speaks the
-[child contract](../../docs/child-contract.md)'s transport 2: it reads one
+[child contract](../../docs/child-contract.md): it reads one
 request line on stdin, drives
 `claude -p --output-format stream-json --verbose`, reads that stream for the
 answer, usage, and steps, and writes one result file. It supports native and
@@ -24,15 +24,11 @@ test:
 async fn main {
   let wf = @workflow.Workflow(
     runner=@spawn.contract_runner(launch=_ => {
-      @spawn.LaunchSpec(
-        command="moonx",
-        args=[
-          "moonbitlang/workflow/shim/claude",
-          "--result-file",
-          @spawn.ResultFilePlaceholder,
-        ],
-        transport=ResultFile,
-      )
+      @spawn.LaunchSpec(command="moonx", args=[
+        "moonbitlang/workflow/shim/claude",
+        "--result-file",
+        @spawn.ResultFilePlaceholder,
+      ])
     }),
     max_calls=1,
   )

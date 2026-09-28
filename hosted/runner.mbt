@@ -66,7 +66,7 @@ async fn note(path : String?, line : Json) -> Unit {
 ///   begin following that child immediately.
 ///
 /// Per-call `max_steps` is not in the argv template. It rides the request
-/// envelope, which is where the contract already carries it — a template with
+/// (`limits.max_steps`), which is where the contract already carries it — a template with
 /// an optional flag in it would need conditional groups to express "omit both
 /// tokens when unset".
 pub fn Context::runner(
@@ -90,31 +90,26 @@ pub fn Context::runner(
       "kind": call.kind,
       "label": call.label,
     })
-    let progress = @spawn.ContractProgress()
-    // Cancellation unwinds past the result, but the live counters survive.
-    // Close the launch bracket after child teardown without turning the error
-    // into an outcome that the workflow could journal.
+    // Cancellation unwinds past the result. Close the launch bracket after
+    // child teardown without turning the error into an outcome that the
+    // workflow could journal. A child reports its spend only in its result,
+    // which a launch cut short never reads: the zero counters below are not
+    // its account, and the line says so.
     errdefer {
       let status = if @async.is_being_cancelled() {
         "cancelled"
       } else {
         "failed"
       }
-      let finished : Map[String, Json] = {
+      let finished : Json = {
         "event": "agent_finished",
         "child": child,
         "status": status,
-        "steps": progress.steps,
-        "tokens": progress.prompt_tokens + progress.completion_tokens,
+        "steps": 0,
+        "tokens": 0,
+        "unaccounted": "the launch was cancelled before its result was read",
       }
-      // A result-file child reports its spend only in its result, which a
-      // cancelled launch never reads: the counters above are not its account.
-      if self.transport is ResultFile {
-        finished["unaccounted"] = "the launch was cancelled before its result was read"
-      }
-      @async.protect_from_cancel(() => {
-        emit_line(self.events_path, Json::object(finished))
-      })
+      @async.protect_from_cancel(() => emit_line(self.events_path, finished))
     }
     let result = @spawn.contract_run(
       command=self.exe,
@@ -128,8 +123,6 @@ pub fn Context::runner(
       schema?=call.schema,
       wall_deadline_ms=self.deadline_ms.unwrap_or(DefaultDeadlineMs),
       cwd?=self.cwd,
-      progress~,
-      transport=self.transport,
     )
     let outcome = outcome_of(child, result)
     let finished : Map[String, Json] = {

@@ -6,9 +6,12 @@ import {
 }
 
 // Values
-pub fn context() -> Context?
+pub fn context() -> Context? raise HandoffError
 
 // Errors
+pub suberror HandoffError {
+  HandoffError(String)
+}
 
 // Types and methods
 type Context

@@ -1,8 +1,7 @@
 # moonbitlang/workflow/shim
 
 Build a process adapter from an agent CLI to the workflow
-[child contract](../docs/child-contract.md), over its transport 2: one
-request line on stdin, one result file out. This shared library parses the
+[child contract](../docs/child-contract.md): one request line on stdin, one result file out. This shared library parses the
 parent's request, runs the CLI, watches for cancellation, and writes the
 result file atomically. It supports native and wasm.
 
@@ -81,7 +80,7 @@ one.
 ## Requests and options
 
 `serve` accepts the version 1 request document of
-[contract §10.2](../docs/child-contract.md#102-the-request-line) and hands
+[contract §2](../docs/child-contract.md#2-the-request-line) and hands
 `run` a `Request`:
 
 ```json

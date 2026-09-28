@@ -31,7 +31,6 @@ async fn research() -> Unit {
             "run", "--input-format", "json", "--cancel-on-stdin-eof", "--kind", call.kind,
             "--result-file", @spawn.ResultFilePlaceholder,
           ],
-          transport=ResultFile,
         )
       },
       deadline_ms=600_000,
@@ -46,7 +45,7 @@ async fn research() -> Unit {
       "journal.mbt",
     ),
     (
-      "What fields does the child contract's v1 request envelope carry, and which of them does a reference engine actually honour? One short paragraph.",
+      "What fields does the child contract's version 1 request document carry, and which of them does a reference engine actually honour? One short paragraph.",
       "spawn/contract.mbt docs/child-contract.md",
     ),
     (

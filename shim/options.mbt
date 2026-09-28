@@ -17,7 +17,7 @@
 /// fabricating one (a dialect's own tests) goes through `Options(...)`,
 /// so a later setting costs no dialect anything.
 pub struct Options {
-  /// Where the one result file goes (contract transport 2).
+  /// Where the one result file goes (the child contract).
   result_file : String
   command : String
   model : String?
