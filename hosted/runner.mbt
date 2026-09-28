@@ -96,10 +96,10 @@ pub fn Context::runner(
     // which a launch cut short never reads: the zero counters below are not
     // its account, and the line says so.
     errdefer {
-      let status = if @async.is_being_cancelled() {
-        "cancelled"
+      let (status, unaccounted) = if @async.is_being_cancelled() {
+        ("cancelled", "the launch was cancelled before its result was read")
       } else {
-        "failed"
+        ("failed", "the launch failed before its result was read")
       }
       let finished : Json = {
         "event": "agent_finished",
@@ -107,7 +107,7 @@ pub fn Context::runner(
         "status": status,
         "steps": 0,
         "tokens": 0,
-        "unaccounted": "the launch was cancelled before its result was read",
+        "unaccounted": unaccounted,
       }
       @async.protect_from_cancel(() => emit_line(self.events_path, finished))
     }
