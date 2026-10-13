@@ -4,20 +4,20 @@
 /// at all — an unknown cost is never a zero one.
 pub struct Usage {
   /// Everything the model read: fresh input and cache reads and writes.
-  prompt_tokens : Int
-  completion_tokens : Int
-  cache_hit_tokens : Int
-  cache_miss_tokens : Int
+  prompt_tokens : Int32
+  completion_tokens : Int32
+  cache_hit_tokens : Int32
+  cache_miss_tokens : Int32
   cost_usd : Double?
 } derive(Eq, Debug)
 
 ///|
 /// A usage reading from its parts; `cost_usd` only when the CLI stated it.
 pub fn Usage::Usage(
-  prompt_tokens~ : Int,
-  completion_tokens~ : Int,
-  cache_hit_tokens~ : Int,
-  cache_miss_tokens~ : Int,
+  prompt_tokens~ : Int32,
+  completion_tokens~ : Int32,
+  cache_hit_tokens~ : Int32,
+  cache_miss_tokens~ : Int32,
   cost_usd? : Double,
 ) -> Usage {
   {
@@ -68,7 +68,7 @@ pub(all) enum Status {
 struct ShimResult {
   status : Status
   usage : Usage?
-  steps : Int?
+  steps : Int32?
 } derive(Eq, Debug)
 
 ///|
@@ -77,7 +77,7 @@ struct ShimResult {
 pub fn ShimResult::ShimResult(
   status : Status,
   usage? : Usage,
-  steps? : Int,
+  steps? : Int32,
 ) -> ShimResult {
   { status, usage, steps, }
 }

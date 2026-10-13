@@ -73,9 +73,9 @@ pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
 /// resumed run replays the attempt that finally succeeded.
 pub async fn[T] retry(
   attempt : async () -> T,
-  max_retry? : Int = 1,
-  backoff? : @async.RetryMethod = Immediate,
-  retriable? : (WorkflowError) -> Bool = worth_retrying,
+  max_retry~ : Int32 = 1,
+  backoff~ : @async.RetryMethod = Immediate,
+  retriable~ : (WorkflowError) -> Bool = worth_retrying,
 ) -> T {
   @async.retry(
     backoff,
@@ -117,7 +117,7 @@ pub fn[T] all_ok(
 /// negative `min_ok` is treated as 0.
 pub fn[T] collect_ok(
   results : Array[Result[T, WorkflowError]],
-  min_ok? : Int = 0,
+  min_ok~ : Int32 = 0,
 ) -> Array[T] raise WorkflowError {
   let ok = []
   for result in results {

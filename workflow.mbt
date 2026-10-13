@@ -42,11 +42,11 @@ struct Workflow {
   on_event : (WorkflowEvent) -> Unit
   journal : Journal?
   replay_scope : String
-  max_calls : Int?
-  mut calls_made : Int
-  mut replays : Int
-  mut prompt_tokens : Int
-  mut completion_tokens : Int
+  max_calls : Int32?
+  mut calls_made : Int32
+  mut replays : Int32
+  mut prompt_tokens : Int32
+  mut completion_tokens : Int32
   /// Sum of the attempts' `cost_usd` where reported; attempts without a
   /// figure contribute nothing, so this is a floor, not a total, unless
   /// every engine in the workflow prices its work.
@@ -60,11 +60,11 @@ struct Workflow {
 /// when omitted — the caller's loop is trusted to terminate).
 pub fn Workflow::Workflow(
   runner~ : Runner,
-  max_concurrent? : Int = 8,
-  max_calls? : Int,
+  max_concurrent~ : Int32 = 8,
+  max_calls? : Int32,
   journal? : Journal,
-  replay_scope? : String = "",
-  on_event? : (WorkflowEvent) -> Unit = _ => (),
+  replay_scope~ : String = "",
+  on_event~ : (WorkflowEvent) -> Unit = _ => (),
 ) -> Workflow raise {
   guard max_concurrent >= 1 else {
     fail("Workflow: max_concurrent must be at least 1")
@@ -100,7 +100,7 @@ pub async fn Workflow::agent(
   kind~ : String,
   hints? : String,
   label? : String,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
 ) -> Json {
   // The explore/echo input contract: one self-contained question plus
@@ -128,7 +128,7 @@ pub async fn Workflow::agent_call(
   kind~ : String,
   input~ : Json,
   label~ : String,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
 ) -> Json {
   // Phase attribution is invocation-time, not launch-time: a call issued
@@ -249,7 +249,7 @@ pub async fn[T : @json.FromJson] Workflow::agent_as(
   kind~ : String,
   hints? : String,
   label? : String,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
 ) -> T {
   let label = label.unwrap_or_else(() => brief(prompt))
@@ -285,13 +285,13 @@ pub fn Workflow::phase(self : Workflow, title : String) -> Unit {
 ///|
 /// Agents actually launched so far (including ones still running); calls
 /// cancelled while queued and journal replays are not in this count.
-pub fn Workflow::calls_made(self : Workflow) -> Int {
+pub fn Workflow::calls_made(self : Workflow) -> Int32 {
   self.calls_made
 }
 
 ///|
 /// Calls served from the journal instead of launching.
-pub fn Workflow::calls_replayed(self : Workflow) -> Int {
+pub fn Workflow::calls_replayed(self : Workflow) -> Int32 {
   self.replays
 }
 
@@ -299,7 +299,7 @@ pub fn Workflow::calls_replayed(self : Workflow) -> Int {
 /// Total tokens spent by finished attempts this run — successes AND
 /// failures that ran a child. Replayed results will not re-charge here:
 /// historical spend lives in the journal, this counts fresh execution.
-pub fn Workflow::tokens_spent(self : Workflow) -> Int {
+pub fn Workflow::tokens_spent(self : Workflow) -> Int32 {
   self.prompt_tokens + self.completion_tokens
 }
 

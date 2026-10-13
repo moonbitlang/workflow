@@ -18,7 +18,7 @@ pub struct AgentCall {
   kind : String
   input : Json
   label : String
-  max_steps : Int?
+  max_steps : Int32?
   /// Replay namespace: everything OUTSIDE the input that makes two
   /// otherwise-identical calls non-interchangeable — model, prompt
   /// revision, tenant, workspace. Empty means "unscoped".
@@ -40,8 +40,8 @@ pub fn AgentCall::AgentCall(
   kind~ : String,
   input~ : Json,
   label~ : String,
-  max_steps? : Int,
-  scope? : String = "",
+  max_steps? : Int32,
+  scope~ : String = "",
   schema? : Json,
 ) -> AgentCall {
   { kind, input, label, max_steps, scope, schema, }
@@ -58,9 +58,9 @@ pub fn AgentCall::AgentCall(
 /// wrote the record out by hand.
 pub struct AgentAttempt {
   attempt_id : String
-  steps_used : Int
-  prompt_tokens : Int
-  completion_tokens : Int
+  steps_used : Int32
+  prompt_tokens : Int32
+  completion_tokens : Int32
   /// The engine's own money figure for the attempt, when it reports one
   /// (`usage.cost_usd` on the wire, summed). `None` means unknown, never
   /// free: an engine that prices nothing leaves it absent. Absent from the
@@ -81,9 +81,9 @@ pub struct AgentAttempt {
 /// unknown, never free.
 pub fn AgentAttempt::AgentAttempt(
   attempt_id~ : String,
-  steps_used~ : Int,
-  prompt_tokens~ : Int,
-  completion_tokens~ : Int,
+  steps_used~ : Int32,
+  prompt_tokens~ : Int32,
+  completion_tokens~ : Int32,
   cost_usd? : Double,
   unaccounted? : String,
 ) -> AgentAttempt {
@@ -152,7 +152,7 @@ pub suberror WorkflowError {
   CallBudgetExhausted(label~ : String)
   /// A quorum/collect policy over a fan-out did not reach its threshold:
   /// `ok` of `of` succeeded, `need` were required.
-  QuorumNotReached(need~ : Int, ok~ : Int, of~ : Int)
+  QuorumNotReached(need~ : Int32, ok~ : Int32, of~ : Int32)
 }
 
 ///|

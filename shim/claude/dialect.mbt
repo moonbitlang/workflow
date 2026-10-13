@@ -12,13 +12,13 @@
 /// snapshots serve only as the fallback for a run cut short before its
 /// result (`usage`).
 priv struct Claude {
-  mut steps : Int
+  mut steps : Int32
   snapshots : Map[String, @shim.Usage]
   /// The result's true totals, priced when it stated a price.
   mut charged : @shim.Usage?
   mut answer : Json?
   mut session_id : String?
-  mut num_turns : Int?
+  mut num_turns : Int32?
   mut cost_usd : Double?
   mut failure : String?
   mut exhausted : Bool

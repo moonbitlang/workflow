@@ -117,7 +117,7 @@ fn millis(
 /// corruption means the append-only contract was broken by something else
 /// and must not be silently dropped.
 pub suberror JournalCorrupted {
-  JournalCorrupted(path~ : String, line~ : Int)
+  JournalCorrupted(path~ : String, line~ : Int32)
 }
 
 ///|
@@ -163,7 +163,7 @@ struct Journal {
 /// default, copied — later mutation of the argument cannot skew the
 /// consumption bookkeeping), live outcomes accumulate in `recorded`. The
 /// test-and-embed constructor.
-pub fn Journal::in_memory(prior? : Array[JournalEntry] = []) -> Journal {
+pub fn Journal::in_memory(prior~ : Array[JournalEntry] = []) -> Journal {
   let prior = prior.copy()
   {
     prior,
@@ -191,7 +191,7 @@ pub async fn Journal::load(path : String) -> Journal {
   let prior : Array[JournalEntry] = []
   if @fs.exists(path) {
     let bytes = @fs.read_file(path).binary()
-    let segments : Array[(Int, Int)] = []
+    let segments : Array[(Int32, Int32)] = []
     let mut start = 0
     for index in 0..<bytes.length() {
       if bytes[index] == b'\n' {
@@ -299,8 +299,8 @@ fn same_work(a : AgentCall, b : AgentCall) -> Bool {
 /// mask the valid one recorded after it. `release` rolls a claim back
 /// when validation UNWINDS (cancellation, registry error): the entry was
 /// neither served nor rejected, so it stays available.
-fn Journal::claim(self : Journal, call : AgentCall) -> (Int, AgentOutcome)? {
-  let mut skip_slot : Int? = None
+fn Journal::claim(self : Journal, call : AgentCall) -> (Int32, AgentOutcome)? {
+  let mut skip_slot : Int32? = None
   for index, entry in self.prior {
     if self.consumed[index] || !same_work(entry.call, call) {
       continue
@@ -328,7 +328,7 @@ fn Journal::claim(self : Journal, call : AgentCall) -> (Int, AgentOutcome)? {
 
 ///|
 /// Roll back a claim whose validation unwound before deciding.
-fn Journal::release(self : Journal, slot : Int) -> Unit {
+fn Journal::release(self : Journal, slot : Int32) -> Unit {
   self.consumed[slot] = false
 }
 

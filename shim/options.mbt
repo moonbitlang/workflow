@@ -37,9 +37,9 @@ pub fn Options::Options(
   result_file~ : String,
   model? : String,
   cwd? : String,
-  writable? : Bool = false,
+  writable~ : Bool = false,
   schema? : String,
-  extra? : Array[String] = [],
+  extra~ : Array[String] = [],
 ) -> Options {
   { result_file, command, model, cwd, writable, schema, extra, }
 }

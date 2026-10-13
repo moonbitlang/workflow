@@ -197,7 +197,7 @@ be replayed:
 ```mbt check
 ///|
 async test "retry until the engine actually answers" {
-  let flaky : Ref[Int] = { val: 0, }
+  let flaky : Ref[Int32] = { val: 0, }
   let wf = @workflow.Workflow(
     runner=@workflow.Runner(call => {
       @async.pause()

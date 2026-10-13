@@ -16,9 +16,9 @@ let scripted_child : String =
 /// through the host's `WORKFLOW_HOST`, which is what `context()` reads.
 fn handoff(
   dir : String,
-  child? : String = scripted_child,
-  first? : Int = 5,
-  count? : Int = 4,
+  child~ : String = scripted_child,
+  first~ : Int32 = 5,
+  count~ : Int32 = 4,
 ) -> Json {
   {
     "v": 2,

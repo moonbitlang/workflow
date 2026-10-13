@@ -68,8 +68,8 @@ async fn never() -> Unit {
 /// landed at the result path: `None` when no file was written.
 async fn answer_with(
   line : String?,
-  script? : String = "exit 0",
-  until_cancelled? : async () -> Unit = never,
+  script~ : String = "exit 0",
+  until_cancelled~ : async () -> Unit = never,
 ) -> (Json?, Array[String]) {
   let dir = @fs.tmpdir(prefix="workflow-shim-test-")
   defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
@@ -88,7 +88,7 @@ async fn answer_with(
 }
 
 ///|
-fn request_line(max_steps? : Int) -> String {
+fn request_line(max_steps? : Int32) -> String {
   let request : Map[String, Json] = {
     "version": 1,
     "request_id": "cr-7",
