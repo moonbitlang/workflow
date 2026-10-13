@@ -105,8 +105,8 @@ async test "a foreign contract engine gets workflows and replay for free" {
 /// its result path in `$1`.
 async fn run_script(
   script : String,
-  max_steps? : Int,
-  wall_deadline_ms? : Int = 10_000,
+  max_steps? : Int32,
+  wall_deadline_ms~ : Int32 = 10_000,
 ) -> @spawn.ContractResult {
   @spawn.contract_run(
     command="sh",

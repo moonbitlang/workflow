@@ -389,7 +389,7 @@ async test "corruption before the final line raises JournalCorrupted" {
 
 ///|
 async test "a vetoed replay runs live and the stale entry stays consumed" {
-  let vetoes : Ref[Int] = { val: 0, }
+  let vetoes : Ref[Int32] = { val: 0, }
   let wf = @workflow.Workflow(
     runner=@workflow.Runner(recovered, validate_replay=(_, _) => {
       vetoes.val += 1
@@ -439,7 +439,7 @@ async test "a stale candidate does not mask the newer valid one" {
 
 ///|
 async test "a validator unwind rolls the claim back" {
-  let attempts : Ref[Int] = { val: 0, }
+  let attempts : Ref[Int32] = { val: 0, }
   let wf = @workflow.Workflow(
     runner=@workflow.Runner(must_not_run, validate_replay=(_, outcome) => {
       attempts.val += 1

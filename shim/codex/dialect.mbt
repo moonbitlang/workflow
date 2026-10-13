@@ -12,7 +12,7 @@
 /// Only `turn.failed` and a top-level `error` event end a run without a
 /// report.
 priv struct Codex {
-  mut steps : Int
+  mut steps : Int32
   mut thread_id : String?
   mut last_message : String?
   mut failure : String?

@@ -34,12 +34,12 @@ struct Context {
   exe : String
   child_args : Array[String]
   child_id : String
-  first_child : Int
-  child_count : Int
+  first_child : Int32
+  child_count : Int32
   journal_path : String?
   events_path : String?
   cwd : String?
-  deadline_ms : Int?
+  deadline_ms : Int32?
 }
 
 ///|
@@ -203,7 +203,7 @@ fn child_argv(items : Array[Json]) -> Array[String]? {
 
 ///|
 /// A whole, positive JSON number as an `Int`.
-fn positive(value : Double) -> Int? {
+fn positive(value : Double) -> Int32? {
   let int = value.to_int()
   if int.to_double() == value && int > 0 {
     Some(int)
@@ -238,6 +238,6 @@ pub fn Context::journal_path(self : Context) -> String? {
 ///|
 /// How many children this run may start: its reserved block, which is also
 /// its ceiling.
-pub fn Context::child_capacity(self : Context) -> Int {
+pub fn Context::child_capacity(self : Context) -> Int32 {
   self.child_count
 }

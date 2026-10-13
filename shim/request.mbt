@@ -11,7 +11,7 @@ pub struct Request {
   request_id : String
   kind : String
   /// `limits.max_steps`: the step ceiling the shim enforces.
-  max_steps : Int?
+  max_steps : Int32?
   input : Json
   prompt : String
   /// The JSON Schema the report must satisfy, when the call asked for one;
@@ -29,7 +29,7 @@ pub fn Request::Request(
   kind~ : String,
   input~ : Json,
   prompt~ : String,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
 ) -> Request {
   { request_id, kind, max_steps, input, prompt, schema, }
@@ -115,7 +115,7 @@ fn request_id_of(line : String) -> String? {
 ///|
 /// JSON has one number type; an `Int` counter arrives as a `Number`.
 /// Reject a fractional value rather than truncating it.
-pub fn integral(value : Double) -> Int? {
+pub fn integral(value : Double) -> Int32? {
   let rounded = value.to_int()
   if rounded.to_double() == value {
     Some(rounded)

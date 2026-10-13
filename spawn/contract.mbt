@@ -22,7 +22,7 @@
 /// engine (a Rust CLI, a shell script) needs only to translate framing.
 /// External cancellation of the CALLER is never folded into an outcome: it
 /// re-raises after teardown, per structured concurrency.
-let default_cancel_grace_ms : Int = 5_000
+let default_cancel_grace_ms : Int32 = 5_000
 
 ///|
 /// The argv placeholder the runner replaces with the result file's path. A
@@ -43,13 +43,13 @@ pub struct ContractResult {
   /// The child's exit status, when it exited within the runner's watch.
   /// Kept beside the outcome, so an abnormal exit after a valid result stays
   /// visible instead of being masked by it.
-  exit_code : Int?
+  exit_code : Int32?
 }
 
 ///|
 /// JSON has one number type, so an `Int` field arrives as a `Number`;
 /// reject a fractional value rather than silently truncating it.
-fn integral(value : Double) -> Int? {
+fn integral(value : Double) -> Int32? {
   let rounded = value.to_int()
   if rounded.to_double() == value {
     Some(rounded)
@@ -70,10 +70,10 @@ pub async fn contract_run(
   input~ : Json,
   kind~ : String,
   id~ : String,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
-  wall_deadline_ms~ : Int,
-  cancel_grace_ms? : Int = default_cancel_grace_ms,
+  wall_deadline_ms~ : Int32,
+  cancel_grace_ms~ : Int32 = default_cancel_grace_ms,
   cwd? : String,
   extra_env? : Map[String, String],
 ) -> ContractResult {
@@ -96,7 +96,7 @@ pub async fn contract_run(
   let args = args.map(arg => {
     arg.replace_all(old=ResultFilePlaceholder, new=result_path)
   })
-  let mut exit_code : Int? = None
+  let mut exit_code : Int32? = None
   // Whether a child process started: a failure before that spent nothing, one
   // after it may have spent anything.
   let mut launched = false
@@ -244,7 +244,7 @@ fn request_line(
   id~ : String,
   kind~ : String,
   input~ : Json,
-  max_steps? : Int,
+  max_steps? : Int32,
   schema? : Json,
 ) -> Json {
   let fields : Map[String, Json] = {
@@ -270,14 +270,14 @@ priv struct ChildResult {
   /// The child's account, when the result carried usage.
   usage : ChildUsage?
   /// Model requests, when the result said.
-  steps : Int?
+  steps : Int32?
 }
 
 ///|
 /// The part of a result's `usage` this runner charges.
 priv struct ChildUsage {
-  prompt_tokens : Int
-  completion_tokens : Int
+  prompt_tokens : Int32
+  completion_tokens : Int32
   /// The engine's own price, when it stated one.
   cost_usd : Double?
 }
@@ -385,12 +385,12 @@ async fn result_file_outcome(
   timed_out~ : Bool,
   launched~ : Bool,
   runner_failure~ : String?,
-  exit_code~ : Int?,
+  exit_code~ : Int32?,
 ) -> ContractResult {
   fn outcome(
     ending : Result[Json, @workflow.AgentFailure],
     usage : ChildUsage?,
-    steps : Int?,
+    steps : Int32?,
     unaccounted : String?,
   ) -> ContractResult {
     let attempt = child_attempt(id, usage, steps, unaccounted)
@@ -464,7 +464,7 @@ async fn result_file_outcome(
 fn child_attempt(
   id : String,
   usage : ChildUsage?,
-  steps : Int?,
+  steps : Int32?,
   unaccounted : String?,
 ) -> @workflow.AgentAttempt {
   let (prompt_tokens, completion_tokens, cost_usd) = match usage {
@@ -495,7 +495,7 @@ struct LaunchSpec {
   args : Array[String]
   cwd : String?
   extra_env : Map[String, String]?
-  deadline_ms : Int?
+  deadline_ms : Int32?
 }
 
 ///|
@@ -509,7 +509,7 @@ pub fn LaunchSpec::LaunchSpec(
   args~ : Array[String],
   cwd? : String,
   extra_env? : Map[String, String],
-  deadline_ms? : Int,
+  deadline_ms? : Int32,
 ) -> LaunchSpec {
   { command, args, cwd, extra_env, deadline_ms, }
 }
@@ -525,10 +525,10 @@ pub fn LaunchSpec::LaunchSpec(
 /// whose referents no longer exist.
 pub fn contract_runner(
   launch~ : (@workflow.AgentCall) -> LaunchSpec,
-  deadline_ms? : Int = 600_000,
+  deadline_ms~ : Int32 = 600_000,
   validate_replay? : async (@workflow.AgentCall, @workflow.AgentOutcome) -> @workflow.ReplayDecision,
 ) -> @workflow.Runner {
-  let ids : Ref[Int] = { val: 0, }
+  let ids : Ref[Int32] = { val: 0, }
   @workflow.Runner(validate_replay?, call => {
     let spec = launch(call)
     ids.val += 1

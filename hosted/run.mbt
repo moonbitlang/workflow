@@ -20,7 +20,7 @@
 pub async fn[T] Context::run(
   self : Context,
   body : async (@workflow.Workflow) -> T,
-  max_concurrent? : Int = 4,
+  max_concurrent~ : Int32 = 4,
 ) -> T {
   let journal = match self.journal_path() {
     Some(path) => @workflow.Journal::load(path)

@@ -116,7 +116,7 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
   // the text actually appears inside a stringified input.
   let probes = entries.map(entry => probe_of(entry.outcome))
   let inputs : Array[String] = entries.map(entry => entry.call.input.stringify())
-  let edges : Array[(Int, Int)] = []
+  let edges : Array[(Int32, Int32)] = []
   for j, input in inputs {
     for i in 0..<j {
       if probes[i] is Some(probe) && input.contains(probe) {
@@ -288,7 +288,7 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
 }
 
 ///|
-fn tokens_of(outcome : @workflow.AgentOutcome) -> Int {
+fn tokens_of(outcome : @workflow.AgentOutcome) -> Int32 {
   match outcome.attempt() {
     Some(attempt) => attempt.prompt_tokens + attempt.completion_tokens
     None => 0
@@ -296,7 +296,7 @@ fn tokens_of(outcome : @workflow.AgentOutcome) -> Int {
 }
 
 ///|
-fn steps_of(outcome : @workflow.AgentOutcome) -> Int {
+fn steps_of(outcome : @workflow.AgentOutcome) -> Int32 {
   match outcome.attempt() {
     Some(attempt) => attempt.steps_used
     None => 0
@@ -330,7 +330,7 @@ fn answer_of_value(value : Json) -> String {
 /// `clamped_view` never cuts a surrogate pair in half, so the result is
 /// always well-formed text — half an emoji would be neither renderable
 /// HTML nor a probe that could match anything.
-fn clip(text : String, limit : Int) -> String {
+fn clip(text : String, limit : Int32) -> String {
   text.clamped_view(end=limit).to_owned()
 }
 

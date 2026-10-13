@@ -19,7 +19,7 @@ pub(all) enum Verdict {
 /// `Failed` is a run that never got going — an unspawnable command, a
 /// broken pipe.
 pub(all) enum CliExit {
-  Exited(Int)
+  Exited(Int32)
   Stopped
   Cancelled
   Failed(String)
@@ -50,14 +50,14 @@ pub async fn run_cli(
   command~ : String,
   args~ : Array[String],
   cwd? : String,
-  until_cancelled? : async () -> Unit = parent_closes_stdin,
-  stop_grace_ms? : Int = 3_000,
-  stop_signal? : @signal.Signal = @signal.SIGINT,
+  until_cancelled~ : async () -> Unit = parent_closes_stdin,
+  stop_grace_ms~ : Int32 = 3_000,
+  stop_signal~ : @signal.Signal = @signal.SIGINT,
   observe~ : async (String) -> Verdict,
 ) -> CliExit {
   let cancelled : Ref[Bool] = { val: false, }
   let stopped : Ref[Bool] = { val: false, }
-  let code : Ref[Int] = { val: 0, }
+  let code : Ref[Int32] = { val: 0, }
   let failure : Ref[String?] = { val: None, }
   try
     @async.with_task_group() <| group => {

@@ -47,8 +47,8 @@ async fn scripted(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
 
 ///|
 fn scripted_workflow(
-  max_concurrent? : Int = 8,
-  max_calls? : Int,
+  max_concurrent~ : Int32 = 8,
+  max_calls? : Int32,
   on_event? : (@workflow.WorkflowEvent) -> Unit,
 ) -> @workflow.Workflow raise {
   @workflow.Workflow(
@@ -328,8 +328,8 @@ async test "attempt folds any raising step, agent_call included" {
 ///|
 /// Fails its first `fail_first` launches and then succeeds, reporting how
 /// many launches it took: the transient shape `retry` exists for.
-fn flaky_runner(fail_first : Int) -> @workflow.Runner {
-  let launches : Ref[Int] = { val: 0, }
+fn flaky_runner(fail_first : Int32) -> @workflow.Runner {
+  let launches : Ref[Int32] = { val: 0, }
   @workflow.Runner(call => {
     @async.pause()
     launches.val += 1
@@ -426,8 +426,8 @@ async test "cancellation ends a retry loop instead of restarting it" {
 
 ///|
 async test "max_concurrent bounds in-flight agents" {
-  let in_flight : Ref[Int] = { val: 0, }
-  let peak : Ref[Int] = { val: 0, }
+  let in_flight : Ref[Int32] = { val: 0, }
+  let peak : Ref[Int32] = { val: 0, }
   let runner = @workflow.Runner(call => {
     in_flight.val += 1
     if in_flight.val > peak.val {
