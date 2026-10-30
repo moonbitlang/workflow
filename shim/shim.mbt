@@ -86,7 +86,7 @@ pub async fn run_cli(
         inherit_env=true,
         stdin=child_stdin,
         stdout=child_stdout,
-        cwd?=cwd.map(dir => dir.view()),
+        cwd?=cwd.map(dir => dir),
         // `cancel()` sends SIGINT first — the CLI's own Ctrl-C path, the
         // one it flushes on — and kills only after the grace.
         cancel_handler=@process.graceful_cancel(
