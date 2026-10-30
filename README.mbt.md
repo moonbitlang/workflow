@@ -42,10 +42,10 @@ in these READMEs are compiled and run by `moon test`; shell commands and
 | [`workflow/spawn`](spawn/README.mbt.md) | Running a process that speaks the child contract. |
 | [`workflow/hosted`](hosted/README.mbt.md) | Running under a host that supplies child ids, launch limits, and journal paths. |
 | [`workflow/shim`](shim/README.mbt.md) | Building adapters from a foreign CLI's output to the child contract. |
-| [`workflow/shim/claude`](shim/claude/README.mbt.md) | Executable adapter for Claude Code. |
-| [`workflow/shim/codex`](shim/codex/README.mbt.md) | Executable adapter for Codex. |
-| [`workflow/viz`](viz/README.mbt.md) | Rendering a journal as a standalone HTML report. |
-| [`workflow/examples/scout`](examples/scout/README.mbt.md) | A small executable demonstrating process calls and journal replay. |
+| [`workflow/shim/claude`](shim/claude/README.md) | Executable adapter for Claude Code. |
+| [`workflow/shim/codex`](shim/codex/README.md) | Executable adapter for Codex. |
+| [`workflow/viz`](viz/README.md) | Rendering a journal as a standalone HTML report. |
+| [`workflow/examples/scout`](examples/scout/README.md) | A small executable demonstrating process calls and journal replay. |
 
 ```mermaid
 flowchart TD
@@ -401,7 +401,7 @@ replay candidates. Labels, phases, and timestamps do not affect identity.
 Use one writing workflow process per journal path. Appends are serialized
 within a journal instance, not across processes. `Journal::load` is suitable
 for resuming a stopped writer, not watching an active one; use
-[`viz`](viz/README.mbt.md) for a reader that never repairs the source file.
+[`viz`](viz/README.md) for a reader that never repairs the source file.
 A complete final entry missing only its newline is retained and the newline
 is restored. A malformed tail is removed. Each stored entry has the
 versioned envelope `{"v":1,"e":...}`. `prior()` and `recorded()` return copies
@@ -467,8 +467,8 @@ The two executable adapters make existing agent CLIs speak the
 
 | Adapter | Default tool policy | Step definition | Report |
 | --- | --- | --- | --- |
-| [`shim/claude`](shim/claude/README.mbt.md) | Disallows listed editing and shell tools. | Distinct assistant message ids. | `{answer, engine, session_id?, num_turns?, cost_usd?}` |
-| [`shim/codex`](shim/codex/README.mbt.md) | Requests the `read-only` sandbox. | Completed items excluding reasoning and notices. | `{answer, engine, thread_id?, notices?}` |
+| [`shim/claude`](shim/claude/README.md) | Disallows listed editing and shell tools. | Distinct assistant message ids. | `{answer, engine, session_id?, num_turns?, cost_usd?}` |
+| [`shim/codex`](shim/codex/README.md) | Requests the `read-only` sandbox. | Completed items excluding reasoning and notices. | `{answer, engine, thread_id?, notices?}` |
 
 Both select their write-capable policy for `kind="worker"` or `--writable`.
 Their `max_steps` enforcement is reactive: an observed step over the limit
@@ -484,7 +484,7 @@ those operations must implement them.
 
 ## Examples and development
 
-[`examples/scout`](examples/scout/README.mbt.md) is a small local executable
+[`examples/scout`](examples/scout/README.md) is a small local executable
 for keyless probes and journal replay. The `.mbtx` scripts in `examples/`
 are larger standalone programs:
 

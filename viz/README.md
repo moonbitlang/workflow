@@ -107,5 +107,5 @@ moon check viz --target wasm
 ```
 
 For a report with known local data, run the keyless
-[`examples/scout`](../examples/scout/README.mbt.md) example with a journal,
+[`examples/scout`](../examples/scout/README.md) example with a journal,
 then render that journal here.

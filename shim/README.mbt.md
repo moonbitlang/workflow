@@ -6,8 +6,8 @@ parent's request, runs the CLI, watches for cancellation, and writes the
 result file atomically. It supports native and wasm.
 
 The dialect-specific work lives in the executables
-[`shim/claude`](claude/README.mbt.md) and
-[`shim/codex`](codex/README.mbt.md). Use those directly to run existing
+[`shim/claude`](claude/README.md) and
+[`shim/codex`](codex/README.md). Use those directly to run existing
 engines; import `moonbitlang/workflow/shim` in `moon.pkg` when implementing
 another adapter.
 

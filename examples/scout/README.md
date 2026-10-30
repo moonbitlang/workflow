@@ -90,7 +90,7 @@ Render its journal with:
 moon run viz -- scout.jsonl scout.html
 ```
 
-See [`viz`](../../viz/README.mbt.md) for what the report can infer from
+See [`viz`](../../viz/README.md) for what the report can infer from
 completed calls.
 
 ## Development and related examples
