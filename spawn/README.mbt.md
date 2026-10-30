@@ -72,8 +72,8 @@ served by the workflow never invokes `launch`.
 
 The runner default is `deadline_ms=600_000` (10 minutes). Credentials belong
 in the environment. A CLI that does not speak the contract needs an adapter,
-such as [`shim/claude`](../shim/claude/README.mbt.md) or
-[`shim/codex`](../shim/codex/README.mbt.md).
+such as [`shim/claude`](../shim/claude/README.md) or
+[`shim/codex`](../shim/codex/README.md).
 
 For example, OpenSeek's presets, one `openseek run` child per call:
 
