@@ -2,7 +2,7 @@
 package "moonbitlang/workflow"
 
 import {
-  "moonbitlang/async",
+  "moonbitlang/core/async",
   "moonbitlang/core/json",
 }
 

@@ -1,7 +1,7 @@
 ///|
 async fn can_spawn_sh() -> Bool {
-  let code = @process.run("sh", ["-c", "exit 0"]) catch { _ => return false }
-  code == 0
+  let result = @process.run("sh", ["-c", "exit 0"]) catch { _ => return false }
+  result.exit_code == 0
 }
 
 ///|

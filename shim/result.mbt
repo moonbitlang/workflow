@@ -142,7 +142,7 @@ async fn write_result(
   errdefer (@fs.remove(sibling) catch { _ => () })
   {
     defer file.close()
-    file.write(text)
+    file.text.write(text)
   }
   @fs.rename(sibling, path, replace=true)
 }

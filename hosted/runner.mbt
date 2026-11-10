@@ -35,7 +35,7 @@ fn substitute(token : String, kind~ : String, child~ : String) -> String {
 /// has its own durability.
 async fn note(path : String?, line : Json) -> Unit {
   guard path is Some(path) else { return }
-  @fs.write_file(
+  @fs.write_text(
     path,
     line.stringify() + "\n",
     append=true,

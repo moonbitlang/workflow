@@ -191,7 +191,7 @@ pub fn Journal::in_memory(prior~ : Array[JournalEntry] = []) -> Journal {
 pub async fn Journal::load(path : String) -> Journal {
   let prior : Array[JournalEntry] = []
   if @fs.exists(path) {
-    let bytes = @fs.read_file(path).binary()
+    let bytes = @fs.read_binary(path)
     let segments : Array[(Int32, Int32)] = []
     let mut start = 0
     for index in 0..<bytes.length() {
@@ -229,9 +229,9 @@ pub async fn Journal::load(path : String) -> Journal {
     }
     if needs_repair {
       let tmp = path + ".repair"
-      @fs.write_file(tmp, bytes[0:keep])
+      @fs.write_binary(tmp, bytes[0:keep])
       if keep > 0 && bytes[keep - 1] != b'\n' {
-        @fs.write_file(tmp, b"\n", append=true, create_mode=OpenOrCreate)
+        @fs.write_binary(tmp, b"\n", append=true, create_mode=OpenOrCreate)
       }
       @fs.rename(tmp, path, replace=true)
     }
@@ -345,7 +345,7 @@ async fn Journal::record(self : Journal, entry : JournalEntry) -> Unit {
     defer self.write_lock.release()
     // OpenOrCreate, not the default CreateOrTruncate: append must never
     // wipe the generations already on disk.
-    @fs.write_file(
+    @fs.write_text(
       path,
       ({ "v": 1, "e": entry } : Json).stringify() + "\n",
       append=true,

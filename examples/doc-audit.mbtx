@@ -1,7 +1,7 @@
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/process",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/process",
   "moonbitlang/workflow",
   "moonbitlang/workflow/spawn",
   "moonbitlang/core/encoding/utf8",
@@ -928,7 +928,7 @@ async fn write_report(
     $|
     $|\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed · \{steps} step(s) · \{prompt} prompt + \{completion} completion tokens.
     $|
-  @fs.write_file(out_path, out.to_string())
+  @fs.write_text(out_path, out.to_string())
   println(
     "\n\{audit.drifts.length()} drift(s) across \{drifted_docs} of \{audit.docs.length()} document(s) — \{high.length()} high, \{medium.length()} medium, \{low.length()} low → \{out_path}",
   )
@@ -951,18 +951,20 @@ async fn write_report(
 async fn git(repo : String, args : Array[String]) -> String {
   // Plain built-in output: a user's config must not leak into what the
   // audit (and the journal) sees.
-  let (code, output) = @process.collect_stdout(
+  let result = @process.run(
     "git",
     ["-c", "color.ui=never", "--no-pager", ..args],
     cwd=repo,
+    stdout=Collect,
   )
+  let code = result.exit_code
   guard code == 0 else { fail("git \{args.join(" ")} exited \{code}") }
-  @utf8.decode_lossy(output.binary())
+  @utf8.decode_lossy(result.stdout_binary())
 }
 
 ///|
 async fn read(path : String) -> String {
-  @utf8.decode_lossy(@fs.read_file(path).binary())
+  @utf8.decode_lossy(@fs.read_binary(path))
 }
 
 ///|

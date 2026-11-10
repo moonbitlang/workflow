@@ -2,10 +2,6 @@ name = "moonbitlang/workflow"
 
 version = "0.10.0"
 
-import {
-  "moonbitlang/async@0.22.4",
-}
-
 readme = "README.mbt.md"
 
 repository = "https://github.com/moonbitlang/workflow"

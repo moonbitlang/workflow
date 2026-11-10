@@ -84,14 +84,14 @@ async test "the ledger names the child, and the sidecar brackets the launch" {
   // `attempt_id` is the CHILD ID. That single field is what lets a reader
   // follow a ledger row to whatever that child wrote; a runner minting its own
   // unrelated id would leave the two views with nothing in common.
-  let journal = @fs.read_file("\{dir}/journal.jsonl").text()
+  let journal = @fs.read_text("\{dir}/journal.jsonl")
   assert_true(journal.contains("\"attempt_id\":\"run7-sr-5\""))
   assert_true(journal.contains("\"phase\":\"survey\""))
 
   // The sidecar reports the launch when it STARTS. The journal cannot: an
   // entry carries an outcome, so a reader with only the ledger learns of a
   // child no earlier than its completion.
-  let events = @fs.read_file("\{dir}/events.jsonl").text()
+  let events = @fs.read_text("\{dir}/events.jsonl")
   assert_true(events.contains("\"event\":\"agent_started\""))
   assert_true(events.contains("\"child\":\"run7-sr-5\""))
   assert_true(events.contains("\"label\":\"scout:a\""))
@@ -114,9 +114,7 @@ async test "cancellation closes the sidecar bracket and still re-raises" {
       while !@fs.exists("\{dir}/events.jsonl") {
         @async.sleep(10)
       }
-      while !@fs.read_file("\{dir}/events.jsonl")
-            .text()
-            .contains("agent_started") {
+      while !@fs.read_text("\{dir}/events.jsonl").contains("agent_started") {
         @async.sleep(10)
       }
     })
@@ -128,7 +126,7 @@ async test "cancellation closes the sidecar bracket and still re-raises" {
       _ => fail("cancellation must re-raise, not return an outcome")
     }
   }
-  let events = @fs.read_file("\{dir}/events.jsonl").text()
+  let events = @fs.read_text("\{dir}/events.jsonl")
   let lines = events.trim().split("\n").collect()
   assert_eq(lines.length(), 2)
   assert_true(lines[0].contains("\"event\":\"agent_started\""))

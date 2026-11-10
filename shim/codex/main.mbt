@@ -48,7 +48,7 @@ async fn run(
   let schema_path = match (request.schema, scratch) {
     (Some(schema), Some(dir)) => {
       let path = "\{dir}/schema.json"
-      @fs.write_file(path, schema.stringify())
+      @fs.write_text(path, schema.stringify())
       Some(path)
     }
     _ => options.schema

@@ -1,7 +1,7 @@
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/process",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/process",
   "moonbitlang/workflow",
   "moonbitlang/workflow/spawn",
   "moonbitlang/core/encoding/utf8",
@@ -570,7 +570,7 @@ async fn write_report(
     $|
     $|\{wf.calls_made()} live call(s), \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens.
     $|
-  @fs.write_file("cross-review.md", out.to_string())
+  @fs.write_text("cross-review.md", out.to_string())
   println(
     "\n\{confirmed.length()} confirmed / \{uncertain.length()} uncertain / \{refuted.length()} refuted → cross-review.md · \{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",
   )
@@ -580,9 +580,14 @@ async fn write_report(
 async fn git(args : Array[String]) -> String {
   // Plain built-in output: a user's external diff driver or color config
   // must not leak into what the reviewers (and the journal) see.
-  let (code, output) = @process.collect_stdout("git", ["-c", "color.ui=never", "--no-pager", ..args])
+  let result = @process.run(
+    "git",
+    ["-c", "color.ui=never", "--no-pager", ..args],
+    stdout=Collect,
+  )
+  let code = result.exit_code
   guard code == 0 else { fail("git \{args.join(" ")} exited \{code}") }
-  @utf8.decode_lossy(output.binary())
+  @utf8.decode_lossy(result.stdout_binary())
 }
 
 ///|

@@ -1,6 +1,6 @@
 import {
   "moonbitlang/workflow",
-  "moonbitlang/async",
+  "moonbitlang/core/async",
   "moonbitlang/workflow/spawn",
   "moonbitlang/core/argparse",
 }
@@ -8,3 +8,7 @@ import {
 supported_targets = "native+wasm"
 
 pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

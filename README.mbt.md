@@ -25,10 +25,14 @@ below, which also use the async runtime:
 ```moonbit nocheck
 import {
   "moonbitlang/workflow",
-  "moonbitlang/async",
+  "moonbitlang/core/async",
 }
 
 supported_targets = "native+wasm"
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)
 ```
 
 Run with `moon run --target native <package>` or `--target wasm`. Every

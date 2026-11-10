@@ -1,7 +1,7 @@
 ///|
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/fs",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
   "moonbitlang/workflow",
   "moonbitlang/workflow/spawn",
   "moonbitlang/core/argparse",
@@ -205,7 +205,7 @@ async fn review() -> Unit {
               let section = "### \{engine}\n\n\{text}\n"
               // Numeric batch index avoids collisions between package path spellings.
               let index = batches.search(batch).unwrap()
-              @fs.write_file(
+              @fs.write_text(
                 "\{run_dir}/\{index}-\{engine}.md",
                 "## Packages `\{pkg}`\n\n" + section,
               )
@@ -224,7 +224,7 @@ async fn review() -> Unit {
   let total = batches.length() * engines.length()
   let summary = "\{total - failed}/\{total} batch reviews completed; \{wf.calls_made()} calls, \{wf.tokens_spent()} observed tokens."
   let output = value(args, "out", "simplification-review.md")
-  @fs.write_file(
+  @fs.write_text(
     output,
     "# Simplification review\n\nRepository: `\{repo}`\n\n\{summary}\n\nSuggestions only; not applied or compiler-verified. Engine reports are grouped by package batch, not adjudicated consensus. Nested modules are excluded: \{skipped.join(", ")}.\n\n" +
     reports.map(r => r.1).join("\n"),

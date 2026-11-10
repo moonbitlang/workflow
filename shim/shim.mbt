@@ -63,31 +63,14 @@ pub async fn run_cli(
   let failure : Ref[String?] = { val: None, }
   try
     @async.with_task_group() <| group => {
-      let (child_stdin, stdin_writer) = @process.write_to_process() catch {
-        error => {
-          failure.val = Some("shim pipes unavailable: \{error}")
-          return
-        }
-      }
-      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
-      // signal that bypasses `catch` and unwinds only through `defer` /
-      // `errdefer`. Closing a pipe and cancelling a process are idempotent,
-      // so the deferred teardown also covers the explicit closes below.
-      defer stdin_writer.close()
-      let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error => {
-          failure.val = Some("shim pipes unavailable: \{error}")
-          return
-        }
-      }
-      defer stdout_reader.close()
       let process = @process.spawn(
         group,
         command,
         args,
         inherit_env=true,
-        stdin=child_stdin,
-        stdout=child_stdout,
+        // EOF at once: the CLI must never wait on stdin for a prompt.
+        stdin=Empty,
+        stdout=Collect,
         cwd?=cwd.map(dir => dir),
         // `cancel()` sends SIGINT first — the CLI's own Ctrl-C path, the
         // one it flushes on — and kills only after the grace.
@@ -102,16 +85,20 @@ pub async fn run_cli(
           return
         }
       }
+      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
+      // signal that bypasses `catch` and unwinds only through `defer` /
+      // `errdefer`. Closing a pipe and cancelling a process are idempotent,
+      // so the deferred teardown also covers the explicit cancels below.
+      let stdout_reader = process.stdout
+      defer stdout_reader.close()
       defer process.cancel()
-      // EOF at once: the CLI must never wait on stdin for a prompt.
-      stdin_writer.close()
       group.spawn_bg(no_wait=true, allow_failure=true) <| () => {
         until_cancelled()
         cancelled.val = true
         process.cancel()
       }
       try {
-        while stdout_reader.read_until("\n") is Some(line) {
+        while stdout_reader.text.read_until("\n") is Some(line) {
           if observe(line) is Stop && !cancelled.val {
             stopped.val = true
           }
@@ -125,7 +112,7 @@ pub async fn run_cli(
           // counts, then the handler kills.
           process.cancel()
           let _ = @async.with_timeout_opt(stop_grace_ms, () => {
-            while stdout_reader.read_until("\n") is Some(late) {
+            while stdout_reader.text.read_until("\n") is Some(late) {
               let _ = observe(late)
             }
           })
@@ -162,7 +149,7 @@ pub async fn run_cli(
 /// The contract's cancel signal: the parent closing our stdin. The request
 /// line is already read; only EOF is meaningful after it.
 async fn parent_closes_stdin() -> Unit {
-  while @stdio.stdin.read_until("\n") is Some(_) {
+  while @stdio.stdin.text.read_until("\n") is Some(_) {
 
   }
 }
