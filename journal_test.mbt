@@ -74,7 +74,8 @@ async test "a journalled success replays without launching or charging" {
 async test "a journalled failure is re-attempted live" {
   let journal = @workflow.Journal::in_memory()
   let wf1 = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
-  guard failure_of(() => wf1.agent(prompt="fail:x", kind="scout")) is Some(_) else {
+  guard @workflow.attempt(() => wf1.agent(prompt="fail:x", kind="scout"))
+    is Err(_) else {
     fail("expected the first attempt to fail")
   }
   guard journal.recorded() is [{ outcome: DidNotFinish(..), .. }] else {
@@ -98,8 +99,8 @@ async test "a journalled skip replays as the same refusal" {
       failure_entry("risky", @workflow.AgentFailure::Skipped),
     ]),
   )
-  guard failure_of(() => wf.agent(prompt="risky", kind="scout"))
-    is Some(@workflow.AgentFailed(failure=Skipped, ..)) else {
+  guard @workflow.attempt(() => wf.agent(prompt="risky", kind="scout"))
+    is Err(@workflow.AgentFailed(failure=Skipped, ..)) else {
     fail("expected the recorded refusal to stand")
   }
   assert_eq(wf.calls_replayed(), 1)
@@ -156,7 +157,8 @@ async test "a file-backed journal resumes across generations" {
     journal=@workflow.Journal::load(path),
   )
   let first = wf1.agent(prompt="hello", kind="scout")
-  guard failure_of(() => wf1.agent(prompt="fail:x", kind="scout")) is Some(_) else {
+  guard @workflow.attempt(() => wf1.agent(prompt="fail:x", kind="scout"))
+    is Err(_) else {
     fail("expected the first attempt to fail")
   }
   // Generation 2: the success replays, the failure re-attempts and
@@ -210,8 +212,8 @@ async test "re-attempting a journalled failure consumes fresh allowance" {
     max_calls=1,
   )
   assert_eq(wf.agent(prompt="x", kind="scout"), { "recovered": "x" })
-  guard failure_of(() => wf.agent(prompt="y", kind="scout"))
-    is Some(@workflow.CallBudgetExhausted(..)) else {
+  guard @workflow.attempt(() => wf.agent(prompt="y", kind="scout"))
+    is Err(@workflow.CallBudgetExhausted(..)) else {
     fail("expected the re-attempt to have spent the allowance")
   }
 }
@@ -225,9 +227,10 @@ async test "concurrent identical calls consume distinct journal entries" {
       success_entry("vote", { "sample": 2 }),
     ]),
   )
-  let results = @workflow.fan_out(["vote", "vote"], prompt => {
-    wf.agent(prompt~, kind="scout")
-  })
+  let results = @workflow.parallel([
+    () => @workflow.attempt(() => wf.agent(prompt="vote", kind="scout")),
+    () => @workflow.attempt(() => wf.agent(prompt="vote", kind="scout")),
+  ])
   let values = @workflow.all_ok(results)
   // Completion order is scheduling-dependent; the multiset is not.
   assert_true(values.contains({ "sample": 1 }))
@@ -243,9 +246,11 @@ async test "concurrent live agents append whole lines" {
     runner=@workflow.Runner(scripted),
     journal=@workflow.Journal::load(path),
   )
-  let results = @workflow.fan_out(["a", "b", "c"], prompt => {
-    wf.agent(prompt~, kind="scout")
-  })
+  let results = @workflow.parallel([
+    () => @workflow.attempt(() => wf.agent(prompt="a", kind="scout")),
+    () => @workflow.attempt(() => wf.agent(prompt="b", kind="scout")),
+    () => @workflow.attempt(() => wf.agent(prompt="c", kind="scout")),
+  ])
   assert_eq(@workflow.all_ok(results).length(), 3)
   // Every line survives a reload: no interleaved bytes, no torn entries.
   assert_eq(@workflow.Journal::load(path).prior().length(), 3)

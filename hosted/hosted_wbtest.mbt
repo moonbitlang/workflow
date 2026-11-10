@@ -38,7 +38,10 @@ async test "children are launched into the ids the host reserved" {
   defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
   let ctx = parse(handoff(dir))
   let answers = ctx.run(wf => {
-    @workflow.fan_out(["a", "b"], prompt => wf.agent(prompt~, kind="explore"))
+    @workflow.parallel([
+      () => @workflow.attempt(() => wf.agent(prompt="a", kind="explore")),
+      () => @workflow.attempt(() => wf.agent(prompt="b", kind="explore")),
+    ])
   })
   // Ordinals come from the block, in order, rendered through the host's own
   // template — so the ids the engine saw are ids the host had already set
@@ -63,13 +66,8 @@ async test "the reserved block is the launch ceiling" {
     // The third call has no id left. It is REFUSED rather than launched
     // unnamed: a child with no record is what this package exists to prevent,
     // and a script is opaque to its host, so nothing else caps the count.
-    let third = try wf.agent(prompt="three", kind="explore") catch {
-      @workflow.WorkflowError::_ as failure => Some(failure)
-      error => raise error
-    } noraise {
-      _ => None
-    }
-    assert_true(third is Some(_))
+    let third = @workflow.attempt(() => wf.agent(prompt="three", kind="explore"))
+    assert_true(third is Err(_))
   })
 }
 

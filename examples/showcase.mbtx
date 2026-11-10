@@ -40,11 +40,11 @@ async fn showcase() -> Unit {
   wf.phase("Survey")
   let topics = ["journal", "contract", "workers", "budget", "events"]
   let surveyed = @workflow.collect_ok(
-    @workflow.fan_out(topics, topic => wf.agent(
+    @workflow.fan_out(topics, topic => @workflow.attempt(() => wf.agent(
       prompt="survey \{topic}",
       kind="echo",
       label="survey:\{topic}",
-    )),
+    ))),
     min_ok=4,
   )
   println(
@@ -57,9 +57,11 @@ async fn showcase() -> Unit {
 
   // ---- Phase 2: adversarial quorum over IDENTICAL calls (multiset) ----
   wf.phase("Verify")
-  let votes = @workflow.fan_out(["voter-1", "voter-2", "voter-3"], label => {
-    wf.agent(prompt="vote on the finding", kind="echo", label~)
-  })
+  let votes = @workflow.parallel([
+    () => @workflow.attempt(() => wf.agent(prompt="vote on the finding", kind="echo", label="voter-1")),
+    () => @workflow.attempt(() => wf.agent(prompt="vote on the finding", kind="echo", label="voter-2")),
+    () => @workflow.attempt(() => wf.agent(prompt="vote on the finding", kind="echo", label="voter-3")),
+  ])
   let agreed = @workflow.collect_ok(votes, min_ok=2) catch {
     @workflow.QuorumNotReached(need~, ok~, of~) => {
       println("quorum failed: \{ok}/\{of}, needed \{need}")
@@ -77,18 +79,16 @@ async fn showcase() -> Unit {
   let bounded = @workflow.Workflow(runner~, journal~, max_calls=2)
   let mut sweeps = 0
   for index in 0..<10 {
-    try bounded.agent(prompt="sweep \{index}", kind="echo") catch {
-      @workflow.CallBudgetExhausted(..) => {
+    match @workflow.attempt(() => bounded.agent(prompt="sweep \{index}", kind="echo")) {
+      Ok(_) => sweeps += 1
+      Err(@workflow.CallBudgetExhausted(..)) => {
         println("tail: allowance spent after \{sweeps} sweeps — typed refusal, not a crash")
         break
       }
-      @workflow.WorkflowError::_ as error => {
+      Err(error) => {
         println("tail: unexpected failure \{error}")
         break
       }
-      error => raise error
-    } noraise {
-      _ => sweeps += 1
     }
   }
   println(

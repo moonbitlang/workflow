@@ -187,22 +187,20 @@ async fn review() -> Unit {
         let reviews = @workflow.parallel(
           engines.map(engine => {
             () => {
-              let (ok, text) = try
+              let result = @workflow.attempt(() => {
                 wf.agent(
                   prompt=review_prompt(repo, batch),
                   kind=engine,
                   label="simplify:\{pkg}:\{engine}",
                   max_steps=steps,
                 )
-              catch {
-                @workflow.WorkflowError::_ as error =>
-                  (false, "Review failed: \{error}")
-                error => raise error
-              } noraise {
-                { "answer": String(answer), "engine": String(actual), .. } if actual ==
+              })
+              let (ok, text) = match result {
+                Ok({ "answer": String(answer), "engine": String(actual), .. }) if actual ==
                   engine &&
                   !answer.is_empty() => (true, answer)
-                other => (false, "Unexpected report: \{other.stringify()}")
+                Ok(other) => (false, "Unexpected report: \{other.stringify()}")
+                Err(error) => (false, "Review failed: \{error}")
               }
               let section = "### \{engine}\n\n\{text}\n"
               // Numeric batch index avoids collisions between package path spellings.

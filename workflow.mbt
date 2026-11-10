@@ -93,8 +93,8 @@ pub fn Workflow::Workflow(
 /// Run ONE sub-agent and return its report value, from the standard
 /// scout input shape ({query, hints?} — contract v1). Raises `AgentFailed` when the child
 /// produced no usable report and `CallBudgetExhausted` when the launch
-/// allowance was spent — run it inside `fan_out` to keep the failure as
-/// that item's `Err` slot, propagate it at load-bearing call sites.
+/// allowance was spent — catch into a `Result` at fan-out sites
+/// (`attempt` folds it into one), propagate at load-bearing ones.
 pub async fn Workflow::agent(
   self : Workflow,
   prompt~ : String,
