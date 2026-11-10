@@ -69,7 +69,7 @@ pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
 /// propagate on the first raise.
 ///
 /// `backoff` is the async runtime's own `RetryMethod`, and NAMING one
-/// (`FixedDelay(500)`) needs `moonbitlang/async` in the caller's
+/// (`FixedDelay(500)`) needs `moonbitlang/core/async` in the caller's
 /// `moon.pkg` — a re-export cannot lend it, since an aliased type still
 /// resolves through the package that owns it. The default needs nothing.
 ///

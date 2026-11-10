@@ -312,7 +312,7 @@ async test "a torn final line is dropped AND repaired on disk" {
     "\n"
   // Torn tail: the signature of a crash mid-append.
   let torn = "\{dir}/torn.jsonl"
-  @fs.write_file(torn, entry_line + "{\"call\": {\"kind")
+  @fs.write_text(torn, entry_line + "{\"call\": {\"kind")
   let journal = @workflow.Journal::load(torn)
   assert_eq(journal.prior().length(), 1)
   // The load repaired the physical tail: a new append must land on a
@@ -335,7 +335,7 @@ async test "a valid final line missing its newline is kept and normalized" {
   let unterminated = (
     { "v": 1, "e": Json(success_entry("tail", { "b": 2 })) } : Json).stringify()
   let path = "\{dir}/journal.jsonl"
-  @fs.write_file(path, entry_line + unterminated)
+  @fs.write_text(path, entry_line + unterminated)
   let journal = @workflow.Journal::load(path)
   assert_eq(journal.prior().length(), 2)
   // Repair added the missing newline: an append cannot fuse two entries.
@@ -354,10 +354,10 @@ async test "a tail torn mid-codepoint cannot poison the healthy prefix" {
       { "v": 1, "e": Json(success_entry("hello", { "a": 1 })) } : Json).stringify() +
     "\n"
   let path = "\{dir}/journal.jsonl"
-  @fs.write_file(path, entry_line + "{\"call\": \"")
+  @fs.write_text(path, entry_line + "{\"call\": \"")
   // One leading byte of a two-byte UTF-8 sequence: strict whole-file
   // decoding would refuse the entire journal.
-  @fs.write_file(path, b"\xc3", append=true, create_mode=OpenOrCreate)
+  @fs.write_binary(path, b"\xc3", append=true, create_mode=OpenOrCreate)
   let journal = @workflow.Journal::load(path)
   assert_eq(journal.prior().length(), 1)
   @fs.rmdir(dir, recursive=true) catch {
@@ -372,7 +372,7 @@ async test "corruption before the final line raises JournalCorrupted" {
       { "v": 1, "e": Json(success_entry("hello", { "a": 1 })) } : Json).stringify() +
     "\n"
   let corrupt = "\{dir}/corrupt.jsonl"
-  @fs.write_file(corrupt, entry_line + "{\"call\": {\"kind\n" + entry_line)
+  @fs.write_text(corrupt, entry_line + "{\"call\": {\"kind\n" + entry_line)
   let mut raised = false
   let _ = @workflow.Journal::load(corrupt) catch {
     @workflow.JournalCorrupted(line=2, ..) => {
@@ -556,7 +556,7 @@ async test "a pre-attribution journal line loads unchanged and still replays" {
   // The 0.4 line shape: the call and the outcome alone.
   let legacy =
     #|{"v":1,"e":{"call":{"kind":"scout","input":{"query":"hello"},"label":"hello","scope":""},"outcome":["Finished",{"value":{"a":1},"attempt":{"attempt_id":"sr-hello","steps_used":1,"prompt_tokens":7,"completion_tokens":3}}]}}
-  @fs.write_file(path, legacy + "\n")
+  @fs.write_text(path, legacy + "\n")
   let journal = @workflow.Journal::load(path)
   guard journal.prior() is [entry] else { fail("expected the legacy entry") }
   assert_eq(entry.phase, None)
@@ -579,17 +579,17 @@ async test "a metadata line is skipped by replay and preserved by repair" {
       { "v": 1, "e": Json(success_entry("hello", { "a": 1 })) } : Json).stringify() +
     "\n"
   // Metadata, an entry, a blank line, then a torn tail.
-  @fs.write_file(path, meta + entry_line + "\n{\"v\":1,\"e\":{\"call")
+  @fs.write_text(path, meta + entry_line + "\n{\"v\":1,\"e\":{\"call")
   let journal = @workflow.Journal::load(path)
   assert_eq(journal.prior().length(), 1)
   // Repair truncated the tail and kept every healthy byte, metadata
   // and blank line included, rather than re-encoding what it understood.
-  assert_eq(@fs.read_file(path).text(), meta + entry_line + "\n")
+  assert_eq(@fs.read_text(path), meta + entry_line + "\n")
   // The next generation appends after it and reads both entries.
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
   let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(path).prior().length(), 2)
-  assert_true(@fs.read_file(path).text().has_prefix(meta + entry_line))
+  assert_true(@fs.read_text(path).has_prefix(meta + entry_line))
   @fs.rmdir(dir, recursive=true) catch {
     _ => ()
   }

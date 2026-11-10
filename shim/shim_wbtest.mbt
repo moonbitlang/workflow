@@ -54,8 +54,8 @@ async fn sh_dialect(
 
 ///|
 async fn can_spawn_sh() -> Bool {
-  let code = @process.run("sh", ["-c", "exit 0"]) catch { _ => return false }
-  code == 0
+  let result = @process.run("sh", ["-c", "exit 0"]) catch { _ => return false }
+  result.exit_code == 0
 }
 
 ///|
@@ -79,7 +79,7 @@ async fn answer_with(
     request,
   ) => sh_dialect(request, script, until_cancelled))
   let written = if @fs.exists(path) {
-    Some(@json.parse(@fs.read_file(path).text()))
+    Some(@json.parse(@fs.read_text(path)))
   } else {
     None
   }
@@ -275,7 +275,7 @@ async test "an error the dialect raises is a failed result" {
     name="test shim",
     run=(_, _) => fail("no schema file"),
   )
-  guard @json.parse(@fs.read_file(path).text())
+  guard @json.parse(@fs.read_text(path))
     is { "status": "failed", "reason": String(reason), .. } else {
     fail("expected a failed result")
   }
@@ -288,10 +288,10 @@ async test "the result replaces a stale file at the path" {
   let dir = @fs.tmpdir(prefix="workflow-shim-test-")
   defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
   let path = "\{dir}/result.json"
-  @fs.write_file(path, "stale")
+  @fs.write_text(path, "stale")
   write_result(path, "cr-7", ShimResult(NoReport))
   assert_eq(
-    @fs.read_file(path).text(),
+    @fs.read_text(path),
     "{\"version\":1,\"request_id\":\"cr-7\",\"status\":\"no_report\"}\n",
   )
   assert_eq(@fs.readdir(dir), ["result.json"])

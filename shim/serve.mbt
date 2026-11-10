@@ -31,7 +31,7 @@ pub async fn serve(
     Ok(options) => options
     Err(problem) => raise NoResult(problem)
   }
-  let line = @stdio.stdin.read_until("\n")
+  let line = @stdio.stdin.text.read_until("\n")
   respond(options, line, name="\{default_command} shim", run~)
 }
 

@@ -82,7 +82,7 @@ fn first(args : @argparse.Matches, name : String) -> String? {
 async fn read_entries(path : String) -> Array[@workflow.JournalEntry] {
   let entries : Array[@workflow.JournalEntry] = []
   guard @fs.exists(path) else { return entries }
-  let text = @fs.read_file(path).text() catch { _ => return entries }
+  let text = @fs.read_text(path) catch { _ => return entries }
   for line in text.split("\n") {
     let line = line.trim()
     if line.is_empty() {
@@ -281,7 +281,7 @@ async fn render(path : String, out : String, watch : Bool) -> Unit {
       #|</div></div>
     ),
   )
-  @fs.write_file(out, page.to_string())
+  @fs.write_text(out, page.to_string())
   println(
     "wrote \{out}: \{entries.length()} entries, \{edges.length()} derived edge(s)",
   )

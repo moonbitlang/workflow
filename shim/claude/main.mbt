@@ -34,7 +34,7 @@ async fn run(
   let schema = match (request_schema(request), options.schema) {
     (Some(schema), _) => Some(schema)
     (None, Some(path)) =>
-      Some(@utf8.decode_lossy(@fs.read_file(path).binary())) catch {
+      Some(@utf8.decode_lossy(@fs.read_binary(path))) catch {
         error =>
           return @shim.ShimResult(
             Failed("cannot read --schema \{path}: \{error}"),

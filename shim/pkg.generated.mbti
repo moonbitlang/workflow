@@ -2,7 +2,7 @@
 package "moonbitlang/workflow/shim"
 
 import {
-  "moonbitlang/async/signal",
+  "moonbitlang/core/async/signal",
   "moonbitlang/core/debug",
   "moonbitlang/core/json",
 }

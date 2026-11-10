@@ -110,24 +110,6 @@ pub async fn contract_run(
   // crash the caller.
   try
     @async.with_task_group() <| group => {
-      let (child_stdin, stdin_writer) = @process.write_to_process() catch {
-        error => {
-          failure = Some("child pipes unavailable: \{error}")
-          return
-        }
-      }
-      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
-      // signal that bypasses `catch` and unwinds only through `defer` /
-      // `errdefer`. Closing a pipe and cancelling a process are idempotent,
-      // so the deferred teardown also covers the explicit closes below.
-      defer stdin_writer.close()
-      let (stdout_reader, child_stdout) = @process.read_from_process() catch {
-        error => {
-          failure = Some("child pipes unavailable: \{error}")
-          return
-        }
-      }
-      defer stdout_reader.close()
       // `no_wait`: the group terminates the child at teardown rather than
       // waiting for an exit that may only come once its stdin is closed.
       let process = @process.spawn(
@@ -139,8 +121,8 @@ pub async fn contract_run(
         // overlay into the child's environment — argv would be visible
         // in `ps`, the environment is not.
         extra_env?,
-        stdin=child_stdin,
-        stdout=child_stdout,
+        stdin=FeedFromParent,
+        stdout=Collect,
         cwd?=cwd.map(dir => dir),
         no_wait=true,
       ) catch {
@@ -149,13 +131,22 @@ pub async fn contract_run(
           return
         }
       }
+      // Cleanup lives in `defer`, not in `catch` arms: cancellation is a
+      // signal that bypasses `catch` and unwinds only through `defer` /
+      // `errdefer`. The parent's pipe ends are ours to close; closing a pipe
+      // and cancelling a process are idempotent, so the deferred teardown
+      // also covers the explicit closes below.
+      let stdin_writer = process.stdin
+      defer stdin_writer.close()
+      let stdout_reader = process.stdout
+      defer stdout_reader.close()
       defer process.cancel()
       launched = true
       // Opaque bytes: a line reader would reject output that is not UTF-8,
       // and this stdout is not the protocol. Draining keeps the child from
       // blocking on a full pipe.
       async fn drain() -> Unit {
-        while stdout_reader.read_some(max_len=4096) is Some(_) {
+        while stdout_reader.read() is Some(_) {
 
         }
       }
@@ -165,7 +156,7 @@ pub async fn contract_run(
         // request larger than the pipe capacity against a child that never
         // reads must hit the wall deadline, not block forever.
         let request = request_line(id~, kind~, input~, max_steps?, schema?)
-        stdin_writer.write("\{request.stringify()}\n")
+        stdin_writer.text.write("\{request.stringify()}\n")
         drain()
       }
       try {
@@ -419,8 +410,8 @@ async fn result_file_outcome(
     Some(code) => "exited \{code}"
     None => "did not exit in time"
   }
-  let text = @fs.read_file(path).text() catch {
-    @os_error.OSError(_) as error if error.is_ENOENT() =>
+  let text = @fs.read_text(path) catch {
+    @os_error.OsError(NotFound, ..) =>
       return no_result(
         "the child \{exited} without writing a result",
         "the child left no result",
