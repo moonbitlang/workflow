@@ -1,77 +1,55 @@
 ///|
-/// Run thunks concurrently and return their results in order. The failure
-/// policy rides each thunk's type:
+/// Run thunks concurrently and return their results in order, fail-fast:
+/// the first thunk that RAISES — a bare `agent` call propagating its
+/// `AgentFailed`, an engine bug, cancellation — cancels every sibling still
+/// in flight and propagates. The right shape when later work is worthless
+/// without ALL of this stage.
 ///
-/// - a thunk that resolves to an `Attempted[T]` (wrap a call in
-///   `attempt`) keeps one agent's failure in its own slot without disturbing
-///   siblings — tokens already spent on the others stay spent. Pair with
-///   `all_ok` / `collect_ok` to choose the policy afterwards;
-/// - a thunk that RAISES — a bare `agent` call propagating its
-///   `AgentFailed`, an engine bug, cancellation — cancels every sibling still
-///   in flight and propagates: fail-fast, the right shape when later work is
-///   worthless without ALL of this stage.
-///
-/// Engine bugs and cancellation always take the second path: they are never
-/// demoted to a slot a policy could quietly discard.
+/// To keep each agent's failure in its own slot instead, use `fan_out`.
 pub async fn[T] parallel(thunks : Array[async () -> T]) -> Array[T] {
   @async.all(thunks)
 }
 
 ///|
-/// Fan items out through one async stage, one `Attempted` slot per item.
+/// Fan items out through one async stage and keep each item's outcome as
+/// data: `Ok(value)`, or `Err(failure)` when `run` raised a typed
+/// `WorkflowError`. One lost agent never cancels its siblings, and tokens
+/// already spent on the others stay spent. Pair with `all_ok` /
+/// `collect_ok` to choose the policy afterwards.
+///
+/// `run` is any RAISING step: `agent`, `agent_call` carrying an engine's
+/// own input shape, an `agent_as` whose decode may reject, a `retry`
+/// around any of them, or a whole multi-stage per-item pipeline.
 /// Multi-stage pipelines are function composition inside `run` — stages
 /// need no barrier between them, so composing them per-item IS the
-/// pipeline.
+/// pipeline, and a raise at any stage lands in that item's slot.
+///
+/// Only `WorkflowError` is kept. An engine bug or cancellation raised by
+/// any item cancels the siblings and propagates: those are never demoted
+/// to a slot a policy could quietly discard.
 pub async fn[A, B] fan_out(
   items : Array[A],
-  run : async (A) -> Attempted[B],
-) -> Array[Attempted[B]] {
-  parallel(items.map(item => () => run(item)))
-}
-
-///|
-/// The outcome of one `attempt`ed step, kept as data: the step's value, or
-/// the typed workflow failure it raised. A slot of `fan_out` / `parallel`,
-/// read back by `all_ok` / `collect_ok` or by matching it directly.
-///
-/// A type of its own rather than `Result[T, WorkflowError]`: a failed step
-/// here is an ordinary outcome a policy decides on later, not an error a
-/// caller forgot to raise. The constructors keep `Result`'s names, so
-/// matching a slot reads the same: `Ok(report)` / `Err(failure)`.
-pub(all) enum Attempted[T] {
-  /// The step finished and produced this value.
-  Ok(T)
-  /// The step raised this typed workflow failure.
-  Err(WorkflowError)
-}
-
-///|
-/// Fold the typed error channel into the return value: a workflow-level
-/// failure lands in `Attempted::Err`, while cancellation and engine bugs
-/// still propagate — the distinction the whole failure model rests on.
-///
-/// It folds ANY raising step: `agent`, `agent_call` carrying an engine's
-/// own input shape, an `agent_as` whose decode may reject, a `retry`
-/// around any of them, or a whole multi-stage per-item pipeline. ONE free
-/// function rather than a `try_` twin per entry point — the shape a
-/// caller wants is a combinator, never another method.
-///
-/// The right shape at fan-out call sites, where one lost agent must not
-/// poison its siblings.
-pub async fn[T] attempt(step : async () -> T) -> Attempted[T] {
-  Ok(step()) catch {
-    WorkflowError::_ as failure => Err(failure)
-    error => raise error
-  }
+  run : async (A) -> B,
+) -> Array[Result[B, WorkflowError]] {
+  parallel(
+    items.map(item => {
+      () => {
+        Ok(run(item)) catch {
+          WorkflowError::_ as failure => Err(failure)
+          error => raise error
+        }
+      }
+    }),
+  )
 }
 
 ///|
 /// Re-run one agent step while it keeps failing retriably: `max_retry`
 /// extra attempts at most, spaced by `backoff`, raising the LAST attempt's
 /// error when the budget runs out. Wraps a RAISING step (`agent`,
-/// `agent_as`, or a whole per-item pipeline). Wrap it in `attempt`, not
-/// the other way round: a step already folded into an `Attempted` raises
-/// nothing there is left to retry on.
+/// `agent_as`, or a whole per-item pipeline). Put it inside `fan_out`'s
+/// `run`, not the other way round: an item already settled into a slot
+/// raises nothing there is left to retry on.
 ///
 /// What counts as retriable is `worth_retrying` unless `retriable` says
 /// otherwise; cancellation and engine bugs are never retried, they
@@ -113,7 +91,9 @@ pub async fn[T] retry(
 /// Policy: every slot must have succeeded; re-raise the first failure
 /// otherwise. Post-hoc fail-fast — siblings have already run to
 /// completion; `parallel` over raising thunks cancels them instead.
-pub fn[T] all_ok(results : Array[Attempted[T]]) -> Array[T] raise WorkflowError {
+pub fn[T] all_ok(
+  results : Array[Result[T, WorkflowError]],
+) -> Array[T] raise WorkflowError {
   let ok = []
   for result in results {
     match result {
@@ -130,7 +110,7 @@ pub fn[T] all_ok(results : Array[Attempted[T]]) -> Array[T] raise WorkflowError 
 /// adversarial verification. `min_ok=0` is pure best-effort collection; a
 /// negative `min_ok` is treated as 0.
 pub fn[T] collect_ok(
-  results : Array[Attempted[T]],
+  results : Array[Result[T, WorkflowError]],
   min_ok~ : Int32 = 0,
 ) -> Array[T] raise WorkflowError {
   let ok = []

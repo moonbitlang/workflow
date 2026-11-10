@@ -485,7 +485,7 @@ async fn judge(
   }
   let judged = @workflow.fan_out(packages, name => {
     let symbols = undecided.filter(f => f.pkg == name).map(f => f.decl)
-    @workflow.attempt(() => {
+    {
       wf.agent(
         prompt=judge_prompt(owner, name, dir_of(owner, name), symbols),
         kind=engine,
@@ -493,7 +493,7 @@ async fn judge(
         max_steps=40,
         schema?=schema_for(engine, judgement_schema),
       )
-    })
+    }
   })
   let judgements : Array[Judgement] = []
   let unjudged : Array[String] = []

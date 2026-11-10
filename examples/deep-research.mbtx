@@ -87,7 +87,7 @@ async fn research() -> Unit {
   let found = @workflow.collect_ok(
     @workflow.fan_out(surveys, survey => {
       let (name, prompt, hints) = survey
-      @workflow.attempt(() => wf.agent(prompt~, kind="explore", hints~, label="survey:\{name}", max_steps=14))
+      wf.agent(prompt~, kind="explore", hints~, label="survey:\{name}", max_steps=14)
     }),
     min_ok=2,
   ) catch {
@@ -100,7 +100,7 @@ async fn research() -> Unit {
 
   // ---- Phase 2: probe the open question the survey exposes ----
   wf.phase("Probe")
-  let probe = @workflow.attempt(() => wf.agent(
+  let probe_note = try wf.agent(
     prompt=(
       $|Given these findings on \{question}
       $|— \{notes.join(" ||| ")} —
@@ -111,19 +111,20 @@ async fn research() -> Unit {
     hints=".",
     label="probe:hardest",
     max_steps=14,
-  ))
-  let probe_note = match probe {
-    Ok(report) => clip(answer_of(report), 550)
-    Err(error) => {
+  ) catch {
+    @workflow.WorkflowError::_ as error => {
       println("  probe failed (\{error}) — synthesizing from the survey alone")
       ""
     }
+    error => raise error
+  } noraise {
+    report => clip(answer_of(report), 550)
   }
 
   // ---- Phase 3: synthesis embeds everything above ----
   wf.phase("Synthesize")
-  match
-    @workflow.attempt(() => wf.agent(
+  try
+    wf.agent(
       prompt=(
         $|Write a concrete design proposal for \{question}
         $|Base it ONLY on this research: \{notes.join(" ||| ")} ||| HARDEST: \{probe_note}.
@@ -134,9 +135,12 @@ async fn research() -> Unit {
       hints=".",
       label="synthesis",
       max_steps=28,
-    )) {
-    Ok(report) => println("\n━━ PROPOSAL ━━\n\{answer_of(report)}")
-    Err(error) => println("synthesis failed: \{error}")
+    )
+  catch {
+    @workflow.WorkflowError::_ as error => println("synthesis failed: \{error}")
+    error => raise error
+  } noraise {
+    report => println("\n━━ PROPOSAL ━━\n\{answer_of(report)}")
   }
   println(
     "\n\{wf.calls_made()} live, \{wf.calls_replayed()} replayed, \{wf.tokens_spent()} fresh tokens",

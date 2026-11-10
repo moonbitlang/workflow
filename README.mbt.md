@@ -93,10 +93,10 @@ Everything else follows from three decisions:
 
 - **Failure is data, in a typed channel.** An agent that produced no
   usable report raises `WorkflowError::AgentFailed` with a typed
-  `AgentFailure` cause; `attempt` folds it into an `Attempted` slot
-  (`Ok(value)` or `Err(failure)`) for fan-out sites. A failure is never a
-  silent `null`: it either raises `AgentFailed` or lands in `attempt`'s
-  `Err`.
+  `AgentFailure` cause; `fan_out` keeps it as that item's `Err` slot, so
+  one failed agent never cancels its siblings. A failure is never a
+  silent `null`: it either raises `AgentFailed` or lands in a `fan_out`
+  slot.
 - **Resolved failures retain their usage.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
@@ -146,13 +146,11 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
   )
   wf.phase("Verify")
   let results = @workflow.fan_out(["correctness", "security", "repro"], lens => {
-    @workflow.attempt(() => {
-      wf.agent(
-        kind="judge",
-        prompt="Judge the finding through lens=\{lens}: real?",
-        label="verify:\{lens}",
-      )
-    })
+    wf.agent(
+      kind="judge",
+      prompt="Judge the finding through lens=\{lens}: real?",
+      label="verify:\{lens}",
+    )
   })
   let confirmed = @workflow.collect_ok(results, min_ok=2)
     .filter(v => v is { "confirmed": True, .. })
@@ -163,25 +161,41 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
 }
 ```
 
-`fan_out` gives every item its own `Attempted` slot — one lost verifier
+`fan_out` gives every item its own `Result` slot — one lost verifier
 never poisons its siblings, and the tokens they spent stay spent. When
-later work is worthless without ALL of a stage, give `parallel` thunks
-that raise instead (bare `wf.agent` calls, no `attempt`): the first failure
-cancels every sibling still in flight. The policies are one identifier each:
+later work is worthless without ALL of a stage, use `parallel` instead:
+the first failure cancels every sibling still in flight. The policies are one identifier each:
 `all_ok` and `collect_ok(min_ok?)`. Both fan-outs are one task group: a raise
 inside one cancels the rest and unwinds the whole stage, so nothing outlives
 it.
 
 | Policy | When to use it |
 | --- | --- |
-| `parallel` / `fan_out` with `attempt` | Keep an `Attempted` slot for each input, in input order. Typed workflow failures stay in their own slots. |
-| `parallel` with raising thunks | Every branch is required; a raise cancels siblings still running. |
+| `fan_out` | Keep a `Result` for each input, in input order. Typed workflow failures stay in their own slots. |
+| `parallel` | Every branch is required; a raise cancels siblings still running. |
 | `all_ok` | Require all already-collected results to succeed; raises the first error in array order. |
 | `collect_ok(min_ok=0)` | Keep successes, optionally requiring a minimum count (a quorum); it does not compare answers for agreement. |
 
 `all_ok` and `collect_ok` inspect completed results; they do not
-cancel work early. `attempt` captures only `WorkflowError`, including
-`AgentFailed`, `CallBudgetExhausted`, and `QuorumNotReached`.
+cancel work early. `fan_out` keeps only `WorkflowError` in a slot, including
+`AgentFailed`, `CallBudgetExhausted`, and `QuorumNotReached`; engine bugs
+and cancellation still propagate.
+
+Outside a fan-out, handle one call's failure with an ordinary `catch`.
+Match `@workflow.WorkflowError::_` and re-raise everything else, so an
+engine bug is never mistaken for an agent that failed:
+
+```mbt check
+///|
+async test "handle one call's failure without a fan-out" {
+  let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
+  let verdict = wf.agent(prompt="Is the finding real?", kind="judge") catch {
+    @workflow.WorkflowError::_ => { "confirmed": false }
+    error => raise error
+  }
+  assert_true(verdict is { "confirmed": True, .. })
+}
+```
 
 A model that answered off-schema or ran out of steps can be worth asking
 again. `retry` wraps a raising step with `max_retry` extra attempts (default
@@ -190,8 +204,8 @@ policy retries `AgentFailed` except `Skipped`; it does not retry a spent
 call budget or unmet quorum. A custom `retriable` callback can change that
 typed-error policy. Engine bugs and cancellation always propagate.
 
-Put `attempt` around `retry`, rather than passing `retry` a step that already
-returns an `Attempted` slot. Each live retry uses a slot and call allowance, and its
+Put `retry` inside a `fan_out` stage, not the other way round: an item
+already settled into a slot raises nothing to retry on. Each live retry uses a slot and call allowance, and its
 resolved outcome is journalled. On resume, an earlier successful report can
 be replayed:
 
@@ -231,7 +245,7 @@ async test "retry until the engine actually answers" {
 is what most calls are. A kind with its own shape (the contract's
 `review` and `worker`) goes through `agent_call`, which sends the exact
 JSON it is given; that input IS the replay identity, so an engine
-encoding its own kinds gets replay for free. `attempt` folds the typed
+encoding its own kinds gets replay for free. `fan_out` folds the typed
 error channel around ANY raising step, so those calls reach a fan-out
 without a `try_` twin per entry point:
 
@@ -258,13 +272,11 @@ async test "fan a worker kind out through its own input shape" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(slice_runner))
   let slices = ["rename the seam", "widen the ceiling"]
   let done = @workflow.fan_out(slices, task => {
-    @workflow.attempt(() => {
-      wf.agent_call(
-        kind="worker",
-        input={ "task": task, "worker_root": "/w" },
-        label="worker:\{task}",
-      )
-    })
+    wf.agent_call(
+      kind="worker",
+      input={ "task": task, "worker_root": "/w" },
+      label="worker:\{task}",
+    )
   })
   assert_eq(@workflow.all_ok(done).length(), 2)
 }
@@ -310,21 +322,14 @@ pipeline:
 async test "find then verify, with no barrier between the stages" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(verdict_runner))
   let verified = @workflow.fan_out(["pkg/a", "pkg/b"], target => {
-    let finding = @workflow.attempt(() => {
-      wf.agent(prompt="Find the worst bug in \{target}", kind="judge")
-    })
-    match finding {
-      // Each finding proceeds to verification the moment ITS finder
-      // returns — b's finder may still be running while a verifies.
-      Ok(_) =>
-        @workflow.attempt(() => {
-          wf.agent(
-            prompt="Adversarially verify the finding in \{target}",
-            kind="judge",
-          )
-        })
-      Err(error) => Err(error)
-    }
+    // A failed finder lands in this item's slot and skips its verifier.
+    let _ = wf.agent(prompt="Find the worst bug in \{target}", kind="judge")
+    // Each finding proceeds to verification the moment ITS finder
+    // returns — b's finder may still be running while a verifies.
+    wf.agent(
+      prompt="Adversarially verify the finding in \{target}",
+      kind="judge",
+    )
   })
   assert_eq(@workflow.all_ok(verified).length(), 2)
 }

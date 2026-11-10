@@ -12,6 +12,18 @@ priv suberror EngineBoom {
 }
 
 ///|
+/// The typed workflow failure `step` raised, or `None` when it succeeded.
+/// Anything else (an engine bug, cancellation) propagates.
+async fn[T] failure_of(step : async () -> T) -> @workflow.WorkflowError? {
+  try step() catch {
+    @workflow.WorkflowError::_ as failure => Some(failure)
+    error => raise error
+  } noraise {
+    _ => None
+  }
+}
+
+///|
 fn attempt_for(call : @workflow.AgentCall) -> @workflow.AgentAttempt {
   @workflow.AgentAttempt(
     attempt_id="sr-\{call.label}",
@@ -71,8 +83,8 @@ async test "agent returns the report value and accounts tokens" {
 ///|
 async test "a failed agent still charges its attempt's tokens" {
   let wf = scripted_workflow()
-  guard @workflow.attempt(() => wf.agent(prompt="fail:a", kind="scout"))
-    is Err(@workflow.AgentFailed(label="fail:a", failure=Failed("boom"))) else {
+  guard failure_of(() => wf.agent(prompt="fail:a", kind="scout"))
+    is Some(@workflow.AgentFailed(label="fail:a", failure=Failed("boom"))) else {
     fail("expected AgentFailed with the runner's reason")
   }
   assert_eq(wf.tokens_spent(), 10)
@@ -81,8 +93,8 @@ async test "a failed agent still charges its attempt's tokens" {
 ///|
 async test "a skipped call spends nothing and replays as a refusal" {
   let wf = scripted_workflow()
-  guard @workflow.attempt(() => wf.agent(prompt="skip:a", kind="scout"))
-    is Err(@workflow.AgentFailed(failure=Skipped, ..)) else {
+  guard failure_of(() => wf.agent(prompt="skip:a", kind="scout"))
+    is Some(@workflow.AgentFailed(failure=Skipped, ..)) else {
     fail("expected the skip to surface as AgentFailed(Skipped)")
   }
   assert_eq(wf.tokens_spent(), 0)
@@ -131,8 +143,8 @@ async test "the launch allowance refuses the call after the cap" {
   let wf = scripted_workflow(max_calls=2)
   let _ = wf.agent(prompt="one", kind="scout")
   let _ = wf.agent(prompt="two", kind="scout")
-  guard @workflow.attempt(() => wf.agent(prompt="three", kind="scout"))
-    is Err(@workflow.CallBudgetExhausted(..)) else {
+  guard failure_of(() => wf.agent(prompt="three", kind="scout"))
+    is Some(@workflow.CallBudgetExhausted(..)) else {
     fail("expected the third launch to be refused")
   }
   assert_eq(wf.calls_made(), 2)
@@ -141,11 +153,9 @@ async test "the launch allowance refuses the call after the cap" {
 ///|
 async test "parallel keeps sibling successes when one agent fails" {
   let wf = scripted_workflow()
-  let results = @workflow.parallel([
-    () => @workflow.attempt(() => wf.agent(prompt="a", kind="scout")),
-    () => @workflow.attempt(() => wf.agent(prompt="fail:b", kind="scout")),
-    () => @workflow.attempt(() => wf.agent(prompt="c", kind="scout")),
-  ])
+  let results = @workflow.fan_out(["a", "fail:b", "c"], prompt => {
+    wf.agent(prompt~, kind="scout")
+  })
   guard results is [Ok(_), Err(@workflow.AgentFailed(..)), Ok(_)] else {
     fail("expected exactly the middle slot to fail")
   }
@@ -171,10 +181,9 @@ async test "parallel keeps sibling successes when one agent fails" {
 async test "an engine error is never demoted to a policy slot" {
   let wf = scripted_workflow()
   let mut engine_error = false
-  let _ : Array[@workflow.Attempted[Json]] = @workflow.parallel([
-    () => @workflow.attempt(() => wf.agent(prompt="a", kind="scout")),
-    () => @workflow.attempt(() => wf.agent(prompt="boom:b", kind="scout")),
-  ]) catch {
+  let _ = @workflow.fan_out(["a", "boom:b"], prompt => {
+    wf.agent(prompt~, kind="scout")
+  }) catch {
     EngineBoom => {
       engine_error = true
       []
@@ -212,7 +221,7 @@ async test "parallel over raising thunks cancels a slow sibling and the workflow
 async test "fan_out gives every item its own result slot" {
   let wf = scripted_workflow()
   let results = @workflow.fan_out(["p", "q", "r"], item => {
-    @workflow.attempt(() => wf.agent(prompt=item, kind="scout"))
+    wf.agent(prompt=item, kind="scout")
   })
   assert_eq(@workflow.all_ok(results).length(), 3)
   assert_eq(wf.calls_made(), 3)
@@ -253,10 +262,8 @@ async test "agent_call carries an engine's own input shape" {
   assert_eq(wf.calls_made(), 1)
   // The same call through `agent` would have wrapped the prompt in
   // `{"query": …}`, which this engine does not accept.
-  guard @workflow.attempt(() => {
-      wf.agent(prompt="rename the seam", kind="worker")
-    })
-    is Err(@workflow.AgentFailed(failure=Failed("not a worker input"), ..)) else {
+  guard failure_of(() => wf.agent(prompt="rename the seam", kind="worker"))
+    is Some(@workflow.AgentFailed(failure=Failed("not a worker input"), ..)) else {
     fail("expected the explore shape to be refused by a worker kind")
   }
 }
@@ -294,31 +301,30 @@ async test "agent_call's replay identity is the input the caller gave" {
 }
 
 ///|
-async test "attempt folds any raising step, agent_call included" {
+async test "fan_out folds any raising step, agent_call included" {
   let wf = scripted_workflow()
-  // The fold every call site now uses, over the entry point that never
-  // had a method of its own.
-  let refused = @workflow.attempt(() => {
+  // The fold every fan-out site uses, over the entry point that never had
+  // a method of its own: the failure lands in its slot, the success next
+  // to it passes through.
+  let slots = @workflow.fan_out(["fail:worker", "ok"], query => {
     wf.agent_call(
       kind="scout",
-      input={ "query": "fail:worker" },
-      label="worker:1",
+      input={ "query": query },
+      label="worker:\{query}",
     )
   })
-  guard refused is Err(@workflow.AgentFailed(label="worker:1", ..)) else {
-    fail("expected the agent failure to land in the Err slot")
+  guard slots
+    is [Err(@workflow.AgentFailed(label="worker:fail:worker", ..)), Ok(_)] else {
+    fail("expected the agent failure in its own slot, the success beside it")
   }
-  // Successes pass through, and engine bugs still propagate.
-  guard @workflow.attempt(() => wf.agent(prompt="ok", kind="scout")) is Ok(_) else {
-    fail("expected the success to pass through")
-  }
+  // Engine bugs still propagate.
   let mut engine_error = false
-  let _ : @workflow.Attempted[Json] = @workflow.attempt(() => {
-    wf.agent(prompt="boom:b", kind="scout")
+  let _ = @workflow.fan_out(["boom:b"], prompt => {
+    wf.agent_call(kind="scout", input={ "query": prompt }, label="worker:b")
   }) catch {
     EngineBoom => {
       engine_error = true
-      Ok(Json::null())
+      []
     }
     _ => fail("expected the engine bug to propagate as itself")
   }
@@ -452,7 +458,7 @@ async test "event brackets balance on success, failure, and engine error" {
   let wf = scripted_workflow(on_event=event => events.push(render(event)))
   wf.phase("Scan")
   let _ = wf.agent(prompt="q", kind="scout", label="scout")
-  let _ = @workflow.attempt(() => wf.agent(prompt="fail:x", kind="scout"))
+  let _ = failure_of(() => wf.agent(prompt="fail:x", kind="scout"))
   let _ = wf.agent(prompt="boom:y", kind="scout") catch { _ => Json::null() }
   assert_eq(events, [
     "phase Scan", "start scout scout Scan", "finish scout ok", "start fail:x scout Scan",
@@ -514,9 +520,9 @@ async test "outcomes and failures survive the JSON round trip" {
 ///|
 async test "quorum boundaries: zero and negative thresholds collect" {
   let wf = scripted_workflow()
-  let results = @workflow.parallel([
-    () => @workflow.attempt(() => wf.agent(prompt="fail:a", kind="scout")),
-  ])
+  let results = @workflow.fan_out(["fail:a"], prompt => {
+    wf.agent(prompt~, kind="scout")
+  })
   assert_eq(@workflow.collect_ok(results, min_ok=0).length(), 0)
   assert_eq(@workflow.collect_ok(results, min_ok=-1).length(), 0)
 }
@@ -579,10 +585,14 @@ async test "agent_as decodes at the boundary; a stray shape is a typed rejection
     "type": "object",
   })
   assert_eq(verdict.verdict, "real")
-  let stray : @workflow.Attempted[Verdict] = @workflow.attempt(() => {
-    wf.agent_as(prompt="stray shape please", kind="judge", label="stray")
+  let stray = failure_of(() => {
+    let _ : Verdict = wf.agent_as(
+      prompt="stray shape please",
+      kind="judge",
+      label="stray",
+    )
   })
-  guard stray is Err(@workflow.AgentFailed(label~, failure~)) else {
+  guard stray is Some(@workflow.AgentFailed(label~, failure~)) else {
     fail("expected a typed rejection")
   }
   assert_eq(label, "stray")

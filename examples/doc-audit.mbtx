@@ -384,35 +384,52 @@ async fn audit() -> Unit {
   let reports = @workflow.fan_out(slices, slice => {
     let prompt = audit_prompt(slice, engine)
     let label = "audit:\{slice.path}#\{slice.index + 1}"
-    let first = @workflow.attempt(() => wf.agent(
-      prompt~,
-      kind=engine,
-      label~,
-      max_steps=steps_for(engine),
-      schema?=schema_for(engine, audit_schema),
-    ))
+    let first = try
+      Some(
+        wf.agent(
+          prompt~,
+          kind=engine,
+          label~,
+          max_steps=steps_for(engine),
+          schema?=schema_for(engine, audit_schema),
+        ),
+      )
+    catch {
+      @workflow.WorkflowError::_ => None
+      error => raise error
+    }
     // One retry, at double the ceiling. A slice that ran out of steps and
     // a slice that answered in prose carrying no object are the same
     // thing to the report — nothing — and the second pass usually lands.
     // Its ceiling differs, so it is its own journal entry: a resumed run
     // replays whichever attempt actually answered.
-    if first is Ok(report) && structured(report) is Some(_) {
-      first
-    } else {
-      let second = @workflow.attempt(() => wf.agent(
+    async fn second_pass() -> Json {
+      wf.agent(
         prompt~,
         kind=engine,
         label="\{label} (retry)",
         max_steps=steps_for(engine) * 2,
         schema?=schema_for(engine, audit_schema),
-      ))
-      if second is Ok(report) && structured(report) is Some(_) {
-        second
-      } else if first is Ok(_) {
-        // Neither answered: keep the first, whose text the report quotes.
-        first
-      } else {
-        second
+      )
+    }
+    match first {
+      Some(report) if structured(report) is Some(_) => report
+      // The first pass failed: the retry's report, or its failure, is the
+      // slice's slot.
+      None => second_pass()
+      // The first pass answered without an object: take the retry's if it
+      // lands one, and otherwise keep the first, whose text the report
+      // quotes.
+      Some(first) => {
+        let second = try Some(second_pass()) catch {
+          @workflow.WorkflowError::_ => None
+          error => raise error
+        }
+        if second is Some(report) && structured(report) is Some(_) {
+          report
+        } else {
+          first
+        }
       }
     }
   })

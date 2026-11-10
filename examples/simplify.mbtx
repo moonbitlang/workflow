@@ -159,17 +159,17 @@ async fn sweep() -> Unit {
   }
   async fn body(wf : @workflow.Workflow) -> Unit {
     // PHASE 1 — survey. Slices are independent, so they all go at once and
-    // a slice that fails costs only itself: `attempt` turns its error into
+    // a slice that fails costs only itself: `fan_out` keeps its error as
     // an `Err` the collector drops, instead of tearing down the sweep.
     wf.phase("survey")
-    let surveyed = @workflow.parallel(
-      slices.map(group => () => @workflow.attempt(() => wf.agent(
-          prompt=survey_prompt(repo, group),
-          kind="explore",
-          label="survey \{group[0]}",
-          max_steps=30,
-        ))),
-    )
+    let surveyed = @workflow.fan_out(slices, group => {
+      wf.agent(
+        prompt=survey_prompt(repo, group),
+        kind="explore",
+        label="survey \{group[0]}",
+        max_steps=30,
+      )
+    })
     let raw : Array[Finding] = []
     for outcome in surveyed {
       if outcome is Ok(report) {
@@ -191,14 +191,14 @@ async fn sweep() -> Unit {
     // PHASE 3 — refute. The burden of proof is inverted: a finding is
     // dropped unless a scout that TRIED to break it failed to.
     wf.phase("refute")
-    let judged = @workflow.parallel(
-      kept.map(finding => () => @workflow.attempt(() => wf.agent(
-          prompt=refute_prompt(repo, finding),
-          kind="explore",
-          label="refute \{finding.file}:\{finding.line}",
-          max_steps=20,
-        ))),
-    )
+    let judged = @workflow.fan_out(kept, finding => {
+      wf.agent(
+        prompt=refute_prompt(repo, finding),
+        kind="explore",
+        label="refute \{finding.file}:\{finding.line}",
+        max_steps=20,
+      )
+    })
     let confirmed : Array[Finding] = []
     for index, outcome in judged {
       // An unsettled verdict is a rejection. A verification call that

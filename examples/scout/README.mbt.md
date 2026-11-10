@@ -68,7 +68,7 @@ flowchart TD
   Kind -->|No| Scout["One repository scout, max_steps 24"]
   Probes --> Call["Workflow: replay or launch through spawn"]
   Scout --> Call
-  Call --> Result["attempt: one Attempted slot per call"]
+  Call --> Result["fan_out: one Result slot per call"]
   Result --> Print["Print reports or failures, then usage summary"]
 ```
 

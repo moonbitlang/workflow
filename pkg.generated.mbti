@@ -7,13 +7,11 @@ import {
 }
 
 // Values
-pub fn[T] all_ok(Array[Attempted[T]]) -> Array[T] raise WorkflowError
+pub fn[T] all_ok(Array[Result[T, WorkflowError]]) -> Array[T] raise WorkflowError
 
-pub async fn[T] attempt(async () -> T) -> Attempted[T]
+pub fn[T] collect_ok(Array[Result[T, WorkflowError]], min_ok? : Int32) -> Array[T] raise WorkflowError
 
-pub fn[T] collect_ok(Array[Attempted[T]], min_ok? : Int32) -> Array[T] raise WorkflowError
-
-pub async fn[A, B] fan_out(Array[A], async (A) -> Attempted[B]) -> Array[Attempted[B]]
+pub async fn[A, B] fan_out(Array[A], async (A) -> B) -> Array[Result[B, WorkflowError]]
 
 pub async fn[T] parallel(Array[async () -> T]) -> Array[T]
 
@@ -82,11 +80,6 @@ pub(all) enum AgentOutcome {
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
 }
 pub fn AgentOutcome::attempt(Self) -> AgentAttempt?
-
-pub(all) enum Attempted[T] {
-  Ok(T)
-  Err(WorkflowError)
-}
 
 type Journal
 pub fn Journal::in_memory(prior? : Array[JournalEntry]) -> Self
