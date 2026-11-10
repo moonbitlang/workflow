@@ -171,7 +171,7 @@ async test "parallel keeps sibling successes when one agent fails" {
 async test "an engine error is never demoted to a policy slot" {
   let wf = scripted_workflow()
   let mut engine_error = false
-  let _ : Array[Result[Json, @workflow.WorkflowError]] = @workflow.parallel([
+  let _ : Array[@workflow.Attempted[Json]] = @workflow.parallel([
     () => @workflow.attempt(() => wf.agent(prompt="a", kind="scout")),
     () => @workflow.attempt(() => wf.agent(prompt="boom:b", kind="scout")),
   ]) catch {
@@ -313,7 +313,7 @@ async test "attempt folds any raising step, agent_call included" {
     fail("expected the success to pass through")
   }
   let mut engine_error = false
-  let _ : Result[Json, @workflow.WorkflowError] = @workflow.attempt(() => {
+  let _ : @workflow.Attempted[Json] = @workflow.attempt(() => {
     wf.agent(prompt="boom:b", kind="scout")
   }) catch {
     EngineBoom => {
@@ -578,7 +578,7 @@ async test "agent_as decodes at the boundary; a stray shape is a typed rejection
     "type": "object",
   })
   assert_eq(verdict.verdict, "real")
-  let stray : Result[Verdict, @workflow.WorkflowError] = @workflow.attempt(() => {
+  let stray : @workflow.Attempted[Verdict] = @workflow.attempt(() => {
     wf.agent_as(prompt="stray shape please", kind="judge", label="stray")
   })
   guard stray is Err(@workflow.AgentFailed(label~, failure~)) else {

@@ -2,7 +2,7 @@
 /// Run thunks concurrently and return their results in order. The failure
 /// policy rides each thunk's type:
 ///
-/// - a thunk that resolves to `Result[T, WorkflowError]` (wrap a call in
+/// - a thunk that resolves to an `Attempted[T]` (wrap a call in
 ///   `attempt`) keeps one agent's failure in its own slot without disturbing
 ///   siblings — tokens already spent on the others stay spent. Pair with
 ///   `all_ok` / `collect_ok` to choose the policy afterwards;
@@ -18,21 +18,37 @@ pub async fn[T] parallel(thunks : Array[async () -> T]) -> Array[T] {
 }
 
 ///|
-/// Fan items out through one async stage, one `Result` slot per item.
+/// Fan items out through one async stage, one `Attempted` slot per item.
 /// Multi-stage pipelines are function composition inside `run` — stages
 /// need no barrier between them, so composing them per-item IS the
 /// pipeline.
 pub async fn[A, B] fan_out(
   items : Array[A],
-  run : async (A) -> Result[B, WorkflowError],
-) -> Array[Result[B, WorkflowError]] {
+  run : async (A) -> Attempted[B],
+) -> Array[Attempted[B]] {
   parallel(items.map(item => () => run(item)))
 }
 
 ///|
+/// The outcome of one `attempt`ed step, kept as data: the step's value, or
+/// the typed workflow failure it raised. A slot of `fan_out` / `parallel`,
+/// read back by `all_ok` / `collect_ok` or by matching it directly.
+///
+/// A type of its own rather than `Result[T, WorkflowError]`: a failed step
+/// here is an ordinary outcome a policy decides on later, not an error a
+/// caller forgot to raise. The constructors keep `Result`'s names, so
+/// matching a slot reads the same: `Ok(report)` / `Err(failure)`.
+pub(all) enum Attempted[T] {
+  /// The step finished and produced this value.
+  Ok(T)
+  /// The step raised this typed workflow failure.
+  Err(WorkflowError)
+}
+
+///|
 /// Fold the typed error channel into the return value: a workflow-level
-/// failure lands in `Err`, while cancellation and engine bugs still
-/// propagate — the distinction the whole failure model rests on.
+/// failure lands in `Attempted::Err`, while cancellation and engine bugs
+/// still propagate — the distinction the whole failure model rests on.
 ///
 /// It folds ANY raising step: `agent`, `agent_call` carrying an engine's
 /// own input shape, an `agent_as` whose decode may reject, a `retry`
@@ -42,7 +58,7 @@ pub async fn[A, B] fan_out(
 ///
 /// The right shape at fan-out call sites, where one lost agent must not
 /// poison its siblings.
-pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
+pub async fn[T] attempt(step : async () -> T) -> Attempted[T] {
   Ok(step()) catch {
     WorkflowError::_ as failure => Err(failure)
     error => raise error
@@ -54,7 +70,7 @@ pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
 /// extra attempts at most, spaced by `backoff`, raising the LAST attempt's
 /// error when the budget runs out. Wraps a RAISING step (`agent`,
 /// `agent_as`, or a whole per-item pipeline). Wrap it in `attempt`, not
-/// the other way round: a step already folded into a `Result` raises
+/// the other way round: a step already folded into an `Attempted` raises
 /// nothing there is left to retry on.
 ///
 /// What counts as retriable is `worth_retrying` unless `retriable` says
@@ -97,9 +113,7 @@ pub async fn[T] retry(
 /// Policy: every slot must have succeeded; re-raise the first failure
 /// otherwise. Post-hoc fail-fast — siblings have already run to
 /// completion; `parallel` over raising thunks cancels them instead.
-pub fn[T] all_ok(
-  results : Array[Result[T, WorkflowError]],
-) -> Array[T] raise WorkflowError {
+pub fn[T] all_ok(results : Array[Attempted[T]]) -> Array[T] raise WorkflowError {
   let ok = []
   for result in results {
     match result {
@@ -116,7 +130,7 @@ pub fn[T] all_ok(
 /// adversarial verification. `min_ok=0` is pure best-effort collection; a
 /// negative `min_ok` is treated as 0.
 pub fn[T] collect_ok(
-  results : Array[Result[T, WorkflowError]],
+  results : Array[Attempted[T]],
   min_ok~ : Int32 = 0,
 ) -> Array[T] raise WorkflowError {
   let ok = []

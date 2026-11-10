@@ -142,7 +142,7 @@ pub fn AgentOutcome::attempt(self : AgentOutcome) -> AgentAttempt? {
 ///|
 /// The typed error channel of the workflow layer. Every call site either
 /// propagates one of these (via `raise`) or catches it into `attempt`'s
-/// `Result` — there is no silent `null` to forget.
+/// `Attempted::Err` — there is no silent `null` to forget.
 pub suberror WorkflowError {
   /// The named agent call produced no usable report, and why.
   AgentFailed(label~ : String, failure~ : AgentFailure)

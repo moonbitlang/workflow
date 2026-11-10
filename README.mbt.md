@@ -93,9 +93,10 @@ Everything else follows from three decisions:
 
 - **Failure is data, in a typed channel.** An agent that produced no
   usable report raises `WorkflowError::AgentFailed` with a typed
-  `AgentFailure` cause; `attempt` folds it into a `Result` for fan-out
-  sites. A failure is never a silent `null`: it either raises
-  `AgentFailed` or lands in `attempt`'s `Result`.
+  `AgentFailure` cause; `attempt` folds it into an `Attempted` slot
+  (`Ok(value)` or `Err(failure)`) for fan-out sites. A failure is never a
+  silent `null`: it either raises `AgentFailed` or lands in `attempt`'s
+  `Err`.
 - **Resolved failures retain their usage.** `AgentOutcome` carries the attempt's spend on
   BOTH arms — a timed-out child's tokens land in `tokens_spent()` just
   like a success's. `attempt=None` means no launch was ever tried.
@@ -162,7 +163,7 @@ async test "fan out three lenses, gate on a 2-of-3 quorum" {
 }
 ```
 
-`fan_out` gives every item its own `Result` slot — one lost verifier
+`fan_out` gives every item its own `Attempted` slot — one lost verifier
 never poisons its siblings, and the tokens they spent stay spent. When
 later work is worthless without ALL of a stage, give `parallel` thunks
 that raise instead (bare `wf.agent` calls, no `attempt`): the first failure
@@ -173,7 +174,7 @@ it.
 
 | Policy | When to use it |
 | --- | --- |
-| `parallel` / `fan_out` with `attempt` | Keep a `Result` for each input, in input order. Typed workflow failures stay in their own slots. |
+| `parallel` / `fan_out` with `attempt` | Keep an `Attempted` slot for each input, in input order. Typed workflow failures stay in their own slots. |
 | `parallel` with raising thunks | Every branch is required; a raise cancels siblings still running. |
 | `all_ok` | Require all already-collected results to succeed; raises the first error in array order. |
 | `collect_ok(min_ok=0)` | Keep successes, optionally requiring a minimum count (a quorum); it does not compare answers for agreement. |
@@ -190,7 +191,7 @@ call budget or unmet quorum. A custom `retriable` callback can change that
 typed-error policy. Engine bugs and cancellation always propagate.
 
 Put `attempt` around `retry`, rather than passing `retry` a step that already
-returns `Result`. Each live retry uses a slot and call allowance, and its
+returns an `Attempted` slot. Each live retry uses a slot and call allowance, and its
 resolved outcome is journalled. On resume, an earlier successful report can
 be replayed:
 
