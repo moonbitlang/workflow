@@ -567,9 +567,10 @@ async fn shaped_runner(call : @workflow.AgentCall) -> @workflow.AgentOutcome {
 }
 
 ///|
+#derive(FromJson)
 struct Verdict {
   verdict : String
-} derive(FromJson)
+}
 
 ///|
 async test "agent_as decodes at the boundary; a stray shape is a typed rejection" {

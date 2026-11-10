@@ -2,6 +2,7 @@
 /// What a run cost, in the contract's counters, plus the CLI's own price
 /// when it states one. A dialect that learned nothing reports no `Usage`
 /// at all — an unknown cost is never a zero one.
+#derive(Eq, Debug)
 pub struct Usage {
   /// Everything the model read: fresh input and cache reads and writes.
   prompt_tokens : Int32
@@ -9,7 +10,7 @@ pub struct Usage {
   cache_hit_tokens : Int32
   cache_miss_tokens : Int32
   cost_usd : Double?
-} derive(Eq, Debug)
+}
 
 ///|
 /// A usage reading from its parts; `cost_usd` only when the CLI stated it.
@@ -49,6 +50,7 @@ pub fn Usage::add(self : Usage, other : Usage) -> Usage {
 /// How a shim run ended: the result-file statuses a shim can reach
 /// (`docs/child-contract.md` §3). The engine-side statuses a CLI shim
 /// cannot observe (`context_yield`, `aborted`) have no variant.
+#derive(Eq, Debug)
 pub(all) enum Status {
   /// The CLI finished; the payload is the report, the result's `output`.
   Completed(Json)
@@ -60,16 +62,17 @@ pub(all) enum Status {
   Interrupted(String)
   /// The run could not finish: why.
   Failed(String)
-} derive(Eq, Debug)
+}
 
 ///|
 /// Everything a shim reports about one run: how it ended, what it cost when
 /// the CLI said, and how many steps the dialect counted.
+#derive(Eq, Debug)
 struct ShimResult {
   status : Status
   usage : Usage?
   steps : Int32?
-} derive(Eq, Debug)
+}
 
 ///|
 /// A result from its parts. Omit `usage` when the CLI reported none, and

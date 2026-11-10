@@ -2,6 +2,7 @@
 package "moonbitlang/workflow/hosted"
 
 import {
+  "moonbitlang/core/json",
   "moonbitlang/workflow",
 }
 
@@ -15,10 +16,10 @@ pub suberror HandoffError {
 
 // Types and methods
 type Context
-pub fn Context::child_capacity(Self) -> Int
-pub fn Context::extension(Self, String) -> Json?
+pub fn Context::child_capacity(Self) -> Int32
+pub fn Context::extension(Self, String) -> @json.Json?
 pub fn Context::journal_path(Self) -> String?
-pub async fn[T] Context::run(Self, async (@workflow.Workflow) -> T, max_concurrent? : Int) -> T
+pub async fn[T] Context::run(Self, async (@workflow.Workflow) -> T, max_concurrent? : Int32) -> T
 pub fn Context::runner(Self) -> @workflow.Runner
 
 // Type aliases

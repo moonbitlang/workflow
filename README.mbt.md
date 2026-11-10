@@ -280,9 +280,10 @@ validate, and the schema is part of the call's replay identity:
 
 ```mbt check
 ///|
+#derive(FromJson)
 struct Confirmation {
   confirmed : Bool
-} derive(FromJson)
+}
 
 ///|
 async test "decode the report at the boundary" {

@@ -141,7 +141,7 @@ pub async fn contract_run(
         extra_env?,
         stdin=child_stdin,
         stdout=child_stdout,
-        cwd?=cwd.map(dir => dir.view()),
+        cwd?=cwd.map(dir => dir),
         no_wait=true,
       ) catch {
         error => {

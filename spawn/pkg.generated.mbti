@@ -2,26 +2,27 @@
 package "moonbitlang/workflow/spawn"
 
 import {
+  "moonbitlang/core/json",
   "moonbitlang/workflow",
 }
 
 // Values
 pub const ResultFilePlaceholder : String = "{result_file}"
 
-pub async fn contract_run(command~ : String, args~ : Array[String], input~ : Json, kind~ : String, id~ : String, max_steps? : Int, schema? : Json, wall_deadline_ms~ : Int, cancel_grace_ms? : Int, cwd? : String, extra_env? : Map[String, String]) -> ContractResult
+pub async fn contract_run(command~ : String, args~ : Array[String], input~ : @json.Json, kind~ : String, id~ : String, max_steps? : Int32, schema? : @json.Json, wall_deadline_ms~ : Int32, cancel_grace_ms? : Int32, cwd? : String, extra_env? : Map[String, String]) -> ContractResult
 
-pub fn contract_runner(launch~ : (@workflow.AgentCall) -> LaunchSpec, deadline_ms? : Int, validate_replay? : async (@workflow.AgentCall, @workflow.AgentOutcome) -> @workflow.ReplayDecision) -> @workflow.Runner
+pub fn contract_runner(launch~ : (@workflow.AgentCall) -> LaunchSpec, deadline_ms? : Int32, validate_replay? : async (@workflow.AgentCall, @workflow.AgentOutcome) -> @workflow.ReplayDecision) -> @workflow.Runner
 
 // Errors
 
 // Types and methods
 pub struct ContractResult {
   outcome : @workflow.AgentOutcome
-  exit_code : Int?
+  exit_code : Int32?
 }
 
 type LaunchSpec
-pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int) -> Self
+pub fn LaunchSpec::LaunchSpec(command~ : String, args~ : Array[String], cwd? : String, extra_env? : Map[String, String], deadline_ms? : Int32) -> Self
 
 // Type aliases
 

@@ -7,10 +7,11 @@
 /// `shim/codex` are the two dialects; this package knows no CLI.
 ///
 /// What the observer decides after each CLI stdout line.
+#derive(Eq)
 pub(all) enum Verdict {
   Continue
   Stop
-} derive(Eq)
+}
 
 ///|
 /// How a CLI run ended, from the shim's side. `Cancelled` is the parent's
@@ -18,12 +19,13 @@ pub(all) enum Verdict {
 /// down. `Stopped` is the observer's own decision (a step ceiling).
 /// `Failed` is a run that never got going — an unspawnable command, a
 /// broken pipe.
+#derive(Eq)
 pub(all) enum CliExit {
   Exited(Int32)
   Stopped
   Cancelled
   Failed(String)
-} derive(Eq)
+}
 
 ///|
 /// Run the CLI: spawn it with its stdin already at EOF (the prompt rides
@@ -86,7 +88,7 @@ pub async fn run_cli(
         inherit_env=true,
         stdin=child_stdin,
         stdout=child_stdout,
-        cwd?=cwd.map(dir => dir.view()),
+        cwd?=cwd.map(dir => dir),
         // `cancel()` sends SIGINT first — the CLI's own Ctrl-C path, the
         // one it flushes on — and kills only after the grace.
         cancel_handler=@process.graceful_cancel(
