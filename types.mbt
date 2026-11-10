@@ -14,6 +14,7 @@
 /// The workflow BUILDS one and engines READ it; a caller seeding a journal
 /// by hand goes through `AgentCall(...)`, so the replay identity can grow
 /// a field without invalidating every hand-written call.
+#derive(Eq, ToJson, FromJson)
 pub struct AgentCall {
   kind : String
   input : Json
@@ -29,7 +30,7 @@ pub struct AgentCall {
   /// under a different shape is different work. Absent from the journal
   /// line when `None`, so pre-schema journals load unchanged.
   schema : Json?
-} derive(Eq, ToJson, FromJson)
+}
 
 ///|
 /// A call from its parts: the work (`kind`, `input`) and how a reader
@@ -56,6 +57,7 @@ pub fn AgentCall::AgentCall(
 /// fields. That split is what lets a later accounting figure arrive as one
 /// more optional argument instead of breaking every engine that ever
 /// wrote the record out by hand.
+#derive(Eq, ToJson, FromJson)
 pub struct AgentAttempt {
   attempt_id : String
   steps_used : Int32
@@ -72,7 +74,7 @@ pub struct AgentAttempt {
   /// observed. `None` means they are the engine's account. Absent from the
   /// journal line when `None`, like `cost_usd`.
   unaccounted : String?
-} derive(Eq, ToJson, FromJson)
+}
 
 ///|
 /// An attempt's accounting from its parts. Everything an engine always
@@ -107,6 +109,7 @@ pub fn AgentAttempt::AgentAttempt(
 /// these (`docs/child-contract.md` §4), plus `Skipped` (a human declined
 /// the call — replay keeps it declined rather than overriding the
 /// decision).
+#derive(Eq, ToJson, FromJson)
 pub(all) enum AgentFailure {
   TimedOut
   NoReport
@@ -114,7 +117,7 @@ pub(all) enum AgentFailure {
   ContextYield
   Skipped
   Failed(String)
-} derive(Eq, ToJson, FromJson)
+}
 
 ///|
 /// The lossless envelope one agent run resolves to: either a report value
@@ -124,10 +127,11 @@ pub(all) enum AgentFailure {
 /// spawn or died early is an attempt that observed zero cost, not an
 /// absent one. This is the unit the journal persists: replaying it must
 /// lose nothing the live run knew.
+#derive(Eq, ToJson, FromJson)
 pub(all) enum AgentOutcome {
   Finished(value~ : Json, attempt~ : AgentAttempt)
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
-} derive(Eq, ToJson, FromJson)
+}
 
 ///|
 /// The attempt this outcome accounts for: always there for `Finished`, and

@@ -42,7 +42,14 @@ pub async fn[A, B] fan_out(
 ///
 /// The right shape at fan-out call sites, where one lost agent must not
 /// poison its siblings.
+#warnings("-result_error_return")
 pub async fn[T] attempt(step : async () -> T) -> Result[T, WorkflowError] {
+  // Warning 0078 prefers `T raise E`, but returning the failure as data is
+  // this function's whole job: a raising `attempt` would be `step()` itself,
+  // and `parallel` would cancel a failed child's siblings. Allowed here
+  // only, and temporarily. The structural fix is for `fan_out` to take a
+  // raising step and catch per item, which removes `attempt`. That breaks
+  // every caller, so it waits for a release that can take it.
   Ok(step()) catch {
     WorkflowError::_ as failure => Err(failure)
     error => raise error

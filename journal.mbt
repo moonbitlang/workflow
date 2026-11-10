@@ -7,6 +7,7 @@
 /// lose nothing the live run knew (hence `AgentOutcome`, the lossless
 /// envelope, and not just the value). Attribution is metadata: replay
 /// matches on the call's work identity alone, never on phase or time.
+#derive(Eq)
 pub struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
@@ -19,7 +20,7 @@ pub struct JournalEntry {
   /// no entry, so no entry ever describes a replay.
   started_at : Int64?
   finished_at : Int64?
-} derive(Eq)
+}
 
 ///|
 /// An entry from its parts. Attribution is optional, so a caller seeding a

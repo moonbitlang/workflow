@@ -5,12 +5,13 @@
 /// runner, or the journal append failing after the outcome resolved —
 /// both re-raise after the event fires, so `AgentStarted`/`AgentFinished`
 /// brackets always balance.
+#derive(Eq)
 pub enum AgentDisposition {
   Succeeded
   FailedAgent
   Interrupted
   Errored
-} derive(Eq)
+}
 
 ///|
 /// Progress the workflow narrates as it runs: phases group agents in a

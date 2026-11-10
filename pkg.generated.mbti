@@ -11,57 +11,61 @@ pub fn[T] all_ok(Array[Result[T, WorkflowError]]) -> Array[T] raise WorkflowErro
 
 pub async fn[T] attempt(async () -> T) -> Result[T, WorkflowError]
 
-pub fn[T] collect_ok(Array[Result[T, WorkflowError]], min_ok? : Int) -> Array[T] raise WorkflowError
+pub fn[T] collect_ok(Array[Result[T, WorkflowError]], min_ok? : Int32) -> Array[T] raise WorkflowError
 
 pub async fn[A, B] fan_out(Array[A], async (A) -> Result[B, WorkflowError]) -> Array[Result[B, WorkflowError]]
 
 pub async fn[T] parallel(Array[async () -> T]) -> Array[T]
 
-pub async fn[T] retry(async () -> T, max_retry? : Int, backoff? : @async.RetryMethod, retriable? : (WorkflowError) -> Bool) -> T
+pub async fn[T] retry(async () -> T, max_retry? : Int32, backoff? : @async.RetryMethod, retriable? : (WorkflowError) -> Bool) -> T
 
 pub fn worth_retrying(WorkflowError) -> Bool
 
 // Errors
 pub suberror JournalCorrupted {
-  JournalCorrupted(path~ : String, line~ : Int)
+  JournalCorrupted(path~ : String, line~ : Int32)
 }
 pub impl Show for JournalCorrupted
 
 pub suberror WorkflowError {
   AgentFailed(label~ : String, failure~ : AgentFailure)
   CallBudgetExhausted(label~ : String)
-  QuorumNotReached(need~ : Int, ok~ : Int, of~ : Int)
+  QuorumNotReached(need~ : Int32, ok~ : Int32, of~ : Int32)
 }
 pub impl Show for WorkflowError
 
 // Types and methods
+#derive(Eq, @json.FromJson, @json.ToJson)
 pub struct AgentAttempt {
   attempt_id : String
-  steps_used : Int
-  prompt_tokens : Int
-  completion_tokens : Int
+  steps_used : Int32
+  prompt_tokens : Int32
+  completion_tokens : Int32
   cost_usd : Double?
   unaccounted : String?
-} derive(Eq, ToJson, @json.FromJson)
-pub fn AgentAttempt::AgentAttempt(attempt_id~ : String, steps_used~ : Int, prompt_tokens~ : Int, completion_tokens~ : Int, cost_usd? : Double, unaccounted? : String) -> Self
+}
+pub fn AgentAttempt::AgentAttempt(attempt_id~ : String, steps_used~ : Int32, prompt_tokens~ : Int32, completion_tokens~ : Int32, cost_usd? : Double, unaccounted? : String) -> Self
 
+#derive(Eq, @json.FromJson, @json.ToJson)
 pub struct AgentCall {
   kind : String
-  input : Json
+  input : @json.Json
   label : String
-  max_steps : Int?
+  max_steps : Int32?
   scope : String
-  schema : Json?
-} derive(Eq, ToJson, @json.FromJson)
-pub fn AgentCall::AgentCall(kind~ : String, input~ : Json, label~ : String, max_steps? : Int, scope? : String, schema? : Json) -> Self
+  schema : @json.Json?
+}
+pub fn AgentCall::AgentCall(kind~ : String, input~ : @json.Json, label~ : String, max_steps? : Int32, scope? : String, schema? : @json.Json) -> Self
 
+#derive(Eq)
 pub enum AgentDisposition {
   Succeeded
   FailedAgent
   Interrupted
   Errored
-} derive(Eq)
+}
 
+#derive(Eq, @json.FromJson, @json.ToJson)
 pub(all) enum AgentFailure {
   TimedOut
   NoReport
@@ -69,13 +73,14 @@ pub(all) enum AgentFailure {
   ContextYield
   Skipped
   Failed(String)
-} derive(Eq, ToJson, @json.FromJson)
+}
 pub impl Show for AgentFailure
 
+#derive(Eq, @json.FromJson, @json.ToJson)
 pub(all) enum AgentOutcome {
-  Finished(value~ : Json, attempt~ : AgentAttempt)
+  Finished(value~ : @json.Json, attempt~ : AgentAttempt)
   DidNotFinish(failure~ : AgentFailure, attempt~ : AgentAttempt?)
-} derive(Eq, ToJson, @json.FromJson)
+}
 pub fn AgentOutcome::attempt(Self) -> AgentAttempt?
 
 type Journal
@@ -84,16 +89,17 @@ pub async fn Journal::load(String) -> Self
 pub fn Journal::prior(Self) -> Array[JournalEntry]
 pub fn Journal::recorded(Self) -> Array[JournalEntry]
 
+#derive(Eq)
 pub struct JournalEntry {
   call : AgentCall
   outcome : AgentOutcome
   phase : String?
   started_at : Int64?
   finished_at : Int64?
-} derive(Eq)
+}
 pub fn JournalEntry::JournalEntry(call~ : AgentCall, outcome~ : AgentOutcome, phase? : String, started_at? : Int64, finished_at? : Int64) -> Self
-pub impl ToJson for JournalEntry
 pub impl @json.FromJson for JournalEntry
+pub impl @json.ToJson for JournalEntry
 
 pub(all) enum ReplayDecision {
   Serve(AgentOutcome)
@@ -105,15 +111,15 @@ pub fn Runner::Runner(async (AgentCall) -> AgentOutcome, validate_replay? : asyn
 pub async fn Runner::invoke(Self, AgentCall) -> AgentOutcome
 
 type Workflow
-pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int, max_calls? : Int, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
-pub async fn Workflow::agent(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> Json
-pub async fn[T : @json.FromJson] Workflow::agent_as(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int, schema? : Json) -> T
-pub async fn Workflow::agent_call(Self, kind~ : String, input~ : Json, label~ : String, max_steps? : Int, schema? : Json) -> Json
-pub fn Workflow::calls_made(Self) -> Int
-pub fn Workflow::calls_replayed(Self) -> Int
+pub fn Workflow::Workflow(runner~ : Runner, max_concurrent? : Int32, max_calls? : Int32, journal? : Journal, replay_scope? : String, on_event? : (WorkflowEvent) -> Unit) -> Self raise
+pub async fn Workflow::agent(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int32, schema? : @json.Json) -> @json.Json
+pub async fn[T : @json.FromJson] Workflow::agent_as(Self, prompt~ : String, kind~ : String, hints? : String, label? : String, max_steps? : Int32, schema? : @json.Json) -> T
+pub async fn Workflow::agent_call(Self, kind~ : String, input~ : @json.Json, label~ : String, max_steps? : Int32, schema? : @json.Json) -> @json.Json
+pub fn Workflow::calls_made(Self) -> Int32
+pub fn Workflow::calls_replayed(Self) -> Int32
 pub fn Workflow::cost_usd(Self) -> Double
 pub fn Workflow::phase(Self, String) -> Unit
-pub fn Workflow::tokens_spent(Self) -> Int
+pub fn Workflow::tokens_spent(Self) -> Int32
 
 pub enum WorkflowEvent {
   PhaseStarted(String)

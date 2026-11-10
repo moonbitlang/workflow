@@ -141,7 +141,7 @@ pub async fn contract_run(
         extra_env?,
         stdin=child_stdin,
         stdout=child_stdout,
-        cwd?=cwd.map(dir => dir.view()),
+        cwd?=cwd.map(dir => dir),
         no_wait=true,
       ) catch {
         error => {
@@ -322,16 +322,18 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
   // finite, non-negative number. Steps are independent of it.
   let usage = match fields.get("usage") {
     None => None
-    Some(
-      {
-        "prompt_tokens": Number(prompt, ..),
-        "completion_tokens": Number(completion, ..),
-        "total_tokens": Number(total, ..),
-        "prompt_cache_hit_tokens": Number(hit, ..),
-        "prompt_cache_miss_tokens": Number(miss, ..),
-        ..
-      } as usage
-    ) => {
+    Some(usage) => {
+      guard usage
+        is {
+          "prompt_tokens": Number(prompt, ..),
+          "completion_tokens": Number(completion, ..),
+          "total_tokens": Number(total, ..),
+          "prompt_cache_hit_tokens": Number(hit, ..),
+          "prompt_cache_miss_tokens": Number(miss, ..),
+          ..
+        } else {
+        return Err("malformed usage")
+      }
       let cost_usd = match usage {
         { "cost_usd": Number(cost, ..), .. } if cost >= 0.0 &&
           !cost.is_inf() &&
@@ -358,7 +360,6 @@ fn decode_result(json : Json, id~ : String) -> Result[ChildResult, String] {
         _ => return Err("malformed usage")
       }
     }
-    Some(_) => return Err("malformed usage")
   }
   let steps = match fields.get("steps") {
     None => None

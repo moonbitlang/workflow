@@ -4,24 +4,26 @@ package "moonbitlang/workflow/shim"
 import {
   "moonbitlang/async/signal",
   "moonbitlang/core/debug",
+  "moonbitlang/core/json",
 }
 
 // Values
-pub fn integral(Double) -> Int?
+pub fn integral(Double) -> Int32?
 
-pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, until_cancelled? : async () -> Unit, stop_grace_ms? : Int, stop_signal? : @signal.Signal, observe~ : async (String) -> Verdict) -> CliExit
+pub async fn run_cli(command~ : String, args~ : Array[String], cwd? : String, until_cancelled? : async () -> Unit, stop_grace_ms? : Int32, stop_signal? : @signal.Signal, observe~ : async (String) -> Verdict) -> CliExit
 
 pub async fn serve(default_command~ : String, run~ : async (Options, Request) -> ShimResult) -> Unit
 
 // Errors
 
 // Types and methods
+#derive(Eq)
 pub(all) enum CliExit {
-  Exited(Int)
+  Exited(Int32)
   Stopped
   Cancelled
   Failed(String)
-} derive(Eq)
+}
 
 pub struct Options {
   result_file : String
@@ -37,39 +39,43 @@ pub fn Options::Options(command~ : String, result_file~ : String, model? : Strin
 pub struct Request {
   request_id : String
   kind : String
-  max_steps : Int?
-  input : Json
+  max_steps : Int32?
+  input : @json.Json
   prompt : String
-  schema : Json?
+  schema : @json.Json?
 }
-pub fn Request::Request(request_id~ : String, kind~ : String, input~ : Json, prompt~ : String, max_steps? : Int, schema? : Json) -> Self
+pub fn Request::Request(request_id~ : String, kind~ : String, input~ : @json.Json, prompt~ : String, max_steps? : Int32, schema? : @json.Json) -> Self
 
-type ShimResult derive(Eq, @debug.Debug)
-pub fn ShimResult::ShimResult(Status, usage? : Usage, steps? : Int) -> Self
-pub fn ShimResult::to_json(Self, request_id~ : String) -> Json
+#derive(Eq, @debug.Debug)
+type ShimResult
+pub fn ShimResult::ShimResult(Status, usage? : Usage, steps? : Int32) -> Self
+pub fn ShimResult::to_json(Self, request_id~ : String) -> @json.Json
 
+#derive(Eq, @debug.Debug)
 pub(all) enum Status {
-  Completed(Json)
+  Completed(@json.Json)
   NoReport
   MaxStepsExhausted
   Interrupted(String)
   Failed(String)
-} derive(Eq, @debug.Debug)
+}
 
+#derive(Eq, @debug.Debug)
 pub struct Usage {
-  prompt_tokens : Int
-  completion_tokens : Int
-  cache_hit_tokens : Int
-  cache_miss_tokens : Int
+  prompt_tokens : Int32
+  completion_tokens : Int32
+  cache_hit_tokens : Int32
+  cache_miss_tokens : Int32
   cost_usd : Double?
-} derive(Eq, @debug.Debug)
-pub fn Usage::Usage(prompt_tokens~ : Int, completion_tokens~ : Int, cache_hit_tokens~ : Int, cache_miss_tokens~ : Int, cost_usd? : Double) -> Self
+}
+pub fn Usage::Usage(prompt_tokens~ : Int32, completion_tokens~ : Int32, cache_hit_tokens~ : Int32, cache_miss_tokens~ : Int32, cost_usd? : Double) -> Self
 pub fn Usage::add(Self, Self) -> Self
 
+#derive(Eq)
 pub(all) enum Verdict {
   Continue
   Stop
-} derive(Eq)
+}
 
 // Type aliases
 
