@@ -41,7 +41,7 @@ async fn run(
     None => None
   }
   defer (if scratch is Some(dir) {
-    @fs.rmdir(dir, recursive=true) catch {
+    @fs.remove(dir, recursive=true) catch {
       _ => ()
     }
   })

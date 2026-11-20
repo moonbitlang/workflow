@@ -91,7 +91,7 @@ pub async fn contract_run(
     error =>
       return launch_failed(id, "no directory for the result file: \{error}")
   }
-  defer (@fs.rmdir(result_dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(result_dir, recursive=true) catch { _ => () })
   let result_path = "\{result_dir}/result.json"
   let args = args.map(arg => {
     arg.replace_all(old=ResultFilePlaceholder, new=result_path)
