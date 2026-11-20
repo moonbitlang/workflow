@@ -182,7 +182,7 @@ async test "a file-backed journal resumes across generations" {
   )
   assert_eq(wf3.agent(prompt="hello", kind="scout"), first)
   assert_eq(wf3.agent(prompt="fail:x", kind="scout"), { "recovered": "fail:x" })
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -254,7 +254,7 @@ async test "concurrent live agents append whole lines" {
   assert_eq(@workflow.all_ok(results).length(), 3)
   // Every line survives a reload: no interleaved bytes, no torn entries.
   assert_eq(@workflow.Journal::load(path).prior().length(), 3)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -273,7 +273,7 @@ async test "label-only differences replay through a file round trip" {
     journal=@workflow.Journal::load(path),
   )
   assert_eq(wf2.agent(prompt="q", kind="scout", label="scout-two"), first)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -285,7 +285,7 @@ async test "a failed journal append surfaces as one errored bracket" {
   let journal = @workflow.Journal::load(path)
   // Yank the directory out from under the journal: the outcome resolves,
   // then persistence fails.
-  @fs.rmdir(dir, recursive=true)
+  @fs.remove(dir, recursive=true)
   let events : Array[String] = []
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~, on_event=event => {
     events.push(render(event))
@@ -321,7 +321,7 @@ async test "a torn final line is dropped AND repaired on disk" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
   let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(torn).prior().length(), 2)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -342,7 +342,7 @@ async test "a valid final line missing its newline is kept and normalized" {
   let wf = @workflow.Workflow(runner=@workflow.Runner(scripted), journal~)
   let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(path).prior().length(), 3)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -360,7 +360,7 @@ async test "a tail torn mid-codepoint cannot poison the healthy prefix" {
   @fs.write_binary(path, b"\xc3", append=true, create_mode=OpenOrCreate)
   let journal = @workflow.Journal::load(path)
   assert_eq(journal.prior().length(), 1)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -382,7 +382,7 @@ async test "corruption before the final line raises JournalCorrupted" {
     _ => fail("expected JournalCorrupted at line 2")
   }
   assert_true(raised)
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -565,7 +565,7 @@ async test "a pre-attribution journal line loads unchanged and still replays" {
   assert_true(entry == success_entry("hello", { "a": 1 }))
   let wf = @workflow.Workflow(runner=@workflow.Runner(must_not_run), journal~)
   assert_eq(wf.agent(prompt="hello", kind="scout"), { "a": 1 })
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }
@@ -590,7 +590,7 @@ async test "a metadata line is skipped by replay and preserved by repair" {
   let _ = wf.agent(prompt="world", kind="scout")
   assert_eq(@workflow.Journal::load(path).prior().length(), 2)
   assert_true(@fs.read_text(path).has_prefix(meta + entry_line))
-  @fs.rmdir(dir, recursive=true) catch {
+  @fs.remove(dir, recursive=true) catch {
     _ => ()
   }
 }

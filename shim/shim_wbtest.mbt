@@ -72,7 +72,7 @@ async fn answer_with(
   until_cancelled~ : async () -> Unit = never,
 ) -> (Json?, Array[String]) {
   let dir = @fs.tmpdir(prefix="workflow-shim-test-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let path = "\{dir}/result.json"
   respond(Options(command="sh", result_file=path), line, name="test shim", run=(
     _,
@@ -246,7 +246,7 @@ async test "a malformed request with an id is failed; without one, no result" {
   // Nothing to answer: `respond` raises, and the file is never created.
   for line in [Some("not json"), Some("{\"version\":1,\"input\":\"q\"}"), None] {
     let dir = @fs.tmpdir(prefix="workflow-shim-test-")
-    defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+    defer (@fs.remove(dir, recursive=true) catch { _ => () })
     let path = "\{dir}/result.json"
     let message = try
       respond(Options(command="sh", result_file=path), line, name="test shim", run=(
@@ -267,7 +267,7 @@ async test "a malformed request with an id is failed; without one, no result" {
 ///|
 async test "an error the dialect raises is a failed result" {
   let dir = @fs.tmpdir(prefix="workflow-shim-test-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let path = "\{dir}/result.json"
   respond(
     Options(command="sh", result_file=path),
@@ -286,7 +286,7 @@ async test "an error the dialect raises is a failed result" {
 ///|
 async test "the result replaces a stale file at the path" {
   let dir = @fs.tmpdir(prefix="workflow-shim-test-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let path = "\{dir}/result.json"
   @fs.write_text(path, "stale")
   write_result(path, "cr-7", ShimResult(NoReport))

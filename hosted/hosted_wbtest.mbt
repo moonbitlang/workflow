@@ -35,7 +35,7 @@ fn handoff(
 ///|
 async test "children are launched into the ids the host reserved" {
   let dir = @fs.tmpdir(prefix="hosted-ids-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let ctx = parse(handoff(dir))
   let answers = ctx.run(wf => {
     @workflow.parallel([
@@ -58,7 +58,7 @@ async test "children are launched into the ids the host reserved" {
 ///|
 async test "the reserved block is the launch ceiling" {
   let dir = @fs.tmpdir(prefix="hosted-block-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let ctx = parse(handoff(dir, first=1, count=2))
   ctx.run(wf => {
     let _ = wf.agent(prompt="one", kind="explore")
@@ -74,7 +74,7 @@ async test "the reserved block is the launch ceiling" {
 ///|
 async test "the ledger names the child, and the sidecar brackets the launch" {
   let dir = @fs.tmpdir(prefix="hosted-ledger-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let ctx = parse(handoff(dir))
   ctx.run(wf => {
     wf.phase("survey")
@@ -101,7 +101,7 @@ async test "the ledger names the child, and the sidecar brackets the launch" {
 ///|
 async test "cancellation closes the sidecar bracket and still re-raises" {
   let dir = @fs.tmpdir(prefix="hosted-cancel-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   // No tool subprocesses: the shell blocks on the open cancellation pipe.
   let ctx = parse(handoff(dir, child="read line; while read line; do :; done"))
   @async.with_task_group() <| group => {
@@ -190,7 +190,7 @@ async test "hosted failures retain child identity, usage and sidecar status" {
 ///|
 async test "a child that leaves no result is failed, and its spend unaccounted" {
   let dir = @fs.tmpdir(prefix="hosted-no-result-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let ctx = parse(handoff(dir, child="read line; exit 3"))
   let events : Array[Json] = []
   let outcome = ctx

@@ -51,7 +51,7 @@ async test "a foreign contract engine gets workflows and replay for free" {
     return
   }
   let dir = @fs.tmpdir(prefix="workflow-contract-journal-")
-  defer (@fs.rmdir(dir, recursive=true) catch { _ => () })
+  defer (@fs.remove(dir, recursive=true) catch { _ => () })
   let path = "\{dir}/journal.jsonl"
   // The child answers with the request line it read, echoing its id.
   let live =
